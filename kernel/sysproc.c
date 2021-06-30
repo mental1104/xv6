@@ -46,8 +46,15 @@ sys_sbrk(void)
 
   if(argint(0, &n) < 0)
     return -1;
-  addr = myproc()->sz;
-  myproc()->sz = addr + n;
+  struct proc* p = myproc();
+  addr = p->sz;
+  if(n < 0){
+    if(p->sz + n < 0) return -1;//n cannot beyond sz
+    else 
+      uvmdealloc(p->pagetable, p->sz, p->sz+n);
+  }
+  p->sz = p->sz + n;
+  
   /*
   if(growproc(n) < 0)
     return -1;
