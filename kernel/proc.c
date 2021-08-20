@@ -5,6 +5,11 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "sleeplock.h"  
+#include "fs.h"  
+#include "file.h"  
+#include "vma.h"  
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -127,7 +132,6 @@ found:
     release(&p->lock);
     return 0;
   }
-
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -280,6 +284,18 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+
+  for(i = 0; i < NOFILE; i++){
+    if(p->vma[i]){
+      np->vma[i] = vma_alloc();
+      np->vma[i]->addr = p->vma[i]->addr;
+      np->vma[i]->length = p->vma[i]->length;
+      np->vma[i]->prot = p->vma[i]->prot;
+      np->vma[i]->flags = p->vma[i]->flags;
+      np->vma[i]->file = p->vma[i]->file;
+      filedup(p->vma[i]->file);
+    }
+  }
   np->sz = p->sz;
 
   np->parent = p;
@@ -344,6 +360,21 @@ exit(int status)
   if(p == initproc)
     panic("init exiting");
 
+  for(int i = 0; i < NOFILE; i++){
+    if(p->vma[i]){
+      struct VMA *vmap = p->vma[i];
+      if(vmap->prot & PROT_WRITE && vmap->flags == MAP_SHARED){
+        begin_op();
+        ilock(vmap->file->ip);
+        writei(vmap->file->ip, 1, (uint64)vmap->addr, 0, vmap->length);
+        iunlock(vmap->file->ip);
+        end_op();
+      }
+      fileclose(vmap->file);
+      vma_free(vmap);
+      p->vma[i] = 0;
+    }
+  }
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
     if(p->ofile[fd]){
@@ -700,4 +731,10 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int lazy_grow_proc(int n){
+  struct proc *p = myproc();
+  p->sz = p->sz + n;
+  return 0;
 }
