@@ -69,18 +69,17 @@ usertrap(void)
     // ok
   } else if(r_scause() == 13 || r_scause() == 15){
       uint64 va = r_stval();
-      printf("va: %x\n" ,va);
+      /*printf("va: %x\n" ,va);
       printf("p->trapframe->sp: %x\n", PGROUNDDOWN(p->trapframe->sp));
-      printf("p->trapframe->sp - PGSIZE: %x\n", PGROUNDDOWN(p->trapframe->sp)-PGSIZE);
+      printf("p->trapframe->sp - PGSIZE: %x\n", PGROUNDDOWN(p->trapframe->sp)-PGSIZE);*/
 
-      /*if(va < PGROUNDDOWN(p->trapframe->sp) && va >= PGROUNDDOWN(p->trapframe->sp)-PGSIZE)
+      if(va < PGROUNDDOWN(p->trapframe->sp) && va >= PGROUNDDOWN(p->trapframe->sp)-PGSIZE)
         p->killed = 1;
-
-      */
+      else{
         int ret;
         if((ret = cow_alloc(p->pagetable, va)) < 0)
           p->killed = 1;
-      
+      }
 
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
