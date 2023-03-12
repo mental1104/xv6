@@ -156,6 +156,7 @@ UPROGS=\
 	$U/_xargs\
 	$U/_trace\
 	$U/_sysinfotest\
+	$U/_alarmtest\
 
 ifeq ($(LAB),syscall)
 UPROGS += \
