@@ -14,7 +14,7 @@ sub entry {
     print " ecall\n";
     print " ret\n";
 }
-	
+
 entry("fork");
 entry("exit");
 entry("wait");
@@ -41,3 +41,5 @@ entry("sysinfo");
 entry("sigalarm");
 entry("sigreturn");
 entry("symlink");
+entry("mmap");
+entry("munmap");

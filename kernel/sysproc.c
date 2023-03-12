@@ -42,25 +42,30 @@ sys_wait(void)
 uint64
 sys_sbrk(void)
 {
-  int addr;
   int n;
-
   if(argint(0, &n) < 0)
     return -1;
-  struct proc* p = myproc();
-  addr = p->sz;
+
+  struct proc *p = myproc();
+  uint64 oldsz = p->sz;
   if(n < 0){
-    if(p->sz + n < 0) return -1;//n cannot beyond sz
-    else 
-      uvmdealloc(p->pagetable, p->sz, p->sz+n);
+    uint64 shrink = (uint64)(-n);
+    if(shrink > oldsz)
+      return -1;
+    uint64 newsz = oldsz - shrink;
+    if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
+      uint64 start = PGROUNDUP(newsz);
+      uint64 npages = (PGROUNDUP(oldsz) - start) / PGSIZE;
+      u2kvmunmap(p->kpagetable, start, npages);
+    }
+    p->sz = uvmdealloc(p->pagetable, oldsz, newsz);
+  } else {
+    uint64 newsz = oldsz + (uint64)n;
+    if(newsz < oldsz || PGROUNDUP(newsz) >= PLIC)
+      return -1;
+    p->sz = newsz;
   }
-  p->sz = p->sz + n;
-  
-  /*
-  if(growproc(n) < 0)
-    return -1;
-  */
-  return addr;
+  return oldsz;
 }
 
 uint64
@@ -80,7 +85,6 @@ sys_sleep(void)
     }
     sleep(&ticks, &tickslock);
   }
-  backtrace();
   release(&tickslock);
   return 0;
 }
@@ -114,7 +118,7 @@ sys_trace(void)
   int mask;
   if(argint(0, &mask) < 0)
     return -1;
-  
+
   myproc()->mask = mask;
   return 0;
 }
@@ -125,7 +129,7 @@ sys_sysinfo(void)
   uint64 addr;
   if(argaddr(0,&addr) < 0)
     return -1;
-  
+
   struct sysinfo info;
   struct proc* p = myproc();
 
@@ -156,6 +160,7 @@ uint64
 sys_sigreturn(void)
 {
     struct proc* p = myproc();
+    uint64 saved_a0 = p->a0;
     p->trapframe->epc = p->epc;
     p->trapframe->ra = p->ra;
     p->trapframe->sp = p->sp;
@@ -189,5 +194,5 @@ sys_sigreturn(void)
     p->trapframe->t5 = p->t5;
     p->trapframe->t6 = p->t6;
     p->in_handler = 0;
-    return 0;
+    return saved_a0;
 }

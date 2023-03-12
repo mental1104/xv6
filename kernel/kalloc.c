@@ -8,6 +8,7 @@
 #include "spinlock.h"
 #include "riscv.h"
 #include "defs.h"
+#include "proc.h"
 
 void freerange(void *pa_start, void *pa_end);
 
@@ -175,6 +176,9 @@ cow_alloc(pagetable_t pagetable, uint64 va)
 
   if(refs == 1){
     *pte = (*pte | PTE_W) & ~PTE_COW;
+    struct proc *p = myproc();
+    if(p && p->pagetable == pagetable)
+      u2kvmcopy(p->pagetable, p->kpagetable, va, va + PGSIZE);
     sfence_vma();
     return 0;
   }
@@ -186,6 +190,9 @@ cow_alloc(pagetable_t pagetable, uint64 va)
   memmove(mem, (void*)pa, PGSIZE);
   uint flags = (PTE_FLAGS(*pte) | PTE_W) & ~PTE_COW;
   *pte = PA2PTE((uint64)mem) | flags;
+  struct proc *p = myproc();
+  if(p && p->pagetable == pagetable)
+    u2kvmcopy(p->pagetable, p->kpagetable, va, va + PGSIZE);
   sfence_vma();
   kfree((void*)pa);
   return 0;

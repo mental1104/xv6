@@ -5,6 +5,11 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "sleeplock.h"
+#include "fs.h"
+#include "file.h"
+#include "vma.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -26,7 +31,7 @@ void
 procinit(void)
 {
   struct proc *p;
-  
+
   initlock(&pid_lock, "nextpid");
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
@@ -76,7 +81,7 @@ myproc(void) {
 int
 allocpid() {
   int pid;
-  
+
   acquire(&pid_lock);
   pid = nextpid;
   nextpid = nextpid + 1;
@@ -106,8 +111,13 @@ allocproc(void)
 
 found:
   p->pid = allocpid();
+  p->mask = 0;
+  p->handler = 0;
+  p->alarm_interval = 0;
   p->total_ticks = 0;
   p->in_handler = 0;
+  for(int i = 0; i < NOFILE; i++)
+    p->vma[i] = 0;
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     release(&p->lock);
@@ -120,7 +130,7 @@ found:
     release(&p->lock);
     return 0;
   }
-  
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -128,9 +138,6 @@ found:
     release(&p->lock);
     return 0;
   }
-
-   
-
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -148,11 +155,13 @@ freeproc(struct proc *p)
 {
   if(p->trapframe)
     kfree((void*)p->trapframe);
-    
+
   p->trapframe = 0;
 
-  if(p->pagetable)
+  if(p->pagetable){
+    vma_unmap_all(p);
     proc_freepagetable(p->pagetable, p->sz);
+  }
   p->pagetable = 0;
 
   if(p->kpagetable)
@@ -232,7 +241,7 @@ userinit(void)
 
   p = allocproc();
   initproc = p;
-  
+
   // allocate one user page and copy init's instructions
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
@@ -269,7 +278,13 @@ growproc(int n)
     }
     u2kvmcopy(p->pagetable, p->kpagetable, sz-n, sz);
   } else if(n < 0){
-    sz = uvmdealloc(p->pagetable, sz, sz + n);
+    uint64 newsz = sz + n;
+    if(PGROUNDUP(newsz) < PGROUNDUP(sz)){
+      uint64 start = PGROUNDUP(newsz);
+      uint64 npages = (PGROUNDUP(sz) - start) / PGSIZE;
+      u2kvmunmap(p->kpagetable, start, npages);
+    }
+    sz = uvmdealloc(p->pagetable, sz, newsz);
   }
   p->sz = sz;
   return 0;
@@ -295,6 +310,24 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+
+  for(i = 0; i < NOFILE; i++){
+    if(p->vma[i]){
+      struct VMA *v = vma_alloc();
+      if(v == 0){
+        freeproc(np);
+        release(&np->lock);
+        return -1;
+      }
+      v->addr = p->vma[i]->addr;
+      v->length = p->vma[i]->length;
+      v->offset = p->vma[i]->offset;
+      v->prot = p->vma[i]->prot;
+      v->flags = p->vma[i]->flags;
+      v->file = filedup(p->vma[i]->file);
+      np->vma[i] = v;
+    }
+  }
   np->sz = p->sz;
 
   np->parent = p;
@@ -311,6 +344,7 @@ fork(void)
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
+  u2kvmcopy(p->pagetable, p->kpagetable, 0, p->sz);
   u2kvmcopy(np->pagetable, np->kpagetable, 0, np->sz);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
@@ -318,7 +352,7 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
-  
+
   release(&np->lock);
 
   return pid;
@@ -361,6 +395,7 @@ exit(int status)
   if(p == initproc)
     panic("init exiting");
 
+  vma_unmap_all(p);
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
     if(p->ofile[fd]){
@@ -393,7 +428,7 @@ exit(int status)
   acquire(&p->lock);
   struct proc *original_parent = p->parent;
   release(&p->lock);
-  
+
   // we need the parent's lock in order to wake it up from wait().
   // the parent-then-child rule says we have to lock it first.
   acquire(&original_parent->lock);
@@ -464,7 +499,7 @@ wait(uint64 addr)
       release(&p->lock);
       return -1;
     }
-    
+
     // Wait for a child to exit.
     sleep(p, &p->lock);  //DOC: wait-sleep
   }
@@ -482,12 +517,12 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-  
+
   c->proc = 0;
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
-    
+
     int found = 0;
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
@@ -584,7 +619,7 @@ void
 sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
-  
+
   // Must acquire p->lock in order to
   // change p->state and then call sched.
   // Once we hold p->lock, we can be
@@ -723,7 +758,7 @@ procdump(void)
   }
 }
 
-uint64 
+uint64
 free_proc(void){
   uint64 n = 0;
   struct proc* p;
@@ -733,4 +768,10 @@ free_proc(void){
     release(&p->lock);
   }
   return n;
+}
+
+int lazy_grow_proc(int n){
+  struct proc *p = myproc();
+  p->sz = p->sz + n;
+  return 0;
 }

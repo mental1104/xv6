@@ -9,6 +9,7 @@ struct sleeplock;
 struct stat;
 struct superblock;
 struct sysinfo;
+struct VMA;
 
 // bio.c
 void            binit(void);
@@ -83,6 +84,7 @@ int             pipewrite(struct pipe*, uint64, int);
 void            printf(char*, ...);
 void            panic(char*) __attribute__((noreturn));
 void            printfinit(void);
+int             snprintf(char*, int, char*, ...);
 void            backtrace();
 
 // proc.c
@@ -108,6 +110,7 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+int             lazy_grow_proc(int);
 
 // swtch.S
 void            swtch(struct context*, struct context*);
@@ -181,7 +184,9 @@ void            vmprint(pagetable_t pagetable);
 void            kvmmapkern(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm);
 pagetable_t     kvmcreate();
 void            kvmfree(pagetable_t kpagetale) ;
-void            u2kvmcopy(pagetable_t pagetable, pagetable_t kpagetable, uint64 oldsz, uint64 newsz);
+void            u2kvmcopy(pagetable_t, pagetable_t, uint64, uint64);
+void            u2kvmunmap(pagetable_t, uint64, uint64);
+int             uvmlazyalloc(struct proc*, uint64);
 
 // plic.c
 void            plicinit(void);
@@ -196,6 +201,13 @@ void            virtio_disk_intr(void);
 
 uint64          free_proc(void);
 uint64          free_mem(void);
+// vma.c
+void            vma_init(void);
+struct VMA*     vma_alloc(void);
+void            vma_free(struct VMA*);
+struct VMA*     vma_find(struct proc*, uint64);
+int             vma_unmap(struct proc*, uint64, uint64);
+void            vma_unmap_all(struct proc*);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))

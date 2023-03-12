@@ -7,8 +7,11 @@
 #include "fs.h"
 #include "vmcopyin.h"
 #include "spinlock.h"
+#include "sleeplock.h"
+#include "file.h"
 #include "proc.h"
-
+#include "fcntl.h"
+#include "vma.h"
 /*
  * the kernel's page table.
  */
@@ -94,34 +97,48 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
 // Look up a virtual address, return the physical address,
 // or 0 if not mapped.
 // Can only be used to look up user pages.
+int
+uvmlazyalloc(struct proc *p, uint64 va)
+{
+  uint64 va0 = PGROUNDDOWN(va);
+  if(p == 0 || va >= p->sz || va0 < PGROUNDDOWN(p->trapframe->sp))
+    return -1;
+  if(vma_find(p, va))
+    return -1;
+
+  pte_t *pte = walk(p->pagetable, va0, 0);
+  if(pte && (*pte & PTE_V))
+    return 0;
+
+  char *mem = kalloc();
+  if(mem == 0)
+    return -1;
+  memset(mem, 0, PGSIZE);
+  if(mappages(p->pagetable, va0, PGSIZE, (uint64)mem,
+              PTE_W | PTE_X | PTE_R | PTE_U) < 0){
+    kfree(mem);
+    return -1;
+  }
+  u2kvmcopy(p->pagetable, p->kpagetable, va0, va0 + PGSIZE);
+  return 0;
+}
+
 uint64
 walkaddr(pagetable_t pagetable, uint64 va)
 {
-  pte_t *pte;
-  uint64 pa;
-  struct proc* p = myproc();
   if(va >= MAXVA)
     return 0;
 
-  pte = walk(pagetable, va, 0);
-  
+  pte_t *pte = walk(pagetable, va, 0);
   if(pte == 0 || (*pte & PTE_V) == 0){
-    if (va >= p->sz || va < PGROUNDUP(p->trapframe->sp))
+    struct proc *p = myproc();
+    if(p == 0 || p->pagetable != pagetable || uvmlazyalloc(p, va) < 0)
       return 0;
-    uint64 ka = (uint64)kalloc();
-    if (ka == 0)
-      return 0;
-    if (mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, ka, PTE_W|PTE_X|PTE_R|PTE_U) != 0)
-    {
-      kfree((void*)ka);
-      return 0;
-    }
-    return ka;
+    pte = walk(pagetable, va, 0);
   }
-  if((*pte & PTE_U) == 0)
+  if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
     return 0;
-  pa = PTE2PA(*pte);
-  return pa;
+  return PTE2PA(*pte);
 }
 
 // add a mapping to the kernel page table.
@@ -144,7 +161,7 @@ kvmpa(uint64 va)
   uint64 off = va % PGSIZE;
   pte_t *pte;
   uint64 pa;
-  
+
   pte = walk(kernel_pagetable, va, 0);
   if(pte == 0)
     panic("kvmpa");
@@ -359,7 +376,7 @@ void
 uvmclear(pagetable_t pagetable, uint64 va)
 {
   pte_t *pte;
-  
+
   pte = walk(pagetable, va, 0);
   if(pte == 0)
     panic("uvmclear");
@@ -417,7 +434,7 @@ void vmwalk(pagetable_t pagetable, int depth){
       pte_t pte = pagetable[i];
       if(pte & PTE_V){
         uint64 pa = PTE2PA(pte);
-        
+
         int temp = depth;
         while(temp--)
             printf(".. ");
@@ -434,16 +451,16 @@ void vmprint(pagetable_t pagetable){
    vmwalk(pagetable, 0);
 }
 
-void 
+void
 kvmmapkern(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm)
 {
-  if (mappages(pagetable, va, sz, pa, perm) != 0) 
+  if (mappages(pagetable, va, sz, pa, perm) != 0)
     panic("kvmmap");
 }
 
 // proc's version of kvminit
 pagetable_t
-kvmcreate() 
+kvmcreate()
 {
   pagetable_t pagetable;
   int i;
@@ -469,8 +486,8 @@ kvmcreate()
 }
 
 
-void 
-kvmfree(pagetable_t kpagetale) 
+void
+kvmfree(pagetable_t kpagetale)
 {
   pte_t pte = kpagetale[0];
   pagetable_t level1 = (pagetable_t) PTE2PA(pte);
@@ -486,25 +503,32 @@ kvmfree(pagetable_t kpagetale)
   kfree((void *) kpagetale);
 }
 
-void 
-u2kvmcopy(pagetable_t pagetable, pagetable_t kpagetable, uint64 oldsz, uint64 newsz)
+void
+u2kvmcopy(pagetable_t pagetable, pagetable_t kpagetable,
+          uint64 oldsz, uint64 newsz)
 {
-  pte_t* pte_from, *pte_to;
-  uint64 a, pa;
-  uint flags;
-
   if(newsz < oldsz)
     return;
 
-  oldsz = PGROUNDUP(oldsz);
-  for (a = oldsz; a < newsz; a += PGSIZE)
-  {
-    if((pte_from = walk(pagetable, a, 0)) == 0)
-      panic("u2kvmcopy: pte should exist");
-    if((pte_to = walk(kpagetable, a, 1)) == 0)
-      panic("u2kvmcopy: walk fails");
-    pa = PTE2PA(*pte_from);
-    flags = (PTE_FLAGS(*pte_from) & (~PTE_U));
-    *pte_to = PA2PTE(pa) | flags;
+  uint64 start = PGROUNDDOWN(oldsz);
+  for(uint64 a = start; a < newsz; a += PGSIZE){
+    pte_t *from = walk(pagetable, a, 0);
+    if(from == 0 || (*from & PTE_V) == 0)
+      continue;
+    pte_t *to = walk(kpagetable, a, 1);
+    if(to == 0)
+      panic("u2kvmcopy");
+    uint flags = PTE_FLAGS(*from) & ~PTE_U;
+    *to = PA2PTE(PTE2PA(*from)) | flags;
   }
+  sfence_vma();
+}
+
+void
+u2kvmunmap(pagetable_t kpagetable, uint64 va, uint64 npages)
+{
+  if(npages == 0)
+    return;
+  uvmunmap(kpagetable, va, npages, 0);
+  sfence_vma();
 }

@@ -15,8 +15,9 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "vma.h"
 
-#define MAXSYMLINK 10 
+#define MAXSYMLINK 10
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
@@ -426,7 +427,7 @@ sys_chdir(void)
   char path[MAXPATH];
   struct inode *ip;
   struct proc *p = myproc();
-  
+
   begin_op();
   if(argstr(0, path, MAXPATH) < 0 || (ip = namei(path)) == 0){
     end_op();
@@ -552,4 +553,70 @@ sys_symlink(void) {
   end_op();
 
   return 0;
+}
+
+uint64
+sys_mmap(void)
+{
+  uint64 requested;
+  int length, prot, flags, fd, offset;
+  struct file *f;
+
+  if(argaddr(0, &requested) < 0 ||
+     argint(1, &length) < 0 ||
+     argint(2, &prot) < 0 ||
+     argint(3, &flags) < 0 ||
+     argint(4, &fd) < 0 ||
+     argint(5, &offset) < 0)
+    return -1;
+
+  if(requested != 0 || length <= 0 || offset < 0 || (offset % PGSIZE) != 0)
+    return -1;
+  if(flags != MAP_SHARED && flags != MAP_PRIVATE)
+    return -1;
+  if(argfd(4, 0, &f) < 0)
+    return -1;
+  if((prot & PROT_READ) && !f->readable)
+    return -1;
+  if((prot & PROT_WRITE) && flags == MAP_SHARED && !f->writable)
+    return -1;
+
+  struct proc *p = myproc();
+  int slot;
+  for(slot = 0; slot < NOFILE; slot++)
+    if(p->vma[slot] == 0)
+      break;
+  if(slot == NOFILE)
+    return -1;
+
+  struct VMA *v = vma_alloc();
+  if(v == 0)
+    return -1;
+
+  uint64 base = PGROUNDUP(p->sz);
+  uint64 end = base + PGROUNDUP((uint64)length);
+  if(end >= PLIC || end < base){
+    vma_free(v);
+    return -1;
+  }
+
+  v->addr = base;
+  v->length = length;
+  v->offset = offset;
+  v->prot = prot;
+  v->flags = flags;
+  v->file = filedup(f);
+  p->vma[slot] = v;
+  p->sz = end;
+  return base;
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 addr;
+  int length;
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0 || length <= 0)
+    return -1;
+  return vma_unmap(myproc(), addr, length);
 }

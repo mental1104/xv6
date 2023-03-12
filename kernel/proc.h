@@ -104,7 +104,7 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
-  int mask; 
+  int mask;
   void (*handler)();
   int alarm_interval;
   int total_ticks;
@@ -142,4 +142,5 @@ struct proc {
   uint64 t4;
   uint64 t5;
   uint64 t6;
+  struct VMA* vma[NOFILE];
 };
