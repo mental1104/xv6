@@ -157,6 +157,7 @@ UPROGS=\
 	$U/_trace\
 	$U/_sysinfotest\
 	$U/_alarmtest\
+	$U/_symlinktest\
 
 ifeq ($(LAB),syscall)
 UPROGS += \

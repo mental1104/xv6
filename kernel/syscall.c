@@ -108,6 +108,7 @@ extern uint64 sys_trace(void);
 extern uint64 sys_sysinfo(void);
 extern uint64 sys_sigalarm(void);
 extern uint64 sys_sigreturn(void);
+extern uint64 sys_symlink(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -135,6 +136,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_sysinfo]   sys_sysinfo,
 [SYS_sigalarm]  sys_sigalarm,
 [SYS_sigreturn] sys_sigreturn,
+[SYS_symlink]   sys_symlink,
 };
 
 char *sysname[] = {
@@ -163,6 +165,7 @@ char *sysname[] = {
 [SYS_sysinfo]   "sysinfo",
 [SYS_sigalarm]  "sigalarm",
 [SYS_sigreturn] "sigreturn",
+[SYS_symlink]   "symlink",
 };
 
 void
