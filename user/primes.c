@@ -1,6 +1,9 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "user/user.h"
+
+__attribute__((noreturn))
+
 void children_process(int p[2]){
     int prime;
     int pp[2];
