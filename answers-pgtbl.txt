@@ -1,0 +1,23 @@
+1. The vmprint output is the Sv39 three-level page-table tree for the
+   first user process after exec("/init").  Each printed index is one
+   9-bit VPN component.  The entries 0, 1, and 2 at the lowest level are
+   the first three virtual pages in init's user address space.
+
+   Page 0 contains the init program's user text and data loaded from the
+   ELF file.  Page 1 is the invalid-for-user guard page below the user
+   stack: it is mapped, but uvmclear() has removed PTE_U.  Page 2 is the
+   first user stack page.  When running in user mode, the process cannot
+   read or write page 1 because PTE_U is not set, so a user access to it
+   faults.
+
+2. The third check in copyin_new(),
+
+       srcva + len < srcva
+
+   detects unsigned 64-bit wraparound.  For example, let
+   p->sz = 0xffffffffffffffff, srcva = 0xfffffffffffffff0, and
+   len = 0x20.  Then srcva >= p->sz is false, and the wrapped value of
+   srcva + len is 0x10, so srcva + len >= p->sz is also false.  However,
+   srcva + len < srcva is true.  Without this check, a range that crosses
+   the end of the address space could look like a small valid range after
+   arithmetic overflow.
