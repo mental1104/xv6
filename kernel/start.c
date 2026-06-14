@@ -33,6 +33,10 @@ start()
   // disable paging for now.
   w_satp(0);
 
+  // Allow supervisor mode to access physical memory on newer QEMU.
+  asm volatile("csrw pmpaddr0, %0" : : "r" (0x3fffffffffffffull));
+  asm volatile("csrw pmpcfg0, %0" : : "r" (0xf));
+
   // delegate all interrupts and exceptions to supervisor mode.
   w_medeleg(0xffff);
   w_mideleg(0xffff);
