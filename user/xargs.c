@@ -4,49 +4,77 @@
 #include "kernel/fs.h"
 #include "kernel/param.h"
 
-int main(int argc, char *argv[])
+void
+run(char *line, int argc, char *argv[])
 {
-  char buf[512];
-  char* full_argv[MAXARG];
+  char *full_argv[MAXARG];
+  char *p;
   int i;
-  int len;
-  if(argc < 2){
-    fprintf(2, "usage: xargs your_command\n");
+
+  for(i = 1; i < argc; i++)
+    full_argv[i-1] = argv[i];
+
+  i = argc - 1;
+  p = line;
+  while(*p){
+    while(*p == ' ' || *p == '\t')
+      p++;
+    if(*p == 0)
+      break;
+    if(i >= MAXARG - 1){
+      fprintf(2, "xargs: too many args\n");
+      exit(1);
+    }
+    full_argv[i++] = p;
+    while(*p && *p != ' ' && *p != '\t')
+      p++;
+    if(*p)
+      *p++ = 0;
+  }
+  full_argv[i] = 0;
+
+  if(fork() == 0){
+    exec(full_argv[0], full_argv);
+    fprintf(2, "xargs: exec %s failed\n", full_argv[0]);
     exit(1);
   }
-  
-  if (argc + 1 > MAXARG) {
-      fprintf(2, "too many args\n");
+
+  wait(0);
+}
+
+int
+main(int argc, char *argv[])
+{
+  char buf[512];
+  char c;
+  int n;
+  int len;
+
+  if(argc < 2){
+    fprintf(2, "usage: xargs command\n");
+    exit(1);
+  }
+
+  len = 0;
+  while((n = read(0, &c, 1)) > 0){
+    if(c == '\n'){
+      buf[len] = 0;
+      if(len > 0)
+        run(buf, argc, argv);
+      len = 0;
+      continue;
+    }
+    if(len >= sizeof(buf) - 1){
+      fprintf(2, "xargs: line too long\n");
       exit(1);
+    }
+    buf[len++] = c;
   }
-  // copy the original args
-  // skip the first argument xargs
-  for (i = 1; i < argc; i++) {
-      full_argv[i-1] = argv[i];
+
+  if(len > 0){
+    buf[len] = 0;
+    run(buf, argc, argv);
   }
-  // full_argv[argc-1] is the extra arg to be filled
-  // full_argv[argc] is the terminating zero
-  full_argv[argc] = 0;
-  while (1) {
-      i = 0;
-      // read a line
-      while (1) {
-        len = read(0,&buf[i],1);
-        if (len == 0 || buf[i] == '\n') break;
-        i++;
-      }
-      if (i == 0) break;
-      // terminating 0
-      buf[i] = 0;
-      full_argv[argc-1] = buf;
-      if (fork() == 0) {
-        // fork a child process to do the job
-        exec(full_argv[0],full_argv);
-        exit(0);
-      } else {
-        // wait for the child process to complete
-        wait(0);
-      }
-  }
+
   exit(0);
 }

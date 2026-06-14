@@ -38,7 +38,7 @@ void find(char* path, char* filename){
             
         case T_DIR:
             if(strlen(path)+1+DIRSIZ+1 > sizeof buf){
-                printf("ls: path too long");
+                printf("find: path too long\n");
                 break;
             }
             strcpy(buf, path);
@@ -60,7 +60,7 @@ void find(char* path, char* filename){
 
 int main(int argc, char** argv){
     if(argc!=3){
-        fprintf(2,"Usage: find directory filename.\n");
+        fprintf(2, "usage: find directory filename\n");
         exit(1);
     }
     find(argv[1], argv[2]);

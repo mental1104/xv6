@@ -5,12 +5,11 @@
 int 
 main(int argc, char *argv[])
 {
-    int duration;
-    if(argc<=1){
-        fprintf(2,"Require more parameters!");
-        exit(1);
-    }
-    duration = atoi(argv[1]);
-    sleep(duration);
-    exit(0);
+  if(argc != 2){
+    fprintf(2, "usage: sleep ticks\n");
+    exit(1);
+  }
+
+  sleep(atoi(argv[1]));
+  exit(0);
 }

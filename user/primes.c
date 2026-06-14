@@ -2,9 +2,9 @@
 #include "kernel/stat.h"
 #include "user/user.h"
 
-__attribute__((noreturn))
-
-void children_process(int p[2]){
+void
+children_process(int p[2])
+{
     int prime;
     int pp[2];
     int num;
@@ -41,7 +41,7 @@ void children_process(int p[2]){
 
 int main(int argc, char** argv){
     if(argc>1){
-        fprintf(2, "Usage: primes");
+        fprintf(2, "usage: primes\n");
         exit(1);
     }
 
