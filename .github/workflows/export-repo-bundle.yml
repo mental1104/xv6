@@ -18,15 +18,24 @@ jobs:
           fetch-depth: 0
           show-progress: false
 
-      - name: Upload received bundle parts for diagnostics
-        uses: actions/upload-artifact@v4
-        with:
-          name: received-integration-bundle-parts
-          path: integration-bundle/
-          retention-days: 1
-
       - name: Reconstruct integration bundle
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p0 = Path('integration-bundle/part00')
+          text = p0.read_text()
+          assert len(text) == 4999
+          text = text[:827] + 's' + text[827:]
+          p0.write_text(text)
+
+          p8 = Path('integration-bundle/part08')
+          text = p8.read_text()
+          bad = 'zc/B5h8qMmL4oKz7QQDAcK2HcW2xAF4nOtR/K2wYTfv'
+          good = 'zc/B5h8qMmL4oKz7QQDAeUNHcxso2p4nOtR/K2wYTfv'
+          assert text.count(bad) == 1
+          p8.write_text(text.replace(bad, good))
+          PY
           cat integration-bundle/part* | base64 --decode > /tmp/xv6-main.bundle
           echo 'd039dc1f367f9d6e3140708f0cc066d2e5ee0aa1b67d4dd36254211efc006495  /tmp/xv6-main.bundle' | sha256sum --check
           git bundle verify /tmp/xv6-main.bundle
