@@ -51,15 +51,29 @@ jobs:
 
       - name: Install RISC-V build tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc
 
       - name: Build kernel, filesystem and thread programs
         run: |
-          make clean
-          make TOOLPREFIX=riscv64-linux-gnu-
-          make TOOLPREFIX=riscv64-linux-gnu- fs.img
-          make ph barrier
+          set +e
+          {
+            make clean
+            make TOOLPREFIX=riscv64-linux-gnu-
+            make TOOLPREFIX=riscv64-linux-gnu- fs.img
+            make ph barrier
+          } > /tmp/build.log 2>&1
+          status=$?
+          cat /tmp/build.log
+          exit $status
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xv6-integration-build-log
+          path: /tmp/build.log
+          retention-days: 1
 
       - name: Boot smoke test
         run: |
