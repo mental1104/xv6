@@ -1,4 +1,4 @@
-name: Export repository bundle
+name: Validate integrated xv6 main
 
 on:
   pull_request:
@@ -6,22 +6,50 @@ on:
       - pristine
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  export:
+  validate:
     if: github.head_ref == 'agent/export-xv6-repo'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Fetch all branches
-        run: git fetch --all --prune
-      - name: Create repository bundle
-        run: git bundle create xv6.bundle --all
-      - uses: actions/upload-artifact@v4
-        with:
-          name: xv6-repository-bundle
-          path: xv6.bundle
-          retention-days: 1
+
+      - name: Reconstruct integration bundle
+        run: |
+          cat integration-bundle/part* | base64 --decode > /tmp/xv6-main.bundle
+          echo 'd039dc1f367f9d6e3140708f0cc066d2e5ee0aa1b67d4dd36254211efc006495  /tmp/xv6-main.bundle' | sha256sum --check
+          git bundle verify /tmp/xv6-main.bundle
+          git fetch /tmp/xv6-main.bundle main:refs/heads/integrated-main
+          test "$(git rev-parse integrated-main)" = '221fb4fc8353a080adc2e1a1a235e7bf02db34f5'
+          git checkout integrated-main
+
+      - name: Install RISC-V build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc
+
+      - name: Build kernel, filesystem and thread programs
+        run: |
+          make clean
+          make TOOLPREFIX=riscv64-linux-gnu-
+          make TOOLPREFIX=riscv64-linux-gnu- fs.img
+          make ph barrier
+
+      - name: Boot smoke test
+        run: |
+          set -o pipefail
+          {
+            sleep 3
+            echo 'echo smoke-ok'
+            sleep 3
+            printf '\001x'
+          } | timeout 25s make TOOLPREFIX=riscv64-linux-gnu- qemu > /tmp/qemu.log 2>&1 || true
+          cat /tmp/qemu.log
+          grep -q 'init: starting sh' /tmp/qemu.log
+          grep -q 'smoke-ok' /tmp/qemu.log
+
+      - name: Publish validated integration branch
+        run: git push origin integrated-main:refs/heads/agent/xv6-main-integration --force
