@@ -1,0 +1,26 @@
+name: Export repository bundle
+
+on:
+  push:
+    branches:
+      - agent/export-xv6-repo
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch all branches
+        run: git fetch --all --prune
+      - name: Create repository bundle
+        run: git bundle create xv6.bundle --all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xv6-repository-bundle
+          path: xv6.bundle
+          retention-days: 1
