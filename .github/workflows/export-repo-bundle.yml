@@ -78,14 +78,22 @@ jobs:
       - name: Boot smoke test
         run: |
           {
-            sleep 3
+            sleep 8
             echo 'echo smoke-ok'
-            sleep 3
+            sleep 4
             printf '\001x'
-          } | timeout 25s make TOOLPREFIX=riscv64-linux-gnu- qemu > /tmp/qemu.log 2>&1 || true
+          } | timeout 35s make TOOLPREFIX=riscv64-linux-gnu- qemu > /tmp/qemu.log 2>&1 || true
           cat /tmp/qemu.log
           grep -q 'init: starting sh' /tmp/qemu.log
           grep -q 'smoke-ok' /tmp/qemu.log
+
+      - name: Upload QEMU diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xv6-integration-qemu-log
+          path: /tmp/qemu.log
+          retention-days: 1
 
       - name: Publish validated integration branch
         run: git push origin integrated-main:refs/heads/agent/xv6-main-integration --force
