@@ -139,6 +139,56 @@ jobs:
           git add user/primes.c
           git commit -m 'fix: make primes pipeline iterative'
 
+      - name: Enable supervisor memory access on modern QEMU
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('kernel/riscv.h')
+          text = p.read_text()
+          needle = '''static inline void
+          w_mepc(uint64 x)
+          {
+            asm volatile("csrw mepc, %0" : : "r" (x));
+          }
+          '''
+          replacement = needle + '''
+          // Physical Memory Protection, required before entering supervisor mode
+          // on current RISC-V implementations.
+          static inline void
+          w_pmpcfg0(uint64 x)
+          {
+            asm volatile("csrw pmpcfg0, %0" : : "r" (x));
+          }
+
+          static inline void
+          w_pmpaddr0(uint64 x)
+          {
+            asm volatile("csrw pmpaddr0, %0" : : "r" (x));
+          }
+          '''
+          assert needle in text
+          p.write_text(text.replace(needle, replacement, 1))
+
+          p = Path('kernel/start.c')
+          text = p.read_text()
+          needle = '''  // disable paging for now.
+            w_satp(0);
+          '''
+          replacement = '''  // disable paging for now.
+            w_satp(0);
+
+            // Give supervisor mode access to all physical memory.
+            // Newer QEMU versions enforce PMP permissions.
+            w_pmpaddr0(0x3fffffffffffffull);
+            w_pmpcfg0(0xf);
+          '''
+          assert needle in text
+          p.write_text(text.replace(needle, replacement, 1))
+          PY
+          git add kernel/riscv.h kernel/start.c
+          git commit -m 'fix: allow supervisor memory access on modern QEMU'
+
       - name: Install RISC-V build tools
         run: |
           sudo apt-get update -qq
