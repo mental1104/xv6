@@ -161,7 +161,6 @@ concur(void)
         if((x % 3) == 0) {
           symlink("/testsymlink/z", "/testsymlink/y");
           if (stat_slink("/testsymlink/y", &st) == 0) {
-            m++;
             if(st.type != T_SYMLINK) {
               printf("FAILED: not a symbolic link\n", st.type);
               exit(1);

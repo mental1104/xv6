@@ -2294,7 +2294,6 @@ fsfull()
       if(cc < BSIZE)
         break;
       total += cc;
-      fsblocks++;
     }
     printf("%s: wrote %d bytes\n", total);
     close(fd);
