@@ -1,15 +1,16 @@
 name: Export repository bundle
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/export-xv6-repo
+      - pristine
 
 permissions:
   contents: read
 
 jobs:
   export:
+    if: github.head_ref == 'agent/export-xv6-repo'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
