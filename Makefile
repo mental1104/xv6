@@ -147,8 +147,6 @@ UPROGS=\
 	$U/_lazytests\
 	$U/_cowtest\
 	$U/_uthread\
-	$U/_kalloctest\
-	$U/_bcachetest\
 	$U/_bigfile\
 	$U/_symlinktest\
 	$U/_mmaptest

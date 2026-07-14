@@ -2271,7 +2271,6 @@ void
 fsfull()
 {
   int nfiles;
-  int fsblocks = 0;
 
   printf("fsfull test\n");
 

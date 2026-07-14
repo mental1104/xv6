@@ -155,7 +155,6 @@ concur(void)
       exit(1);
     }
     if(pid == 0) {
-      int m = 0;
       unsigned int x = (pid ? 1 : 97);
       for(i = 0; i < 100; i++){
         x = x * 1103515245 + 12345;
