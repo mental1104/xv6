@@ -18,16 +18,14 @@ jobs:
           fetch-depth: 0
           show-progress: false
 
-      - name: Reconstruct integration bundle
+      - name: Repair and checksum integration bundle
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           p0 = Path('integration-bundle/part00')
           text = p0.read_text()
           assert len(text) == 4999
-          text = text[:827] + 's' + text[827:]
-          p0.write_text(text)
+          p0.write_text(text[:827] + 's' + text[827:])
 
           p8 = Path('integration-bundle/part08')
           text = p8.read_text()
@@ -38,8 +36,13 @@ jobs:
           PY
           cat integration-bundle/part* | base64 --decode > /tmp/xv6-main.bundle
           echo 'd039dc1f367f9d6e3140708f0cc066d2e5ee0aa1b67d4dd36254211efc006495  /tmp/xv6-main.bundle' | sha256sum --check
-          git bundle verify /tmp/xv6-main.bundle
-          git fetch /tmp/xv6-main.bundle main:refs/heads/integrated-main
+
+      - name: Verify Git bundle
+        run: git bundle verify /tmp/xv6-main.bundle
+
+      - name: Import integrated commit history
+        run: |
+          git fetch /tmp/xv6-main.bundle refs/heads/main:refs/heads/integrated-main
           test "$(git rev-parse integrated-main)" = '221fb4fc8353a080adc2e1a1a235e7bf02db34f5'
           git checkout integrated-main
 
@@ -57,7 +60,6 @@ jobs:
 
       - name: Boot smoke test
         run: |
-          set -o pipefail
           {
             sleep 3
             echo 'echo smoke-ok'
