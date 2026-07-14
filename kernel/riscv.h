@@ -38,6 +38,20 @@ w_mepc(uint64 x)
   asm volatile("csrw mepc, %0" : : "r" (x));
 }
 
+// Physical Memory Protection, required before entering supervisor mode
+// on current RISC-V implementations.
+static inline void
+w_pmpcfg0(uint64 x)
+{
+  asm volatile("csrw pmpcfg0, %0" : : "r" (x));
+}
+
+static inline void
+w_pmpaddr0(uint64 x)
+{
+  asm volatile("csrw pmpaddr0, %0" : : "r" (x));
+}
+
 // Supervisor Status Register, sstatus
 
 #define SSTATUS_SPP (1L << 8)  // Previous mode, 1=Supervisor, 0=User
