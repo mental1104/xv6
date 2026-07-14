@@ -45,6 +45,7 @@ jobs:
           git bundle unbundle /tmp/xv6-main.bundle
           git cat-file -e '221fb4fc8353a080adc2e1a1a235e7bf02db34f5^{commit}'
           git update-ref refs/heads/integrated-main 221fb4fc8353a080adc2e1a1a235e7bf02db34f5
+          git reset --hard HEAD
           git checkout integrated-main
           test "$(git rev-parse HEAD)" = '221fb4fc8353a080adc2e1a1a235e7bf02db34f5'
 
