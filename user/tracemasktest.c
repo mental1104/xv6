@@ -4,20 +4,27 @@
 #include "user/user.h"
 #include "user/tracemask.h"
 
-// Defines one table-driven parser expectation.
+// 描述一条表驱动的 trace 参数解析测试用例。
 struct trace_mask_case {
-  char *spec;         // Input specification passed to trace_parse_mask().
-  int expected_status; // Expected enum trace_mask_status result.
-  int expected_mask;   // Expected mask when parsing succeeds.
+  char *spec;          // 传给 trace_parse_mask() 的输入字符串。
+  int expected_status; // 预期返回的 enum trace_mask_status 状态。
+  int expected_mask;   // 解析成功时预期得到的整数掩码。
 };
 
-// Exercise representative success and failure inputs, then verify that every
-// registered system call name maps back to its SYS_* bit.
+/*
+ * 执行具有代表性的成功和失败用例，并验证每个已注册系统调用名称都能
+ * 正确映射回对应的 SYS_* 位。
+ *
+ * 参数：
+ *   无。
+ *
+ * 返回值：
+ *   所有断言通过时以状态码 0 退出；存在失败用例时以状态码 1 退出。
+ */
 int
 main(void)
 {
-  // Fixed cases cover list composition, backward compatibility, malformed
-  // separators, unknown names, and signed-int overflow.
+  // 固定用例覆盖名称组合、整数兼容、非法分隔符、未知名称和整数溢出。
   struct trace_mask_case cases[] = {
     {"read", TRACE_MASK_OK, 1U << SYS_read},
     {"read,write", TRACE_MASK_OK, (1U << SYS_read) | (1U << SYS_write)},
@@ -32,15 +39,15 @@ main(void)
     {"2147483648", TRACE_MASK_RANGE, 0},
     {"read|write", TRACE_MASK_UNKNOWN, 0},
   };
-  int failed = 0; // Number of expectations that did not match parser output.
-  int case_index; // Index of the fixed parser case currently under test.
-  int syscall_number; // SYS_* number checked against the shared name table.
+  int failed = 0; // 实际解析结果不符合预期的用例数量。
+  int case_index; // 当前正在执行的固定测试用例下标。
+  int syscall_number; // 当前根据共享名称表检查的 SYS_* 编号。
 
   for(case_index = 0;
       case_index < (int)(sizeof(cases) / sizeof(cases[0]));
       case_index++){
-    int mask = -1; // Sentinel output used to detect writes on failed parsing.
-    int status;    // Actual parser status for the current fixed case.
+    int mask = -1; // 失败路径哨兵值，用于检查解析器是否错误写入输出参数。
+    int status;    // 当前固定用例实际得到的解析状态。
 
     status = trace_parse_mask(cases[case_index].spec, &mask);
     if(status != cases[case_index].expected_status ||
@@ -51,13 +58,12 @@ main(void)
     }
   }
 
-  // This loop prevents a newly registered system call from being printable by
-  // the kernel but unavailable through the user-facing name parser.
+  // 该循环防止新增系统调用只在内核中可打印，却遗漏用户态名称解析支持。
   for(syscall_number = 1;
       syscall_number < (int)SYSCALL_NAME_COUNT;
       syscall_number++){
-    int mask = 0; // Mask generated from the current registered system call name.
-    int status;   // Parser result for the current registered name.
+    int mask = 0; // 根据当前已注册系统调用名称生成的实际掩码。
+    int status;   // 当前已注册名称的实际解析状态。
 
     status = trace_parse_mask(syscall_names[syscall_number], &mask);
     if(status != TRACE_MASK_OK || mask != (int)(1U << syscall_number)){
