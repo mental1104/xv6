@@ -1,9 +1,9 @@
 #ifndef XV6_SYSCALL_NAMES_H
 #define XV6_SYSCALL_NAMES_H
 
-// Maps each SYS_* number to the canonical command-line and diagnostic name.
-// The designated indexes keep the table aligned with kernel/syscall.h even
-// when system call numbers are not written in declaration order.
+// 将每个 SYS_* 编号映射到命令行解析和内核诊断输出共用的标准名称。
+// 使用指定下标初始化，即使系统调用编号的声明顺序发生变化，名称仍能与
+// kernel/syscall.h 中的编号保持一致。
 static const char *const syscall_names[] = {
 [SYS_fork]      = "fork",
 [SYS_exit]      = "exit",
@@ -35,7 +35,7 @@ static const char *const syscall_names[] = {
 [SYS_munmap]    = "munmap",
 };
 
-// Number of addressable entries, including index zero, used to bound lookups.
+// 名称表中可访问的元素数量（包含下标 0），用于限制遍历和查找范围。
 #define SYSCALL_NAME_COUNT (sizeof(syscall_names) / sizeof(syscall_names[0]))
 
 #endif
