@@ -1,0 +1,69 @@
+name: Verify COW refactor
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install RISC-V toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu \
+            qemu-system-misc \
+            expect
+
+      - name: Clean build
+        run: |
+          make clean
+          make -j2
+
+      - name: Run focused tests with default CPUs
+        run: |
+          cat > /tmp/xv6-tests.exp <<'EOF'
+          set timeout 420
+          spawn make qemu
+          expect "init: starting sh"
+
+          send "cowtest\r"
+          expect "ALL COW TESTS PASSED"
+
+          send "lazytests\r"
+          expect "ALL TESTS PASSED"
+
+          send "usertests copyout\r"
+          expect "ALL TESTS PASSED"
+
+          send "usertests copyin\r"
+          expect "ALL TESTS PASSED"
+
+          send "usertests sbrkbugs\r"
+          expect "ALL TESTS PASSED"
+
+          send "\001x"
+          expect eof
+          EOF
+          expect -f /tmp/xv6-tests.exp
+
+      - name: Run COW test with one CPU
+        run: |
+          cat > /tmp/xv6-cow-single-cpu.exp <<'EOF'
+          set timeout 300
+          spawn make qemu CPUS=1
+          expect "init: starting sh"
+
+          send "cowtest\r"
+          expect "ALL COW TESTS PASSED"
+
+          send "\001x"
+          expect eof
+          EOF
+          expect -f /tmp/xv6-cow-single-cpu.exp
