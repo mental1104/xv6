@@ -39,6 +39,31 @@ pa_index(uint64 pa)
   return (pa - KERNBASE) / PGSIZE;
 }
 
+static int
+page_refcount(uint64 pa)
+{
+  int refs;
+
+  acquire(&pageref.lock);
+  refs = pageref.count[pa_index(pa)];
+  release(&pageref.lock);
+
+  return refs;
+}
+
+static void
+cow_install_writable_page(pagetable_t pagetable, uint64 va,
+                          pte_t *pte, uint64 pa, uint flags)
+{
+  *pte = PA2PTE(pa) | flags;
+
+  struct proc *p = myproc();
+  if(p && p->pagetable == pagetable)
+    u2kvmcopy(p->pagetable, p->kpagetable, va, va + PGSIZE);
+
+  sfence_vma();
+}
+
 void
 kinit()
 {
@@ -160,6 +185,7 @@ increase_rc(uint64 pa)
 int
 cow_alloc(pagetable_t pagetable, uint64 va)
 {
+  // Locate and validate the COW leaf PTE.
   va = PGROUNDDOWN(va);
   if(va >= MAXVA)
     return -1;
@@ -168,32 +194,23 @@ cow_alloc(pagetable_t pagetable, uint64 va)
   if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_COW) == 0)
     return -1;
 
-  uint64 pa = PTE2PA(*pte);
-  int refs;
-  acquire(&pageref.lock);
-  refs = pageref.count[pa_index(pa)];
-  release(&pageref.lock);
+  uint64 oldpa = PTE2PA(*pte);
+  uint flags = (PTE_FLAGS(*pte) | PTE_W) & ~PTE_COW;
 
-  if(refs == 1){
-    *pte = (*pte | PTE_W) & ~PTE_COW;
-    struct proc *p = myproc();
-    if(p && p->pagetable == pagetable)
-      u2kvmcopy(p->pagetable, p->kpagetable, va, va + PGSIZE);
-    sfence_vma();
+  // An exclusively owned page only needs its write permission restored.
+  if(page_refcount(oldpa) == 1){
+    cow_install_writable_page(pagetable, va, pte, oldpa, flags);
     return 0;
   }
 
+  // A shared page must be copied before the current page table can write it.
   char *mem = kalloc();
   if(mem == 0)
     return -1;
+  memmove(mem, (void*)oldpa, PGSIZE);
 
-  memmove(mem, (void*)pa, PGSIZE);
-  uint flags = (PTE_FLAGS(*pte) | PTE_W) & ~PTE_COW;
-  *pte = PA2PTE((uint64)mem) | flags;
-  struct proc *p = myproc();
-  if(p && p->pagetable == pagetable)
-    u2kvmcopy(p->pagetable, p->kpagetable, va, va + PGSIZE);
-  sfence_vma();
-  kfree((void*)pa);
+  // Commit the new mapping before dropping this page table's old reference.
+  cow_install_writable_page(pagetable, va, pte, (uint64)mem, flags);
+  kfree((void*)oldpa);
   return 0;
 }
