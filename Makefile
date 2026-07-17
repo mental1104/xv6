@@ -19,6 +19,7 @@ OBJS = \
   $K/trap.o \
   $K/syscall.o \
   $K/sysproc.o \
+  $K/vmstat.o \
   $K/bio.o \
   $K/fs.o \
   $K/log.o \
@@ -149,7 +150,8 @@ UPROGS=\
 	$U/_uthread\
 	$U/_bigfile\
 	$U/_symlinktest\
-	$U/_mmaptest
+	$U/_mmaptest\
+	$U/_vmbench
 
 UEXTRA = user/xargstest.sh
 
