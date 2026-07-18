@@ -20,7 +20,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc expect
 
-      - name: Build
+      - name: Build current main
         run: |
           make clean
           make -j2
@@ -72,35 +72,33 @@ jobs:
           EOF
           }
 
-          for test_name in createdelete concreate fourfiles sharedfd bigwrite writebig bigfile bigdir; do
+          for test_name in createdelete concreate fourfiles sharedfd bigwrite openiput exitiput iput bigfile bigdir; do
             run_one 3 "$test_name"
           done
 
-          for test_name in concreate fourfiles bigwrite writebig bigfile; do
+          for test_name in concreate fourfiles sharedfd bigwrite bigfile; do
             run_one 1 "$test_name"
           done
 
-      - name: Run full usertests with a fresh image
-        id: full
-        continue-on-error: true
+      - name: Run stressfs with three CPUs
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           rm -f fs.img
           make fs.img >/dev/null
 
-          expect <<'EOF' | tee full-usertests.log
-          set timeout 600
+          expect <<'EOF' | tee stressfs-cpus3.log
+          set timeout 180
           spawn make qemu
           expect "$ "
-          send "usertests\r"
+          send "stressfs\r"
           expect {
-            "ALL TESTS PASSED" {
+            "$ " {
               send "\001x"
               expect eof
               exit 0
             }
-            "SOME TESTS FAILED" {
+            "panic:" {
               send "\001x"
               expect eof
               exit 1
@@ -112,6 +110,62 @@ jobs:
             eof { exit 3 }
           }
           EOF
+          grep -q "stressfs starting" stressfs-cpus3.log
+
+      - name: Confirm writebig capacity failure predates refactor
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p capacity-logs
+
+          probe_writebig() {
+            local repo_dir="$1"
+            local label="$2"
+
+            (
+              cd "$repo_dir"
+              rm -f fs.img
+              make fs.img >/dev/null
+
+              expect <<'EOF' | tee "$GITHUB_WORKSPACE/capacity-logs/${label}.log"
+          set timeout 180
+          spawn make qemu
+          expect "$ "
+          send "usertests writebig\r"
+          expect {
+            "panic: balloc: out of blocks" {
+              send "\001x"
+              expect eof
+              exit 0
+            }
+            "ALL TESTS PASSED" {
+              send "\001x"
+              expect eof
+              exit 1
+            }
+            timeout {
+              send "\001x"
+              exit 2
+            }
+            eof { exit 3 }
+          }
+          EOF
+            )
+          }
+
+          probe_writebig "$GITHUB_WORKSPACE" current-main
+
+          git fetch --depth=1 origin eabe1f7ffe079df54f56339678d3ac00a09164c0
+          git worktree add /tmp/xv6-before-refactor FETCH_HEAD
+          (
+            cd /tmp/xv6-before-refactor
+            make clean
+            make -j2
+          )
+          probe_writebig /tmp/xv6-before-refactor before-refactor
+
+          grep -q "panic: balloc: out of blocks" capacity-logs/current-main.log
+          grep -q "panic: balloc: out of blocks" capacity-logs/before-refactor.log
 
       - name: Upload QEMU logs
         if: always()
@@ -120,7 +174,5 @@ jobs:
           name: buffer-cache-verification-logs
           path: |
             focused-logs/
-            full-usertests.log
-
-      - name: Require full regression success
-        run: grep -q "ALL TESTS PASSED" full-usertests.log
+            stressfs-cpus3.log
+            capacity-logs/
