@@ -1,0 +1,40 @@
+name: Verify buffer cache refactor
+
+on:
+  push:
+    branches:
+      - concept/30-buffer-cache-bget-refactor
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install RISC-V toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc
+
+      - name: Build
+        run: |
+          make clean
+          make -j2
+
+      - name: Run usertests with three CPUs
+        shell: bash
+        run: |
+          set -o pipefail
+          { sleep 2; echo usertests; } | timeout 240 make qemu | tee usertests-cpus3.log || test $? -eq 124
+          grep -q "ALL TESTS PASSED" usertests-cpus3.log
+
+      - name: Run usertests with one CPU
+        shell: bash
+        run: |
+          set -o pipefail
+          { sleep 2; echo usertests; } | timeout 240 make qemu CPUS=1 | tee usertests-cpus1.log || test $? -eq 124
+          grep -q "ALL TESTS PASSED" usertests-cpus1.log
