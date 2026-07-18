@@ -1,0 +1,57 @@
+name: Refactor FS readability on PR
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  refactor-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Apply focused refactor
+        run: python3 .github/refactor_fs.py
+
+      - name: Install xv6 toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc
+
+      - name: Build xv6
+        run: |
+          make clean
+          make
+
+      - name: Run symlink tests
+        shell: bash
+        run: |
+          set +e
+          timeout 90s bash -c 'printf "symlinktest\n" | make qemu' > /tmp/symlinktest.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/symlinktest.log
+          grep -q "test symlinks: ok" /tmp/symlinktest.log
+          grep -q "test concurrent symlinks: ok" /tmp/symlinktest.log
+          if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
+            exit "$status"
+          fi
+
+      - name: Commit verified refactor
+        shell: bash
+        run: |
+          rm .github/refactor_fs.py
+          rm .github/workflows/refactor-fs-readability.yml
+          rm .github/workflows/refactor-fs-readability-pr.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "refactor: clarify fs syscall and log flow (#40)"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
