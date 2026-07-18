@@ -122,55 +122,59 @@ recover_from_log(void)
 }
 
 // called at the start of each FS system call.
+// Caller must hold log.lock.
+static int
+log_has_space_for_new_op_locked(void)
+{
+  int reserved;
+
+  reserved = log.lh.n + (log.outstanding + 1) * MAXOPBLOCKS;
+  return reserved <= LOGSIZE;
+}
+
+// called at the start of each FS system call.
 void
 begin_op(void)
 {
   acquire(&log.lock);
-  while(1){
-    if(log.committing){
-      sleep(&log, &log.lock);
-    } else if(log.lh.n + (log.outstanding+1)*MAXOPBLOCKS > LOGSIZE){
-      // this op might exhaust log space; wait for commit.
-      sleep(&log, &log.lock);
-    } else {
-      log.outstanding += 1;
-      release(&log.lock);
-      break;
-    }
-  }
+
+  while(log.committing || !log_has_space_for_new_op_locked())
+    sleep(&log, &log.lock);
+
+  log.outstanding += 1;
+  release(&log.lock);
 }
 
+// called at the end of each FS system call.
+// commits if this was the last outstanding operation.
 // called at the end of each FS system call.
 // commits if this was the last outstanding operation.
 void
 end_op(void)
 {
-  int do_commit = 0;
-
   acquire(&log.lock);
   log.outstanding -= 1;
+
   if(log.committing)
     panic("log.committing");
-  if(log.outstanding == 0){
-    do_commit = 1;
-    log.committing = 1;
-  } else {
-    // begin_op() may be waiting for log space,
-    // and decrementing log.outstanding has decreased
-    // the amount of reserved space.
-    wakeup(&log);
-  }
-  release(&log.lock);
 
-  if(do_commit){
-    // call commit w/o holding locks, since not allowed
-    // to sleep with locks.
-    commit();
-    acquire(&log.lock);
-    log.committing = 0;
+  if(log.outstanding != 0){
+    // A waiting begin_op() may now fit in the reserved log space.
     wakeup(&log);
     release(&log.lock);
+    return;
   }
+
+  // Block new operations before dropping log.lock for disk I/O.
+  log.committing = 1;
+  release(&log.lock);
+
+  commit();
+
+  acquire(&log.lock);
+  log.committing = 0;
+  wakeup(&log);
+  release(&log.lock);
 }
 
 // Copy modified blocks from cache to log.

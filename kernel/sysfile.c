@@ -286,85 +286,112 @@ create(char *path, short type, short major, short minor)
   return ip;
 }
 
-uint64
-sys_open(void)
+// Caller must hold ip's inode lock.
+static int
+read_symlink_target_locked(struct inode *ip, char *path)
 {
-  char path[MAXPATH];
-  int fd, omode;
-  struct file *f;
-  struct inode *ip;
-  int n;
+  int len;
 
-  if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
+  if(readi(ip, 0, (uint64)&len, 0, sizeof(len)) < sizeof(len))
+    return -1;
+  if(readi(ip, 0, (uint64)path, sizeof(len), len + 1) < len + 1)
     return -1;
 
-  begin_op();
+  return 0;
+}
 
-  if(omode & O_CREATE){
-    ip = create(path, T_FILE, 0, 0);
-    if(ip == 0){
-      end_op();
-      return -1;
-    }
-  } else {
-    if((ip = namei(path)) == 0){
-      end_op();
-      return -1;
-    }
+// Follow symbolic links and return an unlocked inode reference.
+static struct inode*
+follow_symlinks(struct inode *ip, char *path)
+{
+  int remaining = MAXSYMLINK;
 
-    if (!(omode & O_NOFOLLOW)) {
-      int cnt = MAXSYMLINK;
-      int len = 0;
-      while (cnt-- > 0) {
-        ilock(ip);
-        if (ip->type == T_SYMLINK) {
-          if (readi(ip, 0, (uint64)&len, 0, sizeof(len)) < sizeof(len)) {
-            iunlockput(ip);
-            end_op();
-            return -1;
-          }
-          if (readi(ip, 0, (uint64)path, sizeof(len), len + 1) < len + 1) {
-            iunlockput(ip);
-            end_op();
-            return -1;
-          }
-          iunlockput(ip);
-        } else {
-          iunlock(ip);
-          break;
-        }
-        if((ip = namei(path)) == 0){
-          end_op();
-          return -1;
-        }
-      }
-      if (cnt <= 0) {
-        end_op();
-        return -1;
-      }
-    }
+  while(remaining-- > 0){
     ilock(ip);
-    if(ip->type == T_DIR && omode != O_RDONLY){
-      iunlockput(ip);
-      end_op();
-      return -1;
+
+    if(ip->type != T_SYMLINK){
+      iunlock(ip);
+      break;
     }
+
+    if(read_symlink_target_locked(ip, path) < 0){
+      iunlockput(ip);
+      return 0;
+    }
+
+    iunlockput(ip);
+    ip = namei(path);
+    if(ip == 0)
+      return 0;
   }
 
-  if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
-    iunlockput(ip);
-    end_op();
+  if(remaining <= 0){
+    iput(ip);
+    return 0;
+  }
+
+  return ip;
+}
+
+// Return the inode locked on success.
+static struct inode*
+open_inode_locked(char *path, int omode)
+{
+  struct inode *ip;
+
+  if(omode & O_CREATE)
+    return create(path, T_FILE, 0, 0);
+
+  ip = namei(path);
+  if(ip == 0)
+    return 0;
+
+  if((omode & O_NOFOLLOW) == 0){
+    ip = follow_symlinks(ip, path);
+    if(ip == 0)
+      return 0;
+  }
+
+  ilock(ip);
+  return ip;
+}
+
+// Caller must hold ip's inode lock.
+static int
+can_open_inode_locked(struct inode *ip, int omode)
+{
+  if(ip->type == T_DIR && omode != O_RDONLY)
+    return 0;
+  if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV))
+    return 0;
+
+  return 1;
+}
+
+static int
+alloc_open_file(struct file **out)
+{
+  struct file *f;
+  int fd;
+
+  f = filealloc();
+  if(f == 0)
+    return -1;
+
+  fd = fdalloc(f);
+  if(fd < 0){
+    fileclose(f);
     return -1;
   }
 
-  if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
-    if(f)
-      fileclose(f);
-    iunlockput(ip);
-    end_op();
-    return -1;
-  }
+  *out = f;
+  return fd;
+}
 
+// Caller must hold ip's inode lock.
+static void
+init_open_file(struct file *f, struct inode *ip, int omode)
+{
   if(ip->type == T_DEVICE){
     f->type = FD_DEVICE;
     f->major = ip->major;
@@ -372,18 +399,50 @@ sys_open(void)
     f->type = FD_INODE;
     f->off = 0;
   }
+
   f->ip = ip;
   f->readable = !(omode & O_WRONLY);
   f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
+}
 
-  if((omode & O_TRUNC) && ip->type == T_FILE){
+uint64
+sys_open(void)
+{
+  char path[MAXPATH];
+  int fd, omode;
+  struct file *f;
+  struct inode *ip;
+
+  if(argstr(0, path, MAXPATH) < 0 || argint(1, &omode) < 0)
+    return -1;
+
+  begin_op();
+
+  ip = open_inode_locked(path, omode);
+  if(ip == 0)
+    goto fail_transaction;
+
+  if(!can_open_inode_locked(ip, omode))
+    goto fail_inode;
+
+  fd = alloc_open_file(&f);
+  if(fd < 0)
+    goto fail_inode;
+
+  init_open_file(f, ip, omode);
+
+  if((omode & O_TRUNC) && ip->type == T_FILE)
     itrunc(ip);
-  }
 
   iunlock(ip);
   end_op();
-
   return fd;
+
+fail_inode:
+  iunlockput(ip);
+fail_transaction:
+  end_op();
+  return -1;
 }
 
 uint64
@@ -520,40 +579,44 @@ sys_pipe(void)
   return 0;
 }
 
-uint64
-sys_symlink(void) {
+// Caller must hold ip's inode lock.
+static int
+write_symlink_target_locked(struct inode *ip, char *target)
+{
+  int len = strlen(target);
 
-  char target[MAXPATH], path[MAXPATH];;
-  struct inode *ip;
-
-  if(argstr(0, target, MAXPATH) < 0|| argstr(1, path, MAXPATH) < 0) {
+  if(writei(ip, 0, (uint64)&len, 0, sizeof(len)) < sizeof(len))
     return -1;
-  }
+  if(writei(ip, 0, (uint64)target, sizeof(len), len + 1) < 0)
+    return -1;
+
+  return 0;
+}
+
+uint64
+sys_symlink(void)
+{
+  char target[MAXPATH], path[MAXPATH];
+  struct inode *ip;
+  int result;
+
+  if(argstr(0, target, MAXPATH) < 0 ||
+     argstr(1, path, MAXPATH) < 0)
+    return -1;
 
   begin_op();
 
-  if ((ip = create(path, T_SYMLINK, 0, 0)) == 0){
+  ip = create(path, T_SYMLINK, 0, 0);
+  if(ip == 0){
     end_op();
     return -1;
   }
-  int len = strlen(target);
-  // write target path len
-  if(writei(ip, 0, (uint64)&len, 0, sizeof(len)) < sizeof(len)) {
-    iunlockput(ip);
-    end_op();
-    return -1;
-  }
-  // write target path
-  if(writei(ip, 0, (uint64)target, sizeof(len), len + 1) < 0) {
-    iunlockput(ip);
-    end_op();
-    return -1;
-  }
+
+  result = write_symlink_target_locked(ip, target);
 
   iunlockput(ip);
   end_op();
-
-  return 0;
+  return result;
 }
 
 uint64
