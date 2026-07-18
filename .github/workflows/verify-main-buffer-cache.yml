@@ -1,0 +1,111 @@
+name: Verify main buffer cache
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout main refactor
+        uses: actions/checkout@v4
+
+      - name: Install RISC-V toolchain and QEMU
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc expect
+
+      - name: Build
+        run: |
+          make clean
+          make -j2
+
+      - name: Run focused buffer-cache filesystem tests with three CPUs
+        run: |
+          expect <<'EOF' | tee focused-cpus3.log
+          set timeout 120
+          spawn make qemu
+          expect "$ "
+          foreach test {createdelete linkunlink concreate fourfiles sharedfd bigwrite writebig openiput exitiput iput bigfile bigdir} {
+            send "usertests $test\r"
+            expect {
+              "ALL TESTS PASSED" {}
+              "SOME TESTS FAILED" { exit 1 }
+              timeout { exit 2 }
+              eof { exit 3 }
+            }
+            expect "$ "
+          }
+          send "\001x"
+          expect eof
+          EOF
+          test "$(grep -c 'ALL TESTS PASSED' focused-cpus3.log)" -eq 12
+
+      - name: Run focused buffer-cache filesystem tests with one CPU
+        run: |
+          expect <<'EOF' | tee focused-cpus1.log
+          set timeout 120
+          spawn make qemu CPUS=1
+          expect "$ "
+          foreach test {createdelete linkunlink concreate fourfiles sharedfd bigwrite writebig openiput exitiput iput bigfile bigdir} {
+            send "usertests $test\r"
+            expect {
+              "ALL TESTS PASSED" {}
+              "SOME TESTS FAILED" { exit 1 }
+              timeout { exit 2 }
+              eof { exit 3 }
+            }
+            expect "$ "
+          }
+          send "\001x"
+          expect eof
+          EOF
+          test "$(grep -c 'ALL TESTS PASSED' focused-cpus1.log)" -eq 12
+
+      - name: Run full usertests with three CPUs
+        id: full
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          expect <<'EOF' | tee full-usertests.log
+          set timeout 360
+          spawn make qemu
+          expect "$ "
+          send "usertests\r"
+          expect {
+            "ALL TESTS PASSED" {
+              send "\001x"
+              expect eof
+              exit 0
+            }
+            "SOME TESTS FAILED" {
+              send "\001x"
+              expect eof
+              exit 1
+            }
+            timeout {
+              send "\001x"
+              exit 2
+            }
+            eof { exit 3 }
+          }
+          EOF
+
+      - name: Upload QEMU logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buffer-cache-verification-logs
+          path: |
+            focused-cpus3.log
+            focused-cpus1.log
+            full-usertests.log
+
+      - name: Require full regression success
+        run: grep -q "ALL TESTS PASSED" full-usertests.log
