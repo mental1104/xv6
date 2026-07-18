@@ -1,6 +1,9 @@
 name: Verify buffer cache refactor
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - concept/30-buffer-cache-bget-refactor
