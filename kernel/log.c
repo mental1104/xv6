@@ -121,7 +121,6 @@ recover_from_log(void)
   write_head(); // clear the log
 }
 
-// called at the start of each FS system call.
 // Caller must hold log.lock.
 static int
 log_has_space_for_new_op_locked(void)
@@ -145,8 +144,6 @@ begin_op(void)
   release(&log.lock);
 }
 
-// called at the end of each FS system call.
-// commits if this was the last outstanding operation.
 // called at the end of each FS system call.
 // commits if this was the last outstanding operation.
 void
@@ -236,4 +233,3 @@ log_write(struct buf *b)
   }
   release(&log.lock);
 }
-
