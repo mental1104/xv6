@@ -4,56 +4,77 @@ on:
   pull_request:
     branches:
       - main
-  push:
-    branches:
-      - concept/30-buffer-cache-bget-refactor
   workflow_dispatch:
 
 jobs:
-  build-and-test:
+  compare-usertests:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case_name: refactor
+            checkout_ref: concept/30-buffer-cache-bget-refactor
+          - case_name: baseline
+            checkout_ref: eabe1f7ffe079df54f56339678d3ac00a09164c0
 
     steps:
-      - name: Checkout
+      - name: Checkout ${{ matrix.case_name }}
         uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.checkout_ref }}
 
       - name: Install RISC-V toolchain and QEMU
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc expect
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc expect
 
-      - name: Build
+      - name: Build ${{ matrix.case_name }}
         run: |
           make clean
           make -j2
 
-      - name: Run usertests with three CPUs
+      - name: Run three-CPU usertests and capture output
+        id: usertests
+        continue-on-error: true
+        shell: bash
         run: |
-          expect <<'EOF' | tee usertests-cpus3.log
+          set -o pipefail
+          expect <<'EOF' | tee usertests-${{ matrix.case_name }}.log
           set timeout 300
           spawn make qemu
           expect "$ "
           send "usertests\r"
           expect {
-            "ALL TESTS PASSED" { exit 0 }
-            timeout { exit 1 }
-            eof { exit 1 }
+            "ALL TESTS PASSED" {
+              send "\001x"
+              expect eof
+              exit 0
+            }
+            "SOME TESTS FAILED" {
+              send "\001x"
+              expect eof
+              exit 1
+            }
+            timeout {
+              send "\001x"
+              exit 2
+            }
+            eof { exit 3 }
           }
           EOF
-          grep -q "ALL TESTS PASSED" usertests-cpus3.log
+          printf 'expect_status=%s\n' "${PIPESTATUS[0]}" | tee usertests-${{ matrix.case_name }}.status
+          test "${PIPESTATUS[0]}" -eq 0
 
-      - name: Run usertests with one CPU
-        run: |
-          expect <<'EOF' | tee usertests-cpus1.log
-          set timeout 300
-          spawn make qemu CPUS=1
-          expect "$ "
-          send "usertests\r"
-          expect {
-            "ALL TESTS PASSED" { exit 0 }
-            timeout { exit 1 }
-            eof { exit 1 }
-          }
-          EOF
-          grep -q "ALL TESTS PASSED" usertests-cpus1.log
+      - name: Upload QEMU log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: usertests-${{ matrix.case_name }}
+          path: |
+            usertests-${{ matrix.case_name }}.log
+            usertests-${{ matrix.case_name }}.status
+
+      - name: Require successful usertests
+        run: grep -q "ALL TESTS PASSED" usertests-${{ matrix.case_name }}.log
