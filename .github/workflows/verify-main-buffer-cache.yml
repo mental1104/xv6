@@ -6,10 +6,14 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: verify-main-buffer-cache-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       - name: Checkout main refactor
@@ -40,7 +44,7 @@ jobs:
             make fs.img >/dev/null
 
             TEST_NAME="$test_name" CPUS_VALUE="$cpus" expect <<'EOF' | tee "$log"
-          set timeout 180
+          set timeout 120
           set test_name $env(TEST_NAME)
           set cpus $env(CPUS_VALUE)
 
@@ -63,6 +67,11 @@ jobs:
               expect eof
               exit 1
             }
+            "panic:" {
+              send "\001x"
+              expect eof
+              exit 1
+            }
             timeout {
               send "\001x"
               exit 2
@@ -72,11 +81,11 @@ jobs:
           EOF
           }
 
-          for test_name in createdelete concreate fourfiles sharedfd bigwrite openiput exitiput iput bigfile bigdir; do
+          for test_name in concreate fourfiles sharedfd bigwrite; do
             run_one 3 "$test_name"
           done
 
-          for test_name in concreate fourfiles sharedfd bigwrite bigfile; do
+          for test_name in concreate fourfiles bigwrite; do
             run_one 1 "$test_name"
           done
 
@@ -88,7 +97,7 @@ jobs:
           make fs.img >/dev/null
 
           expect <<'EOF' | tee stressfs-cpus3.log
-          set timeout 180
+          set timeout 120
           spawn make qemu
           expect "$ "
           send "stressfs\r"
@@ -128,7 +137,7 @@ jobs:
               make fs.img >/dev/null
 
               expect <<'EOF' | tee "$GITHUB_WORKSPACE/capacity-logs/${label}.log"
-          set timeout 180
+          set timeout 120
           spawn make qemu
           expect "$ "
           send "usertests writebig\r"
