@@ -365,126 +365,137 @@ iunlockput(struct inode *ip)
   iput(ip);
 }
 
-// Inode content
-//
-// The content (data) associated with each inode is stored
-// in blocks on the disk. The first NDIRECT block numbers
-// are listed in ip->addrs[].  The next NINDIRECT blocks are
-// listed in block ip->addrs[NDIRECT].
+// 每个 inode 先保存直接块地址，随后每个槽位分别保存一棵
+// 深度为 1、2 ... 的间接索引树根块。
+#define NINDIRECT_LEVELS 2
 
-// Return the disk block address of the nth block in inode ip.
-// If there is no such block, bmap allocates one.
+static const uint64 indirect_capacity[NINDIRECT_LEVELS] = {
+  NINDIRECT,
+  NDOUBLEINDIRECT,
+};
+
+// 沿指定深度的间接索引树逐层定位数据块；缺失的索引块或数据块按需分配。
+static uint
+bmap_indirect(struct inode *ip, uint addr, uint64 bn, int depth)
+{
+  uint64 divisor = 1;
+
+  // divisor 表示当前层一个入口能够覆盖的叶子数据块数量。
+  for(int level = 1; level < depth; level++)
+    divisor *= NINDIRECT;
+
+  for(int level = depth; level > 0; level--){
+    struct buf *bp = bread(ip->dev, addr);
+    uint *entries = (uint*)bp->data;
+    uint index = bn / divisor;
+
+    bn %= divisor;
+    if(entries[index] == 0){
+      entries[index] = balloc(ip->dev);
+      log_write(bp);
+    }
+    addr = entries[index];
+    brelse(bp);
+
+    if(level > 1)
+      divisor /= NINDIRECT;
+  }
+
+  return addr;
+}
+
+// 返回 inode 中第 bn 个逻辑数据块对应的磁盘块号；不存在时按需分配。
 static uint
 bmap(struct inode *ip, uint bn)
 {
-  uint addr, *a;
-  struct buf *bp;
-
   if(bn < NDIRECT){
-    if((addr = ip->addrs[bn]) == 0)
-      ip->addrs[bn] = addr = balloc(ip->dev);
-    return addr;
+    if(ip->addrs[bn] == 0)
+      ip->addrs[bn] = balloc(ip->dev);
+    return ip->addrs[bn];
   }
-  bn -= NDIRECT;
 
-  if(bn < NINDIRECT){
-    // Load indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT]) == 0)
-      ip->addrs[NDIRECT] = addr = balloc(ip->dev);
+  uint64 indirect_bn = bn - NDIRECT;
+  for(int depth = 1; depth <= NINDIRECT_LEVELS; depth++){
+    uint64 capacity = indirect_capacity[depth - 1];
 
-    bp = bread(ip->dev, addr);
-    a = (uint*)bp->data;
-    if((addr = a[bn]) == 0){
-      a[bn] = addr = balloc(ip->dev);
-      log_write(bp);
+    if(indirect_bn < capacity){
+      uint root_index = NDIRECT + depth - 1;
+      if(ip->addrs[root_index] == 0)
+        ip->addrs[root_index] = balloc(ip->dev);
+      return bmap_indirect(ip, ip->addrs[root_index], indirect_bn, depth);
     }
-    brelse(bp);
-    return addr;
-  }
-  
-  bn -= NINDIRECT;
-
-  if(bn < NDOUBLEINDIRECT){
-    // Load  double indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT+1]) == 0)
-      ip->addrs[NDIRECT+1] = addr = balloc(ip->dev);
-    
-    bp = bread(ip->dev, addr);
-    a = (uint*)bp->data;
-
-    uint level1 = bn / NINDIRECT;
-    if((addr = a[level1]) == 0){
-      a[level1] = addr = balloc(ip->dev);
-      log_write(bp);
-    }
-    brelse(bp);
-
-    bp = bread(ip->dev, addr);
-    a = (uint*)bp->data;
-
-    uint level2 = bn % NINDIRECT;
-    if((addr = a[level2]) == 0){
-      a[level2] = addr = balloc(ip->dev);
-      log_write(bp);
-    }
-    brelse(bp);
-
-    return addr;
+    indirect_bn -= capacity;
   }
 
   panic("bmap: out of range");
 }
 
-// Truncate inode (discard contents).
-// Caller must hold ip->lock.
+struct indirect_frame {
+  uint addr;
+  uint next;
+  struct buf *bp;
+};
+
+// 使用显式栈后序遍历间接索引树：先释放叶子数据块，再逐层释放索引块。
+static void
+bfree_indirect(uint dev, uint root, int depth)
+{
+  struct indirect_frame stack[NINDIRECT_LEVELS];
+  int level = 0;
+
+  stack[0].addr = root;
+  stack[0].next = 0;
+  stack[0].bp = bread(dev, root);
+
+  while(level >= 0){
+    struct indirect_frame *frame = &stack[level];
+    uint *entries = (uint*)frame->bp->data;
+
+    if(level == depth - 1){
+      // 最后一层索引块直接指向数据块。
+      while(frame->next < NINDIRECT){
+        uint addr = entries[frame->next++];
+        if(addr)
+          bfree(dev, addr);
+      }
+    } else {
+      // 中间层索引块指向下一层索引块，逐个压栈处理。
+      while(frame->next < NINDIRECT && entries[frame->next] == 0)
+        frame->next++;
+      if(frame->next < NINDIRECT){
+        uint child = entries[frame->next++];
+        level++;
+        stack[level].addr = child;
+        stack[level].next = 0;
+        stack[level].bp = bread(dev, child);
+        continue;
+      }
+    }
+
+    brelse(frame->bp);
+    bfree(dev, frame->addr);
+    level--;
+  }
+}
+
+// 截断 inode 并释放全部数据块和各级间接索引块。
+// 调用者必须持有 ip->lock。
 void
 itrunc(struct inode *ip)
 {
-  int i, j, k;
-  struct buf *bp, *nbp;//level 1, 2
-  uint *a, *na;//level 1, 2
-
-  for(i = 0; i < NDIRECT; i++){
+  for(int i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
       bfree(ip->dev, ip->addrs[i]);
       ip->addrs[i] = 0;
     }
   }
 
-  if(ip->addrs[NDIRECT]){
-    bp = bread(ip->dev, ip->addrs[NDIRECT]);
-    a = (uint*)bp->data;
-    for(j = 0; j < NINDIRECT; j++){
-      if(a[j])
-        bfree(ip->dev, a[j]);
+  for(int depth = 1; depth <= NINDIRECT_LEVELS; depth++){
+    uint root_index = NDIRECT + depth - 1;
+    if(ip->addrs[root_index]){
+      bfree_indirect(ip->dev, ip->addrs[root_index], depth);
+      ip->addrs[root_index] = 0;
     }
-    brelse(bp);
-    bfree(ip->dev, ip->addrs[NDIRECT]);
-    ip->addrs[NDIRECT] = 0;
-  }
-
-  if(ip->addrs[NDIRECT+1]){
-    
-    bp = bread(ip->dev, ip->addrs[NDIRECT+1]);
-    a = (uint*)bp->data;
-    for(j = 0; j < NINDIRECT; j++){
-      //level 1
-      if(a[j]){
-        nbp = bread(ip->dev, a[j]);
-        na = (uint*)nbp->data;
-        for(k = 0; k < NINDIRECT; k++){
-          //level 2
-          if(na[k])
-            bfree(ip->dev, na[k]);
-        }
-        bfree(ip->dev, a[j]);
-        brelse(nbp);
-        //a[j] = 0;
-      }
-    }
-    brelse(bp);
-    bfree(ip->dev, ip->addrs[NDIRECT+1]);
-    ip->addrs[NDIRECT+1] = 0;
   }
 
   ip->size = 0;
