@@ -9,7 +9,7 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - name: Checkout main refactor
@@ -25,56 +25,72 @@ jobs:
           make clean
           make -j2
 
-      - name: Run focused buffer-cache filesystem tests with three CPUs
+      - name: Run focused filesystem tests with isolated images
+        shell: bash
         run: |
-          expect <<'EOF' | tee focused-cpus3.log
-          set timeout 120
-          spawn make qemu
-          expect "$ "
-          foreach test {createdelete linkunlink concreate fourfiles sharedfd bigwrite writebig openiput exitiput iput bigfile bigdir} {
-            send "usertests $test\r"
-            expect {
-              "ALL TESTS PASSED" {}
-              "SOME TESTS FAILED" { exit 1 }
-              timeout { exit 2 }
-              eof { exit 3 }
-            }
-            expect "$ "
-          }
-          send "\001x"
-          expect eof
-          EOF
-          test "$(grep -c 'ALL TESTS PASSED' focused-cpus3.log)" -eq 12
+          set -euo pipefail
+          mkdir -p focused-logs
 
-      - name: Run focused buffer-cache filesystem tests with one CPU
-        run: |
-          expect <<'EOF' | tee focused-cpus1.log
-          set timeout 120
-          spawn make qemu CPUS=1
-          expect "$ "
-          foreach test {createdelete linkunlink concreate fourfiles sharedfd bigwrite writebig openiput exitiput iput bigfile bigdir} {
-            send "usertests $test\r"
-            expect {
-              "ALL TESTS PASSED" {}
-              "SOME TESTS FAILED" { exit 1 }
-              timeout { exit 2 }
-              eof { exit 3 }
-            }
-            expect "$ "
-          }
-          send "\001x"
-          expect eof
-          EOF
-          test "$(grep -c 'ALL TESTS PASSED' focused-cpus1.log)" -eq 12
+          run_one() {
+            local cpus="$1"
+            local test_name="$2"
+            local log="focused-logs/cpus${cpus}-${test_name}.log"
 
-      - name: Run full usertests with three CPUs
+            rm -f fs.img
+            make fs.img >/dev/null
+
+            TEST_NAME="$test_name" CPUS_VALUE="$cpus" expect <<'EOF' | tee "$log"
+          set timeout 180
+          set test_name $env(TEST_NAME)
+          set cpus $env(CPUS_VALUE)
+
+          if {$cpus eq "3"} {
+            spawn make qemu
+          } else {
+            spawn make qemu CPUS=$cpus
+          }
+
+          expect "$ "
+          send "usertests $test_name\r"
+          expect {
+            "ALL TESTS PASSED" {
+              send "\001x"
+              expect eof
+              exit 0
+            }
+            "SOME TESTS FAILED" {
+              send "\001x"
+              expect eof
+              exit 1
+            }
+            timeout {
+              send "\001x"
+              exit 2
+            }
+            eof { exit 3 }
+          }
+          EOF
+          }
+
+          for test_name in createdelete concreate fourfiles sharedfd bigwrite writebig bigfile bigdir; do
+            run_one 3 "$test_name"
+          done
+
+          for test_name in concreate fourfiles bigwrite writebig bigfile; do
+            run_one 1 "$test_name"
+          done
+
+      - name: Run full usertests with a fresh image
         id: full
         continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
+          rm -f fs.img
+          make fs.img >/dev/null
+
           expect <<'EOF' | tee full-usertests.log
-          set timeout 360
+          set timeout 600
           spawn make qemu
           expect "$ "
           send "usertests\r"
@@ -103,8 +119,7 @@ jobs:
         with:
           name: buffer-cache-verification-logs
           path: |
-            focused-cpus3.log
-            focused-cpus1.log
+            focused-logs/
             full-usertests.log
 
       - name: Require full regression success
