@@ -69,103 +69,163 @@ binit(void)
   // Create linked list of buffers
 }
 
-// Look through buffer cache for block on device dev.
-// If not found, allocate a buffer.
-// In either case, return locked buffer.
-static struct buf*
-bget(uint dev, uint blockno)
+// Caller must hold bcache.lock[idx].
+static struct buf *
+find_cached_locked(uint idx, uint dev, uint blockno)
+{
+  struct buf *head = &bcache.head[idx];
+
+  for(struct buf *b = head->next; b != head; b = b->next){
+    if(b->dev == dev && b->blockno == blockno)
+      return b;
+  }
+
+  return 0;
+}
+
+// Caller must hold bcache.lock[idx].
+// Search from the least recently used end.
+static struct buf *
+find_unused_locked(uint idx)
+{
+  struct buf *head = &bcache.head[idx];
+
+  for(struct buf *b = head->prev; b != head; b = b->prev){
+    if(b->refcnt == 0)
+      return b;
+  }
+
+  return 0;
+}
+
+static void
+prepare_buf(struct buf *b, uint dev, uint blockno)
+{
+  b->dev = dev;
+  b->blockno = blockno;
+  b->valid = 0;
+  b->refcnt = 1;
+}
+
+static void
+unlink_buf(struct buf *b)
+{
+  b->prev->next = b->next;
+  b->next->prev = b->prev;
+}
+
+static void
+insert_buf_front(uint idx, struct buf *b)
+{
+  struct buf *head = &bcache.head[idx];
+
+  b->next = head->next;
+  b->prev = head;
+  head->next->prev = b;
+  head->next = b;
+}
+
+// Try to find the requested block or recycle an unused local buffer.
+// Caller must hold bcache.lock[idx].
+static struct buf *
+try_get_local_locked(uint idx, uint dev, uint blockno)
 {
   struct buf *b;
 
-  uint idx = ihash(blockno);
-
-
-  acquire(&bcache.lock[idx]);
-
-  // Is the block already cached?
-  for(b = bcache.head[idx].next; b != &bcache.head[idx]; b = b->next){
-    if(b->dev == dev && b->blockno == blockno){
-      b->refcnt++;
-      release(&bcache.lock[idx]);
-      acquiresleep(&b->lock);
-      return b;
-    }
+  b = find_cached_locked(idx, dev, blockno);
+  if(b != 0){
+    b->refcnt++;
+    return b;
   }
 
-  // Not cached. find LRU
-  // Recycle the least recently used (LRU) unused buffer.
-  for(b = bcache.head[idx].prev; b != &bcache.head[idx]; b = b->prev){
-    if(b->refcnt == 0) {
-      b->dev = dev;
-      b->blockno = blockno;
-      b->valid = 0;
-      b->refcnt = 1;
-      release(&bcache.lock[idx]);
-      acquiresleep(&b->lock);
-      return b;
-    }
+  b = find_unused_locked(idx);
+  if(b != 0){
+    prepare_buf(b, dev, blockno);
+    return b;
   }
-  release(&bcache.lock[idx]);
 
+  return 0;
+}
+
+// Look through buffer cache for block on device dev.
+// If not found, allocate a buffer.
+// In either case, return a locked buffer.
+static struct buf *
+bget(uint dev, uint blockno)
+{
+  uint home_idx = ihash(blockno);
+  int holding_steal_lock = 0;
+  struct buf *b;
+
+  /*
+   * Fast path:
+   * Search or recycle a buffer in the target bucket.
+   */
+  acquire(&bcache.lock[home_idx]);
+
+  b = try_get_local_locked(home_idx, dev, blockno);
+  if(b != 0)
+    goto found;
+
+  release(&bcache.lock[home_idx]);
+
+  /*
+   * Slow path:
+   * Serialize cross-bucket stealing.
+   */
   acquire(&bcache.steal_lock);
-  acquire(&bcache.lock[idx]);
+  holding_steal_lock = 1;
 
-  for (b = bcache.head[idx].next; b!= &bcache.head[idx]; b = b->next){
-    //already exists.  
-    if(b->dev == dev && b->blockno == blockno) {
-      b->refcnt++;
-      release(&bcache.lock[idx]);
-      release(&bcache.steal_lock);
-      acquiresleep(&b->lock);
-      return b;
+  acquire(&bcache.lock[home_idx]);
+
+  /*
+   * The target bucket may have changed while its lock was released.
+   * Recheck it to avoid creating duplicate buffers for one disk block.
+   */
+  b = try_get_local_locked(home_idx, dev, blockno);
+  if(b != 0)
+    goto found;
+
+  /*
+   * Keep the target bucket locked while moving a buffer into it.
+   */
+  for(uint victim_idx = ihash(home_idx + 1);
+      victim_idx != home_idx;
+      victim_idx = ihash(victim_idx + 1)){
+
+    acquire(&bcache.lock[victim_idx]);
+
+    b = find_unused_locked(victim_idx);
+    if(b == 0){
+      release(&bcache.lock[victim_idx]);
+      continue;
     }
+
+    prepare_buf(b, dev, blockno);
+    unlink_buf(b);
+
+    release(&bcache.lock[victim_idx]);
+
+    insert_buf_front(home_idx, b);
+    goto found;
   }
 
-  for (b = bcache.head[idx].prev; b != &bcache.head[idx]; b = b->prev){
-    //Find LRU
-    if(b->refcnt == 0){
-      b->dev = dev;
-      b->blockno = blockno;
-      b->valid = 0;
-      b->refcnt = 1;
-      release(&bcache.lock[idx]);
-      release(&bcache.steal_lock);
-      acquiresleep(&b->lock);
-      return b;
-    }
-  }
-
-  uint _idx = idx;
-  idx = ihash(idx + 1);
-  while(idx != _idx){
-    acquire(&bcache.lock[idx]);
-    for(b = bcache.head[idx].prev; b != &bcache.head[idx]; b = b->prev) {
-      if(b->refcnt == 0) {
-        b->dev = dev;
-        b->blockno = blockno;
-        b->valid = 0;
-        b->refcnt = 1;
-        b->prev->next = b->next;
-        b->next->prev = b->prev;
-        release(&bcache.lock[idx]);//the bucket being stolen.
-        //Actual LRU  
-        b->next = bcache.head[_idx].next;
-        b->prev = &bcache.head[_idx];
-        b->next->prev = b;
-        b->prev->next = b;
-        release(&bcache.lock[_idx]);//original buckets.
-        release(&bcache.steal_lock);
-        acquiresleep(&b->lock);
-        return b;
-      }
-    }
-    release(&bcache.lock[idx]);//switch to the next bucket.
-    idx = ihash(idx+1);
-  }
-  release(&bcache.lock[_idx]);
+  release(&bcache.lock[home_idx]);
   release(&bcache.steal_lock);
 
   panic("bget: no buffers");
+
+found:
+  release(&bcache.lock[home_idx]);
+
+  if(holding_steal_lock)
+    release(&bcache.steal_lock);
+
+  /*
+   * Never wait on a sleeplock while holding a spinlock.
+   */
+  acquiresleep(&b->lock);
+  return b;
 }
 
 // Return a locked buf with the contents of the indicated block.
