@@ -23,7 +23,7 @@ jobs:
       - name: Install xv6 toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc
+          sudo apt-get install -y gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc expect
 
       - name: Build xv6
         run: |
@@ -33,16 +33,16 @@ jobs:
       - name: Run symlink tests
         shell: bash
         run: |
-          set +e
-          timeout 90s bash -c 'printf "symlinktest\n" | make qemu' > /tmp/symlinktest.log 2>&1
-          status=$?
-          set -e
-          cat /tmp/symlinktest.log
-          grep -q "test symlinks: ok" /tmp/symlinktest.log
-          grep -q "test concurrent symlinks: ok" /tmp/symlinktest.log
-          if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
-            exit "$status"
-          fi
+          expect <<'EOF'
+          set timeout 120
+          spawn make qemu
+          expect -re {[$] $}
+          send "symlinktest\r"
+          expect "test symlinks: ok"
+          expect "test concurrent symlinks: ok"
+          send "\001x"
+          expect eof
+          EOF
 
       - name: Commit verified refactor
         shell: bash
