@@ -563,6 +563,8 @@ sys_mmap(void)
   int length, prot, flags, fd, offset;
   struct file *f;
 
+  // mmap(addr, length, prot, flags, fd, offset)
+  // xv6 lab 这里只支持 addr == 0，由内核选择映射起始地址。
   if(argaddr(0, &requested) < 0 ||
      argint(1, &length) < 0 ||
      argint(2, &prot) < 0 ||
@@ -571,10 +573,15 @@ sys_mmap(void)
      argint(5, &offset) < 0)
     return -1;
 
+  // 提前拒绝不支持的形式：用户指定地址、空映射、负数或非页对齐的
+  // 文件偏移，以及未知的共享模式。
   if(requested != 0 || length <= 0 || offset < 0 || (offset % PGSIZE) != 0)
     return -1;
   if(flags != MAP_SHARED && flags != MAP_PRIVATE)
     return -1;
+
+  // 映射权限必须和打开文件的权限兼容。可写的 MAP_SHARED 映射在
+  // munmap 或进程退出时可能把页面内容写回到底层 inode。
   if(argfd(4, 0, &f) < 0)
     return -1;
   if((prot & PROT_READ) && !f->readable)
@@ -590,17 +597,24 @@ sys_mmap(void)
   if(slot == NOFILE)
     return -1;
 
+  // 这里只分配 VMA 描述符，不立即分配物理页或建立页表映射。
+  // 进程访问该区域触发缺页异常后，由 trap.c:mmap_fault() 懒加载文件页。
   struct VMA *v = vma_alloc();
   if(v == 0)
     return -1;
 
+  // 把映射放在当前进程大小之上，并推进 p->sz，让这段地址进入
+  // 进程的用户地址空间范围。
   uint64 base = PGROUNDUP(p->sz);
   uint64 end = base + PGROUNDUP((uint64)length);
+  // TODO: 这里的mmap区域太小了，只能到PLIC，总体还是堆太小的原因，应该考虑封装一个获取最大可用地址的函数。
   if(end >= PLIC || end < base){
     vma_free(v);
     return -1;
   }
 
+  // VMA 持有一份额外的文件引用；用户可以在映射仍存在时关闭 fd，
+  // munmap 或 exit 之后会再释放这里保存的引用。
   v->addr = base;
   v->length = length;
   v->offset = offset;
@@ -617,6 +631,9 @@ sys_munmap(void)
 {
   uint64 addr;
   int length;
+
+  // vma_unmap() 负责 MAP_SHARED 的页面写回、页表解除映射，以及
+  // 收缩或释放 VMA。当前实现只支持从映射区的两端解除映射。
   if(argaddr(0, &addr) < 0 || argint(1, &length) < 0 || length <= 0)
     return -1;
   return vma_unmap(myproc(), addr, length);

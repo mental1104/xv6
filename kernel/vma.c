@@ -25,6 +25,7 @@ struct VMA*
 vma_alloc(void)
 {
   acquire(&vma_table.lock);
+  // TODO: 这里的vma_table.areas是每个进程×NOFILE的大小，那么理论上一个进程可以把所有VMA份额全部用掉，是合理的吗？
   for(struct VMA *v = vma_table.areas;
       v < vma_table.areas + NPROC * NOFILE; v++){
     if(!v->used){
@@ -42,7 +43,7 @@ void
 vma_free(struct VMA *v)
 {
   acquire(&vma_table.lock);
-  memset(v, 0, sizeof(*v));
+  memset(v, 0, sizeof(*v)); // 这里会隐式地把 v->used 置为 0
   release(&vma_table.lock);
 }
 

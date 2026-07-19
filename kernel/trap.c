@@ -99,8 +99,10 @@ mmap_fault(struct proc *p, uint64 va)
 static int
 handle_user_page_fault(struct proc *p, uint64 scause, uint64 va)
 {
+  // TODO: 15等数还是用枚举维护更好，不然就是魔数猜这里是store page fault
   if(scause == 15 && cow_alloc(p->pagetable, va) == 0)
     return 0;
+  // TODO: 这里mmap_fault中也会调用一次vma_find，重复调用了
   if(vma_find(p, va) && mmap_fault(p, va) == 0)
     return 0;
   return uvmlazyalloc(p, va);
