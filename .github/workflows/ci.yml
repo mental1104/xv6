@@ -33,9 +33,10 @@ jobs:
             qemu-system-misc \
             python3-pexpect
 
-      - name: Validate test runner
+      - name: Unit-test regression grader
         run: |
-          python3 -m py_compile tests/run.py
+          python3 -m py_compile tests/run.py tests/test_runner.py
+          make test-unit
           python3 tests/run.py --list
 
       - name: Build xv6
@@ -43,12 +44,12 @@ jobs:
           make clean
           make -j2
 
-      - name: Run Lab1-10 regression
-        run: python3 tests/run.py --suite pr --cpus 3
+      - name: Run Lab1-10 QEMU regression
+        run: make test-integration CPUS=3
 
       - name: Run complete usertests
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        run: python3 tests/run.py --suite usertests-full --cpus 3
+        run: make test-usertests CPUS=3
 
       - name: Upload QEMU logs
         if: failure()
