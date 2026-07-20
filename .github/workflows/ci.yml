@@ -33,6 +33,11 @@ jobs:
             qemu-system-misc \
             python3-pexpect
 
+      - name: Validate test runner
+        run: |
+          python3 -m py_compile tests/run.py
+          python3 tests/run.py --list
+
       - name: Build xv6
         run: |
           make clean
