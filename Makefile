@@ -51,6 +51,7 @@ TOOLPREFIX := $(shell if riscv64-unknown-elf-objdump -i 2>&1 | grep 'elf64-big' 
 endif
 
 QEMU = qemu-system-riscv64
+PYTHON ?= python3
 
 CC = $(TOOLPREFIX)gcc
 AS = $(TOOLPREFIX)gas
@@ -175,6 +176,7 @@ endif
 QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
+QEMUOPTS += $(QEMUEXTRA)
 
 qemu: $K/kernel fs.img
 	$(QEMU) $(QEMUOPTS)
@@ -195,4 +197,17 @@ ph: notxv6/ph.c
 barrier: notxv6/barrier.c
 	gcc -o barrier -g -O2 notxv6/barrier.c -pthread
 
-.PHONY: clean qemu qemu-gdb gdb ph barrier
+test-labs: $K/kernel fs.img
+	$(PYTHON) tests/run.py --suite pr --cpus $(CPUS)
+
+test-usertests: $K/kernel fs.img
+	$(PYTHON) tests/run.py --suite usertests-full --cpus $(CPUS)
+
+test-full: $K/kernel fs.img
+	$(PYTHON) tests/run.py --suite full --cpus $(CPUS)
+
+test-suite: $K/kernel fs.img
+	@test -n "$(SUITE)" || (echo "usage: make test-suite SUITE=<suite> [CPUS=<n>]"; exit 2)
+	$(PYTHON) tests/run.py --suite $(SUITE) --cpus $(CPUS)
+
+.PHONY: clean qemu qemu-gdb gdb ph barrier test-labs test-usertests test-full test-suite
