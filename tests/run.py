@@ -379,7 +379,11 @@ def _start_qemu(cpus: int) -> pexpect.spawn:
         codec_errors="replace",
         timeout=120,
     )
-    child.expect_exact("$ ")
+    try:
+        child.expect_exact("$ ")
+    except (pexpect.TIMEOUT, pexpect.EOF):
+        child.terminate(force=True)
+        raise
     return child
 
 
