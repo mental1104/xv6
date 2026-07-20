@@ -197,8 +197,26 @@ ph: notxv6/ph.c
 barrier: notxv6/barrier.c
 	gcc -o barrier -g -O2 notxv6/barrier.c -pthread
 
-test-labs: $K/kernel fs.img
+# Default developer entry: validate the grader, then boot QEMU and run the
+# pull-request regression suite. Sub-makes keep the two phases ordered even
+# when the caller invokes make with -j.
+test:
+	$(MAKE) test-unit
+	$(MAKE) test-integration CPUS=$(CPUS)
+
+# Unit-test the grader itself. This target never boots QEMU and does not need
+# a built xv6 image.
+test-unit:
+	$(PYTHON) -m unittest discover -s tests -p 'test_*.py' -v
+
+test-grader: test-unit
+
+# Integration/system tests: boot a fresh QEMU snapshot for every atomic suite
+# and validate xv6 through its user-visible behavior.
+test-integration: $K/kernel fs.img
 	$(PYTHON) tests/run.py --suite pr --cpus $(CPUS)
+
+test-labs: test-integration
 
 test-usertests: $K/kernel fs.img
 	$(PYTHON) tests/run.py --suite usertests-full --cpus $(CPUS)
@@ -210,4 +228,5 @@ test-suite: $K/kernel fs.img
 	@test -n "$(SUITE)" || (echo "usage: make test-suite SUITE=<suite> [CPUS=<n>]"; exit 2)
 	$(PYTHON) tests/run.py --suite $(SUITE) --cpus $(CPUS)
 
-.PHONY: clean qemu qemu-gdb gdb ph barrier test-labs test-usertests test-full test-suite
+.PHONY: clean qemu qemu-gdb gdb ph barrier test test-unit test-grader \
+	test-integration test-labs test-usertests test-full test-suite
