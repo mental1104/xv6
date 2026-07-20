@@ -1,0 +1,54 @@
+name: xv6 CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xv6-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu \
+            qemu-system-misc \
+            python3-pexpect
+
+      - name: Build xv6
+        run: |
+          make clean
+          make -j2
+
+      - name: Run Lab1-10 regression
+        run: python3 tests/run.py --suite pr --cpus 3
+
+      - name: Run complete usertests
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: python3 tests/run.py --suite usertests-full --cpus 3
+
+      - name: Upload QEMU logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xv6-test-results-${{ github.run_id }}
+          path: test-results/
+          if-no-files-found: ignore
