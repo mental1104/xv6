@@ -21,6 +21,11 @@ void kernelvec();
 
 extern int devintr();
 
+enum scause_code {
+  SCAUSE_LOAD_PAGE_FAULT = 13,
+  SCAUSE_STORE_PAGE_FAULT = 15,
+};
+
 void
 trapinit(void)
 {
@@ -51,12 +56,8 @@ restore_user_context(struct trapframe *trapframe,
 }
 
 static int
-mmap_fault(struct proc *p, uint64 va)
+mmap_fault(struct proc *p, struct VMA *v, uint64 va)
 {
-  struct VMA *v = vma_find(p, va);
-  if(v == 0)
-    return -1;
-
   uint64 va0 = PGROUNDDOWN(va);
   pte_t *existing = walk(p->pagetable, va0, 0);
   if(existing && (*existing & PTE_V))
@@ -99,11 +100,11 @@ mmap_fault(struct proc *p, uint64 va)
 static int
 handle_user_page_fault(struct proc *p, uint64 scause, uint64 va)
 {
-  // TODO: 15等数还是用枚举维护更好，不然就是魔数猜这里是store page fault
-  if(scause == 15 && cow_alloc(p->pagetable, va) == 0)
+  if(scause == SCAUSE_STORE_PAGE_FAULT && cow_alloc(p->pagetable, va) == 0)
     return 0;
-  // TODO: 这里mmap_fault中也会调用一次vma_find，重复调用了
-  if(vma_find(p, va) && mmap_fault(p, va) == 0)
+
+  struct VMA *v = vma_find(p, va);
+  if(v && mmap_fault(p, v, va) == 0)
     return 0;
   return uvmlazyalloc(p, va);
 }
@@ -137,7 +138,8 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // device interrupt
-  } else if(r_scause() == 13 || r_scause() == 15){
+  } else if(r_scause() == SCAUSE_LOAD_PAGE_FAULT ||
+            r_scause() == SCAUSE_STORE_PAGE_FAULT){
     if(handle_user_page_fault(p, r_scause(), r_stval()) < 0)
       p->killed = 1;
   } else {
