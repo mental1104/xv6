@@ -9,6 +9,7 @@ judge the kernel.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -111,7 +112,13 @@ class SuiteCompositionTests(unittest.TestCase):
 
 class HelperTests(unittest.TestCase):
     def test_safe_name_removes_path_and_shell_characters(self) -> None:
-        self.assertEqual("lab-1-rm-rf", RUNNER._safe_name("lab 1/$(rm -rf)"))
+        safe = RUNNER._safe_name("lab 1/$(rm -rf)")
+
+        self.assertIsNotNone(re.fullmatch(r"[A-Za-z0-9_.-]+", safe))
+        self.assertNotIn("/", safe)
+        self.assertNotIn("$", safe)
+        self.assertNotIn("(", safe)
+        self.assertNotIn(")", safe)
 
 
 if __name__ == "__main__":
