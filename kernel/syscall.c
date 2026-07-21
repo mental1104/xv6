@@ -7,7 +7,6 @@
 #include "syscall.h"
 #include "defs.h"
 
-// Fetch the uint64 at addr from the current process.
 int
 fetchaddr(uint64 addr, uint64 *ip)
 {
@@ -19,8 +18,6 @@ fetchaddr(uint64 addr, uint64 *ip)
   return 0;
 }
 
-// Fetch the nul-terminated string at addr from the current process.
-// Returns length of string, not including nul, or -1 for error.
 int
 fetchstr(uint64 addr, char *buf, int max)
 {
@@ -36,24 +33,17 @@ argraw(int n)
 {
   struct proc *p = myproc();
   switch (n) {
-  case 0:
-    return p->trapframe->a0;
-  case 1:
-    return p->trapframe->a1;
-  case 2:
-    return p->trapframe->a2;
-  case 3:
-    return p->trapframe->a3;
-  case 4:
-    return p->trapframe->a4;
-  case 5:
-    return p->trapframe->a5;
+  case 0: return p->trapframe->a0;
+  case 1: return p->trapframe->a1;
+  case 2: return p->trapframe->a2;
+  case 3: return p->trapframe->a3;
+  case 4: return p->trapframe->a4;
+  case 5: return p->trapframe->a5;
   }
   panic("argraw");
   return -1;
 }
 
-// Fetch the nth 32-bit system call argument.
 int
 argint(int n, int *ip)
 {
@@ -61,9 +51,6 @@ argint(int n, int *ip)
   return 0;
 }
 
-// Retrieve an argument as a pointer.
-// Doesn't check for legality, since
-// copyin/copyout will do that.
 int
 argaddr(int n, uint64 *ip)
 {
@@ -71,9 +58,6 @@ argaddr(int n, uint64 *ip)
   return 0;
 }
 
-// Fetch the nth word-sized system call argument as a null-terminated string.
-// Copies into buf, at most max.
-// Returns string length if OK (including nul), -1 if error.
 int
 argstr(int n, char *buf, int max)
 {
@@ -111,6 +95,9 @@ extern uint64 sys_sigreturn(void);
 extern uint64 sys_symlink(void);
 extern uint64 sys_mmap(void);
 extern uint64 sys_munmap(void);
+extern uint64 sys_sched_set_hint(void);
+extern uint64 sys_sched_set_weight(void);
+extern uint64 sys_sched_get_stats(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -141,6 +128,9 @@ static uint64 (*syscalls[])(void) = {
 [SYS_symlink]   sys_symlink,
 [SYS_mmap]      sys_mmap,
 [SYS_munmap]    sys_munmap,
+[SYS_sched_set_hint]   sys_sched_set_hint,
+[SYS_sched_set_weight] sys_sched_set_weight,
+[SYS_sched_get_stats]  sys_sched_get_stats,
 };
 
 char *sysname[] = {
@@ -172,6 +162,9 @@ char *sysname[] = {
 [SYS_symlink]   "symlink",
 [SYS_mmap]      "mmap",
 [SYS_munmap]    "munmap",
+[SYS_sched_set_hint]   "sched_set_hint",
+[SYS_sched_set_weight] "sched_set_weight",
+[SYS_sched_get_stats]  "sched_get_stats",
 };
 
 void
@@ -183,10 +176,8 @@ syscall(void)
   num = p->trapframe->a7;
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     p->trapframe->a0 = syscalls[num]();
-    //These two lines are new added.
     if((1U << num) & p->mask)
       printf("%d: syscall %s -> %d\n",p->pid, sysname[num], p->trapframe->a0);
-    //...
   } else {
     printf("%d %s: unknown sys call %d\n",
             p->pid, p->name, num);

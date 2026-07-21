@@ -14,6 +14,8 @@ OBJS = \
   $K/vm.o \
   $K/vmcopyin.o \
   $K/proc.o \
+  $K/sched.o \
+  $K/rbtree.o \
   $K/swtch.o \
   $K/trampoline.o \
   $K/trap.o \
@@ -65,6 +67,24 @@ CFLAGS += -mcmodel=medany
 CFLAGS += -ffreestanding -fno-common -nostdlib -mno-relax
 CFLAGS += -I.
 CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
+
+SCHED_POLICY ?= rr
+SCHED_POLICY_rr := 0
+SCHED_POLICY_fifo := 1
+SCHED_POLICY_sjf := 2
+SCHED_POLICY_stcf := 3
+SCHED_POLICY_mlfq := 4
+SCHED_POLICY_cfs := 5
+SCHED_POLICY_ID := $(SCHED_POLICY_$(SCHED_POLICY))
+ifeq ($(strip $(SCHED_POLICY_ID)),)
+$(error unsupported SCHED_POLICY='$(SCHED_POLICY)'; use rr, fifo, sjf, stcf, mlfq, or cfs)
+endif
+CFLAGS += -DSCHED_POLICY=$(SCHED_POLICY_ID)
+
+# Keep the historical proc.c implementation as a linkable fallback while the
+# policy-aware wrappers in sched.c own the public entry points.
+$K/proc.o: CFLAGS += -Dprocinit=legacy_procinit -Dscheduler=legacy_scheduler -Dyield=legacy_yield
+$K/trap.o: CFLAGS += -Dyield=sched_timer_yield
 
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]no-pie'),)
 CFLAGS += -fno-pie -no-pie
@@ -150,7 +170,8 @@ UPROGS=\
 	$U/_uthread\
 	$U/_bigfile\
 	$U/_symlinktest\
-	$U/_mmaptest
+	$U/_mmaptest\
+	$U/_schedtest
 
 UEXTRA = user/xargstest.sh
 
@@ -163,7 +184,7 @@ clean:
 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
 	*/*.o */*.d */*.asm */*.sym \
 	$U/initcode $U/initcode.out $K/kernel fs.img \
-	mkfs/mkfs .gdbinit $U/usys.S $(UPROGS) ph barrier
+	mkfs/mkfs .gdbinit $U/usys.S $(UPROGS) ph barrier rbtree_test
 
 GDBPORT = $(shell expr `id -u` % 5000 + 25000)
 QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
@@ -197,22 +218,19 @@ ph: notxv6/ph.c
 barrier: notxv6/barrier.c
 	gcc -o barrier -g -O2 notxv6/barrier.c -pthread
 
-# Default developer entry: validate the grader, then boot QEMU and run the
-# pull-request regression suite. Sub-makes keep the two phases ordered even
-# when the caller invokes make with -j.
+test-rbtree:
+	gcc -Wall -Werror -I. -o rbtree_test notxv6/rbtree_test.c kernel/rbtree.c
+	./rbtree_test
+
 test:
 	$(MAKE) test-unit
 	$(MAKE) test-integration CPUS=$(CPUS)
 
-# Unit-test the grader itself. This target never boots QEMU and does not need
-# a built xv6 image.
-test-unit:
+test-unit: test-rbtree
 	$(PYTHON) -m unittest discover -s tests -p 'test_*.py' -v
 
 test-grader: test-unit
 
-# Integration/system tests: boot a fresh QEMU snapshot for every atomic suite
-# and validate xv6 through its user-visible behavior.
 test-integration: $K/kernel fs.img
 	$(PYTHON) tests/run.py --suite pr --cpus $(CPUS)
 
@@ -228,5 +246,5 @@ test-suite: $K/kernel fs.img
 	@test -n "$(SUITE)" || (echo "usage: make test-suite SUITE=<suite> [CPUS=<n>]"; exit 2)
 	$(PYTHON) tests/run.py --suite $(SUITE) --cpus $(CPUS)
 
-.PHONY: clean qemu qemu-gdb gdb ph barrier test test-unit test-grader \
-	test-integration test-labs test-usertests test-full test-suite
+.PHONY: clean qemu qemu-gdb gdb ph barrier test-rbtree test test-unit \
+	test-grader test-integration test-labs test-usertests test-full test-suite

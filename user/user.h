@@ -1,6 +1,7 @@
 struct stat;
 struct rtcdate;
 struct sysinfo;
+struct sched_stats;
 
 // system calls
 int fork(void);
@@ -31,6 +32,9 @@ int sigreturn(void);
 int symlink(char *target, char *path);
 char *mmap(void *addr, int length, int prot, int flags, int fd, int offset);
 int munmap(void *addr, int length);
+int sched_set_hint(int ticks);
+int sched_set_weight(int weight);
+int sched_get_stats(struct sched_stats *stats);
 
 // ulib.c
 int stat(const char*, struct stat*);

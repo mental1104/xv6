@@ -7,6 +7,8 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "sysinfo.h"
+#include "sched.h"
+#include "schedstat.h"
 
 uint64
 sys_exit(void)
@@ -15,20 +17,11 @@ sys_exit(void)
   if(argint(0, &n) < 0)
     return -1;
   exit(n);
-  return 0;  // not reached
+  return 0;
 }
 
-uint64
-sys_getpid(void)
-{
-  return myproc()->pid;
-}
-
-uint64
-sys_fork(void)
-{
-  return fork();
-}
+uint64 sys_getpid(void) { return myproc()->pid; }
+uint64 sys_fork(void) { return fork(); }
 
 uint64
 sys_wait(void)
@@ -93,19 +86,15 @@ uint64
 sys_kill(void)
 {
   int pid;
-
   if(argint(0, &pid) < 0)
     return -1;
   return kill(pid);
 }
 
-// return how many clock tick interrupts have occurred
-// since start.
 uint64
 sys_uptime(void)
 {
   uint xticks;
-
   acquire(&tickslock);
   xticks = ticks;
   release(&tickslock);
@@ -118,7 +107,6 @@ sys_trace(void)
   int mask;
   if(argint(0, &mask) < 0)
     return -1;
-
   myproc()->mask = mask;
   return 0;
 }
@@ -132,35 +120,67 @@ sys_sysinfo(void)
 
   struct sysinfo info;
   struct proc* p = myproc();
-
   info.freemem = free_mem();
   info.nproc = free_proc();
-
   if(copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
-      return -1;
+    return -1;
   return 0;
 }
 
 uint64
 sys_sigalarm(void)
 {
-    struct proc* p = myproc();
-    int n;
-    uint64 handler;
-    if(argint(0,&n) < 0)
-        return -1;
-    if(argaddr(1, &handler) < 0)
-        return -1;
-    p->handler = (void (*)())handler;
-    p->alarm_interval = n;
-    return 0;
+  struct proc* p = myproc();
+  int n;
+  uint64 handler;
+  if(argint(0,&n) < 0)
+    return -1;
+  if(argaddr(1, &handler) < 0)
+    return -1;
+  p->handler = (void (*)())handler;
+  p->alarm_interval = n;
+  return 0;
 }
 
 uint64
 sys_sigreturn(void)
 {
-    struct proc* p = myproc();
-    restore_user_context(p->trapframe, &p->alarm_context);
-    p->in_handler = 0;
-    return p->trapframe->a0;
+  struct proc* p = myproc();
+  restore_user_context(p->trapframe, &p->alarm_context);
+  p->in_handler = 0;
+  return p->trapframe->a0;
+}
+
+uint64
+sys_sched_set_hint(void)
+{
+  int ticks_hint;
+  if(argint(0, &ticks_hint) < 0)
+    return -1;
+  return sched_set_hint(ticks_hint);
+}
+
+uint64
+sys_sched_set_weight(void)
+{
+  int weight;
+  if(argint(0, &weight) < 0)
+    return -1;
+  return sched_set_weight(weight);
+}
+
+uint64
+sys_sched_get_stats(void)
+{
+  uint64 addr;
+  struct sched_stats stats;
+  struct proc *p = myproc();
+
+  if(argaddr(0, &addr) < 0)
+    return -1;
+  if(sched_get_stats(&stats) < 0)
+    return -1;
+  if(copyout(p->pagetable, addr, (char *)&stats, sizeof(stats)) < 0)
+    return -1;
+  return 0;
 }

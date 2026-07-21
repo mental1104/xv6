@@ -27,3 +27,6 @@
 #define SYS_symlink    26
 #define SYS_mmap       27
 #define SYS_munmap     28
+#define SYS_sched_set_hint   29
+#define SYS_sched_set_weight 30
+#define SYS_sched_get_stats  31

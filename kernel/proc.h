@@ -1,3 +1,7 @@
+#include "rbtree.h"
+
+struct proc;
+
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -36,17 +40,14 @@ extern struct cpu cpus[NCPU];
 // then initializes registers from the trapframe's
 // kernel_sp, kernel_hartid, kernel_satp, and jumps to kernel_trap.
 // usertrapret() and userret in trampoline.S set up
-// the trapframe's kernel_*, restore user registers from the
-// trapframe, switch to the user page table, and enter user space.
-// the trapframe includes callee-saved user registers like s0-s11 because the
-// return-to-user path via usertrapret() doesn't return through
-// the entire kernel call stack.
+// the trapframe's kernel_*, restore user registers, switch to the user
+// page table, and enter user space.
 struct trapframe {
-  /*   0 */ uint64 kernel_satp;   // kernel page table
-  /*   8 */ uint64 kernel_sp;     // top of process's kernel stack
-  /*  16 */ uint64 kernel_trap;   // usertrap()
-  /*  24 */ uint64 epc;           // saved user program counter
-  /*  32 */ uint64 kernel_hartid; // saved kernel tp
+  /*   0 */ uint64 kernel_satp;
+  /*   8 */ uint64 kernel_sp;
+  /*  16 */ uint64 kernel_trap;
+  /*  24 */ uint64 epc;
+  /*  32 */ uint64 kernel_hartid;
   /*  40 */ uint64 ra;
   /*  48 */ uint64 sp;
   /*  56 */ uint64 gp;
@@ -80,8 +81,6 @@ struct trapframe {
   /* 280 */ uint64 t6;
 };
 
-// A snapshot of the user-visible execution state.
-// gpr[] stores x1 (ra) through x31 (t6) in trapframe order.
 struct user_context {
   uint64 epc;
   uint64 gpr[31];
@@ -89,28 +88,52 @@ struct user_context {
 
 enum procstate { UNUSED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+// Scheduling metadata is embedded in proc so queue operations never allocate
+// memory from interrupt or scheduler context.
+struct sched_entity {
+  struct proc *prev;
+  struct proc *next;
+  struct rb_node rb;
+  int on_rq;
+  int reserved;
+  int generation;
+  int weight;
+  int mlfq_level;
+  int force_preempt;
+  uint64 mlfq_used;
+  uint64 mlfq_epoch;
+  uint64 enqueue_seq;
+  uint64 runtime_ticks;
+  uint64 dispatches;
+  uint64 burst_hint;
+  uint64 remaining_hint;
+  uint64 vruntime;
+  uint64 slice_ticks;
+};
+
 // Per-process state
 struct proc {
   struct spinlock lock;
 
   // p->lock must be held when using these:
-  enum procstate state;        // Process state
-  struct proc *parent;         // Parent process
-  void *chan;                  // If non-zero, sleeping on chan
-  int killed;                  // If non-zero, have been killed
-  int xstate;                  // Exit status to be returned to parent's wait
-  int pid;                     // Process ID
+  enum procstate state;
+  struct proc *parent;
+  void *chan;
+  int killed;
+  int xstate;
+  int pid;
+  struct sched_entity sched;
 
   // these are private to the process, so p->lock need not be held.
-  uint64 kstack;               // Virtual address of kernel stack
-  uint64 sz;                   // Size of process memory (bytes)
-  pagetable_t pagetable;       // User page table
+  uint64 kstack;
+  uint64 sz;
+  pagetable_t pagetable;
   pagetable_t kpagetable;
-  struct trapframe *trapframe; // data page for trampoline.S
-  struct context context;      // swtch() here to run process
-  struct file *ofile[NOFILE];  // Open files
-  struct inode *cwd;           // Current directory
-  char name[16];               // Process name (debugging)
+  struct trapframe *trapframe;
+  struct context context;
+  struct file *ofile[NOFILE];
+  struct inode *cwd;
+  char name[16];
   int mask;
   void (*handler)();
   int alarm_interval;
