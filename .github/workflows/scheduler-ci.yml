@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: scheduler-ci-${{ github.ref }}-${{ matrix.policy }}
+  group: scheduler-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -43,5 +43,62 @@ jobs:
           make clean
           make -j2 SCHED_POLICY=${{ matrix.policy }}
 
-      - name: Run scheduler smoke test
+      - name: Run single-CPU scheduler smoke test
         run: python3 tests/scheduler_smoke.py --policy ${{ matrix.policy }} --cpus 1
+
+  smp-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        policy: [rr, mlfq, cfs]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu \
+            qemu-system-misc \
+            python3-pexpect
+
+      - name: Build policy
+        run: |
+          make clean
+          make -j2 SCHED_POLICY=${{ matrix.policy }}
+
+      - name: Run three-CPU scheduler smoke test
+        run: python3 tests/scheduler_smoke.py --policy ${{ matrix.policy }} --cpus 3
+
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu \
+            qemu-system-misc \
+            python3-pexpect
+
+      - name: Build default RR policy
+        run: |
+          make clean
+          make -j2 SCHED_POLICY=rr
+
+      - name: Run pull-request regression
+        run: make test-integration CPUS=3 SCHED_POLICY=rr
+
+      - name: Run complete usertests
+        run: make test-usertests CPUS=3 SCHED_POLICY=rr
