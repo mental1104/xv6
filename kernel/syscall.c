@@ -111,6 +111,7 @@ extern uint64 sys_sigreturn(void);
 extern uint64 sys_symlink(void);
 extern uint64 sys_mmap(void);
 extern uint64 sys_munmap(void);
+extern uint64 sys_waitpid(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -141,6 +142,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_symlink]   sys_symlink,
 [SYS_mmap]      sys_mmap,
 [SYS_munmap]    sys_munmap,
+[SYS_waitpid]   sys_waitpid,
 };
 
 char *sysname[] = {
@@ -172,6 +174,7 @@ char *sysname[] = {
 [SYS_symlink]   "symlink",
 [SYS_mmap]      "mmap",
 [SYS_munmap]    "munmap",
+[SYS_waitpid]   "waitpid",
 };
 
 void
