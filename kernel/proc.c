@@ -10,6 +10,7 @@
 #include "file.h"
 #include "vma.h"
 #include "fcntl.h"
+#include "wait.h"
 
 struct cpu cpus[NCPU];
 
@@ -456,9 +457,21 @@ exit(int status)
 int
 wait(uint64 addr)
 {
+  return waitpid(-1, addr, 0);
+}
+
+// Wait for a selected child to exit.
+// pid == -1 selects any child; WNOHANG returns 0 if a matching child
+// exists but has not exited yet.
+int
+waitpid(int target_pid, uint64 addr, int options)
+{
   struct proc *np;
-  int havekids, pid;
+  int havekids, child_pid;
   struct proc *p = myproc();
+
+  if(target_pid == 0 || target_pid < -1 || (options & ~WNOHANG) != 0)
+    return -1;
 
   // hold p->lock for the whole time to avoid lost
   // wakeups from a child's exit().
@@ -471,14 +484,15 @@ wait(uint64 addr)
       // this code uses np->parent without holding np->lock.
       // acquiring the lock first would cause a deadlock,
       // since np might be an ancestor, and we already hold p->lock.
-      if(np->parent == p){
+      if(np->parent == p &&
+         (target_pid == -1 || np->pid == target_pid)){
         // np->parent can't change between the check and the acquire()
         // because only the parent changes it, and we're the parent.
         acquire(&np->lock);
         havekids = 1;
         if(np->state == ZOMBIE){
           // Found one.
-          pid = np->pid;
+          child_pid = np->pid;
           if(addr != 0 && copyout(p->pagetable, addr, (char *)&np->xstate,
                                   sizeof(np->xstate)) < 0) {
             release(&np->lock);
@@ -488,7 +502,7 @@ wait(uint64 addr)
           freeproc(np);
           release(&np->lock);
           release(&p->lock);
-          return pid;
+          return child_pid;
         }
         release(&np->lock);
       }
@@ -498,6 +512,11 @@ wait(uint64 addr)
     if(!havekids || p->killed){
       release(&p->lock);
       return -1;
+    }
+
+    if(options & WNOHANG){
+      release(&p->lock);
+      return 0;
     }
 
     // Wait for a child to exit.
