@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import BinaryIO, Callable
 
 VARIANTS = {
     "pristine": "concept/21-vmbench-pristine",
@@ -26,6 +27,8 @@ VARIANTS = {
 }
 EXPECTED_RESULTS = 9
 PROMPT = b"$ "
+MAX_CAPTURE_BYTES = 2_000_000
+DIAGNOSTIC_TAIL_BYTES = 16_000
 
 
 @dataclass
@@ -38,6 +41,35 @@ class RunRecord:
     qemu_log: str
     build_ok: bool = False
     qemu_ok: bool = False
+
+
+class PtyChild:
+    """Small wait/poll wrapper for a child created with pty.fork()."""
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self.returncode: int | None = None
+
+    def poll(self) -> int | None:
+        if self.returncode is not None:
+            return self.returncode
+        try:
+            waited_pid, status = os.waitpid(self.pid, os.WNOHANG)
+        except ChildProcessError:
+            return self.returncode
+        if waited_pid == 0:
+            return None
+        self.returncode = os.waitstatus_to_exitcode(status)
+        return self.returncode
+
+    def wait(self, timeout: float) -> int:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            result = self.poll()
+            if result is not None:
+                return result
+            time.sleep(0.1)
+        raise TimeoutError(f"child process {self.pid} did not exit after {timeout}s")
 
 
 def run_checked(
@@ -82,11 +114,17 @@ def ensure_prerequisites(repo: Path, *, require_runtime: bool) -> None:
     git_output(repo, "rev-parse", "--git-dir")
 
 
+def output_tail(buffer: bytearray) -> str:
+    if not buffer:
+        return "<no QEMU output captured>"
+    return bytes(buffer[-DIAGNOSTIC_TAIL_BYTES:]).decode("utf-8", errors="replace")
+
+
 def wait_for(
     master_fd: int,
-    process: subprocess.Popen[bytes],
-    log_stream,
-    predicate,
+    process: PtyChild,
+    log_stream: BinaryIO,
+    predicate: Callable[[bytes], bool],
     *,
     timeout: int,
     description: str,
@@ -94,9 +132,11 @@ def wait_for(
     deadline = time.monotonic() + timeout
     buffer = bytearray()
     while time.monotonic() < deadline:
-        if process.poll() is not None:
+        exit_code = process.poll()
+        if exit_code is not None:
             raise RuntimeError(
-                f"QEMU exited before {description}; exit={process.returncode}"
+                f"QEMU exited before {description}; exit={exit_code}\n"
+                f"--- QEMU output tail ---\n{output_tail(buffer)}"
             )
         ready, _, _ = select.select([master_fd], [], [], 0.5)
         if not ready:
@@ -104,39 +144,83 @@ def wait_for(
         try:
             chunk = os.read(master_fd, 65536)
         except OSError as error:
+            if process.poll() is not None:
+                raise RuntimeError(
+                    f"QEMU exited before {description}; exit={process.returncode}\n"
+                    f"--- QEMU output tail ---\n{output_tail(buffer)}"
+                ) from error
             raise RuntimeError(
-                f"failed reading QEMU output while waiting for {description}: {error}"
+                f"failed reading QEMU output while waiting for {description}: {error}\n"
+                f"--- QEMU output tail ---\n{output_tail(buffer)}"
             ) from error
         if not chunk:
             continue
-        log_stream.buffer.write(chunk)
+
+        log_stream.write(chunk)
         log_stream.flush()
+        sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
+
         buffer.extend(chunk)
-        if len(buffer) > 2_000_000:
-            del buffer[: len(buffer) - 1_000_000]
+        if len(buffer) > MAX_CAPTURE_BYTES:
+            del buffer[: len(buffer) - MAX_CAPTURE_BYTES // 2]
         if predicate(bytes(buffer)):
             return bytes(buffer)
-    raise TimeoutError(f"timed out after {timeout}s waiting for {description}")
+
+    raise TimeoutError(
+        f"timed out after {timeout}s waiting for {description}\n"
+        f"--- QEMU output tail ---\n{output_tail(buffer)}"
+    )
 
 
-def terminate_qemu(master_fd: int, process: subprocess.Popen[bytes]) -> None:
+def spawn_qemu(worktree: Path) -> tuple[int, PtyChild]:
+    """Launch make/qemu in a real controlling PTY.
+
+    pty.openpty() + subprocess.Popen() only attaches file descriptors; it does
+    not make the slave PTY the child's controlling terminal. QEMU's stdio
+    backend can then remain alive without producing the xv6 console prompt.
+    pty.fork() uses forkpty(3), which creates the controlling terminal expected
+    by QEMU's -nographic stdio backend.
+    """
+
+    pid, master_fd = pty.fork()
+    if pid == 0:
+        try:
+            os.chdir(worktree)
+            os.execvp("make", ["make", "qemu", "CPUS=1"])
+        except BaseException as error:
+            os.write(2, f"vmbench runner exec failed: {error}\n".encode())
+            os._exit(127)
+    return master_fd, PtyChild(pid)
+
+
+def terminate_qemu(master_fd: int, process: PtyChild) -> None:
     if process.poll() is not None:
         return
     try:
         os.write(master_fd, b"\x01x")
         process.wait(timeout=8)
         return
-    except Exception:
+    except (OSError, TimeoutError):
         pass
+
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
+        process.poll()
         return
     try:
         process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
+    except TimeoutError:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
         process.wait(timeout=5)
+
+
+def shell_prompt_seen(data: bytes) -> bool:
+    return PROMPT in data or data.rstrip().endswith(b"$")
 
 
 def run_qemu(
@@ -148,25 +232,15 @@ def run_qemu(
     regression_commands: list[str],
 ) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    master_fd, slave_fd = pty.openpty()
-    process = subprocess.Popen(
-        ["make", "qemu", "CPUS=1"],
-        cwd=worktree,
-        stdin=slave_fd,
-        stdout=slave_fd,
-        stderr=slave_fd,
-        close_fds=True,
-        start_new_session=True,
-    )
-    os.close(slave_fd)
+    master_fd, process = spawn_qemu(worktree)
 
     try:
-        with log_path.open("w", encoding="utf-8", errors="replace") as log_stream:
+        with log_path.open("wb") as log_stream:
             wait_for(
                 master_fd,
                 process,
                 log_stream,
-                lambda data: PROMPT in data,
+                shell_prompt_seen,
                 timeout=timeout,
                 description="xv6 shell prompt",
             )
@@ -177,7 +251,7 @@ def run_qemu(
                 process,
                 log_stream,
                 lambda data: data.count(b"VMRESULT ") >= EXPECTED_RESULTS
-                and data.rstrip().endswith(b"$"),
+                and shell_prompt_seen(data),
                 timeout=timeout,
                 description=f"{EXPECTED_RESULTS} VMRESULT lines",
             )
@@ -192,7 +266,7 @@ def run_qemu(
                     master_fd,
                     process,
                     log_stream,
-                    lambda data: data.rstrip().endswith(b"$"),
+                    shell_prompt_seen,
                     timeout=timeout,
                     description=f"completion of {regression}",
                 )
