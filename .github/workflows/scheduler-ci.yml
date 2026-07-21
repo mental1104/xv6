@@ -1,9 +1,6 @@
 name: Scheduler family CI
 
 on:
-  push:
-    branches:
-      - "concept/50-*"
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
@@ -46,7 +43,7 @@ jobs:
           make clean
           make -j2 SCHED_POLICY=${{ matrix.policy }}
 
-      - name: Run single-CPU scheduler smoke test
+      - name: Run single-CPU scheduler behavior test
         run: python3 tests/scheduler_smoke.py --policy ${{ matrix.policy }} --cpus 1
 
   smp-smoke:
