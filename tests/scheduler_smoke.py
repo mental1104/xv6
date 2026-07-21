@@ -36,11 +36,11 @@ def main() -> int:
         if not re.search(rf"scheduler: {re.escape(args.policy)}", boot):
             raise RuntimeError(f"missing scheduler banner for {args.policy}")
 
-        child.sendline("schedtest")
+        child.sendline("schedtest verify" if args.cpus == 1 else "schedtest smoke")
         child.expect_exact("$ ")
         output.append(child.before)
         result = "".join(output)
-        if "schedtest: OK" not in result:
+        if f"schedtest: OK policy={args.policy}" not in result:
             raise RuntimeError("schedtest did not report success")
         if "panic:" in result or "kerneltrap" in result:
             raise RuntimeError("kernel failure detected")

@@ -57,6 +57,12 @@ extern struct proc proc[NPROC];
 extern void legacy_procinit(void);
 extern void legacy_yield(void);
 
+static void list_push_tail(struct sched_list *list, struct proc *p);
+static void list_remove(struct sched_list *list, struct proc *p);
+static struct proc *list_pop_head(struct sched_list *list);
+static void sync_runqueue(void);
+static struct proc *reserve_next(void);
+
 static void
 list_push_tail(struct sched_list *list, struct proc *p)
 {
@@ -591,6 +597,11 @@ sched_timer_yield(void)
   if(p == 0 || p->state != RUNNING)
     return;
 
+  // A wakeup may have made a shorter or higher-priority task RUNNABLE
+  // since the last trip through scheduler(). Synchronize before applying
+  // the policy-specific preemption rule.
+  sync_runqueue();
+
   acquire(&runq.lock);
   runq.clock++;
   p->sched.runtime_ticks++;
@@ -639,5 +650,6 @@ sched_get_stats(struct sched_stats *stats)
   stats->burst_hint = p->sched.burst_hint;
   stats->remaining_hint = p->sched.remaining_hint;
   stats->vruntime = p->sched.vruntime;
+  stats->mlfq_epoch = p->sched.mlfq_epoch;
   return 0;
 }

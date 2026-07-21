@@ -18,6 +18,7 @@ struct sched_stats {
   unsigned long burst_hint;
   unsigned long remaining_hint;
   unsigned long vruntime;
+  unsigned long mlfq_epoch;
 };
 
 #endif
