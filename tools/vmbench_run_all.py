@@ -8,6 +8,7 @@ import json
 import os
 import pty
 import select
+import signal
 import shutil
 import subprocess
 import sys
@@ -127,11 +128,14 @@ def terminate_qemu(master_fd: int, process: subprocess.Popen[bytes]) -> None:
         return
     except Exception:
         pass
-    process.terminate()
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        process.kill()
+        os.killpg(process.pid, signal.SIGKILL)
         process.wait(timeout=5)
 
 
@@ -184,7 +188,7 @@ def run_qemu(
 
             for regression in regression_commands:
                 os.write(master_fd, (regression + "\n").encode())
-                wait_for(
+                regression_output = wait_for(
                     master_fd,
                     process,
                     log_stream,
@@ -192,6 +196,16 @@ def run_qemu(
                     timeout=timeout,
                     description=f"completion of {regression}",
                 )
+                success_marker = (
+                    b"ALL COW TESTS PASSED"
+                    if regression == "cowtest"
+                    else b"ALL TESTS PASSED"
+                )
+                if success_marker not in regression_output:
+                    raise RuntimeError(
+                        f"{regression} did not print {success_marker.decode()!r}; "
+                        "inspect the QEMU log"
+                    )
     finally:
         terminate_qemu(master_fd, process)
         os.close(master_fd)
