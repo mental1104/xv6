@@ -3,6 +3,7 @@
 #include "kernel/types.h"
 #include "user/user.h"
 #include "kernel/fcntl.h"
+#include "kernel/wait.h"
 
 // Parsed command representation
 #define EXEC  1
@@ -12,6 +13,20 @@
 #define BACK  5
 
 #define MAXARGS 10
+#define MAXJOBS 16
+#define MAXCMD  100
+
+enum jobstate { JOB_UNUSED, JOB_RUNNING };
+
+struct job {
+  int jid;
+  int pid;
+  enum jobstate state;
+  char command[MAXCMD];
+};
+
+static struct job jobs[MAXJOBS];
+static int nextjid = 1;
 
 struct cmd {
   int type;
@@ -52,6 +67,223 @@ struct backcmd {
 int fork1(void);  // Fork but panics on failure.
 void panic(char*);
 struct cmd *parsecmd(char*);
+void runline(struct cmd*);
+void runcmd(struct cmd*) __attribute__((noreturn));
+
+static void
+copytext(char *dst, char *src, int size)
+{
+  int i;
+
+  for(i = 0; i + 1 < size && src[i]; i++)
+    dst[i] = src[i];
+  dst[i] = 0;
+}
+
+static void
+appendtext(char *dst, int *length, int size, char *text)
+{
+  while(*text && *length + 1 < size)
+    dst[(*length)++] = *text++;
+  dst[*length] = 0;
+}
+
+static void
+formatcmd(struct cmd *cmd, char *dst, int *length, int size)
+{
+  int i;
+
+  switch(cmd->type){
+  case EXEC: {
+    struct execcmd *ecmd = (struct execcmd*)cmd;
+    for(i = 0; ecmd->argv[i]; i++){
+      if(i > 0)
+        appendtext(dst, length, size, " ");
+      appendtext(dst, length, size, ecmd->argv[i]);
+    }
+    break;
+  }
+  case REDIR: {
+    struct redircmd *rcmd = (struct redircmd*)cmd;
+    formatcmd(rcmd->cmd, dst, length, size);
+    if(rcmd->fd == 0)
+      appendtext(dst, length, size, " < ");
+    else if(rcmd->mode & O_TRUNC)
+      appendtext(dst, length, size, " > ");
+    else
+      appendtext(dst, length, size, " >> ");
+    appendtext(dst, length, size, rcmd->file);
+    break;
+  }
+  case PIPE: {
+    struct pipecmd *pcmd = (struct pipecmd*)cmd;
+    formatcmd(pcmd->left, dst, length, size);
+    appendtext(dst, length, size, " | ");
+    formatcmd(pcmd->right, dst, length, size);
+    break;
+  }
+  case LIST: {
+    struct listcmd *lcmd = (struct listcmd*)cmd;
+    formatcmd(lcmd->left, dst, length, size);
+    appendtext(dst, length, size, "; ");
+    formatcmd(lcmd->right, dst, length, size);
+    break;
+  }
+  case BACK:
+    formatcmd(((struct backcmd*)cmd)->cmd, dst, length, size);
+    appendtext(dst, length, size, " &");
+    break;
+  }
+}
+
+static void
+clearjob(struct job *job)
+{
+  memset(job, 0, sizeof(*job));
+}
+
+static struct job*
+findjob(int jid)
+{
+  struct job *job;
+
+  for(job = jobs; job < &jobs[MAXJOBS]; job++)
+    if(job->state == JOB_RUNNING && job->jid == jid)
+      return job;
+  return 0;
+}
+
+static void
+reapjobs(void)
+{
+  struct job *job;
+  int status;
+
+  for(job = jobs; job < &jobs[MAXJOBS]; job++){
+    if(job->state != JOB_RUNNING)
+      continue;
+    int pid = waitpid(job->pid, &status, WNOHANG);
+    if(pid == job->pid){
+      printf("[%d] Done %s\n", job->jid, job->command);
+      clearjob(job);
+    } else if(pid < 0){
+      clearjob(job);
+    }
+  }
+}
+
+static struct job*
+emptyjob(void)
+{
+  struct job *job;
+
+  for(job = jobs; job < &jobs[MAXJOBS]; job++)
+    if(job->state == JOB_UNUSED)
+      return job;
+  return 0;
+}
+
+static void
+startjob(struct cmd *cmd, char *command)
+{
+  struct job *job;
+  int pid;
+
+  reapjobs();
+  if((job = emptyjob()) == 0){
+    fprintf(2, "sh: too many background jobs\n");
+    return;
+  }
+
+  pid = fork1();
+  if(pid == 0)
+    runcmd(cmd);
+
+  job->jid = nextjid++;
+  job->pid = pid;
+  job->state = JOB_RUNNING;
+  copytext(job->command, command, sizeof(job->command));
+  printf("[%d] %d\n", job->jid, job->pid);
+}
+
+static void
+showjobs(void)
+{
+  struct job *job;
+
+  reapjobs();
+  for(job = jobs; job < &jobs[MAXJOBS]; job++)
+    if(job->state == JOB_RUNNING)
+      printf("[%d] %d Running %s\n", job->jid, job->pid, job->command);
+}
+
+static int
+parsejid(char *s)
+{
+  int jid = 0;
+
+  while(*s == ' ' || *s == '\t')
+    s++;
+  if(*s == '%')
+    s++;
+  if(*s < '0' || *s > '9')
+    return -1;
+  while(*s >= '0' && *s <= '9'){
+    jid = jid * 10 + *s - '0';
+    s++;
+  }
+  while(*s == ' ' || *s == '\t')
+    s++;
+  if(*s != 0 || jid == 0)
+    return -1;
+  return jid;
+}
+
+static void
+foreground(char *arg)
+{
+  int jid, status;
+  struct job *job;
+
+  if((jid = parsejid(arg)) < 0 || (job = findjob(jid)) == 0){
+    fprintf(2, "fg: no such job\n");
+    return;
+  }
+  if(waitpid(job->pid, &status, 0) < 0){
+    fprintf(2, "fg: wait failed for job %d\n", jid);
+    return;
+  }
+  clearjob(job);
+}
+
+static int
+startswith(char *s, char *prefix)
+{
+  while(*prefix && *s == *prefix){
+    s++;
+    prefix++;
+  }
+  return *prefix == 0;
+}
+
+static int
+runbuiltin(char *buf)
+{
+  if(strcmp(buf, "jobs") == 0){
+    showjobs();
+    return 1;
+  }
+  if(startswith(buf, "fg ")){
+    foreground(buf + 3);
+    return 1;
+  }
+  if(startswith(buf, "cd ")){
+    if(chdir(buf + 3) < 0)
+      fprintf(2, "cannot cd %s\n", buf + 3);
+    return 1;
+  }
+  return 0;
+}
 
 __attribute__((noreturn))
 // Execute cmd.  Never returns.
@@ -157,19 +389,50 @@ main(void)
   }
 
   // Read and run input commands.
-  while(getcmd(buf, sizeof(buf)) >= 0){
-    if(buf[0] == 'c' && buf[1] == 'd' && buf[2] == ' '){
-      // Chdir must be called by the parent, not the child.
-      buf[strlen(buf)-1] = 0;  // chop \n
-      if(chdir(buf+3) < 0)
-        fprintf(2, "cannot cd %s\n", buf+3);
+  for(;;){
+    reapjobs();
+    if(getcmd(buf, sizeof(buf)) < 0)
+      break;
+    int len = strlen(buf);
+    if(len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r'))
+      buf[len-1] = 0;
+    if(buf[0] == 0)
       continue;
-    }
-    if(fork1() == 0)
-      runcmd(parsecmd(buf));
-    wait(0);
+    if(runbuiltin(buf))
+      continue;
+    runline(parsecmd(buf));
   }
   exit(0);
+}
+
+// Run lists in the shell so every top-level background command remains
+// a direct child that can be tracked and reaped by this shell.
+void
+runline(struct cmd *cmd)
+{
+  char command[MAXCMD] = {0};
+  int command_length = 0;
+  int pid;
+
+  if(cmd->type == LIST){
+    struct listcmd *lcmd = (struct listcmd*)cmd;
+    runline(lcmd->left);
+    runline(lcmd->right);
+    return;
+  }
+  if(cmd->type == BACK){
+    formatcmd(((struct backcmd*)cmd)->cmd, command,
+              &command_length, sizeof(command));
+    appendtext(command, &command_length, sizeof(command), " &");
+    startjob(((struct backcmd*)cmd)->cmd, command);
+    return;
+  }
+
+  pid = fork1();
+  if(pid == 0)
+    runcmd(cmd);
+  if(waitpid(pid, 0, 0) < 0)
+    fprintf(2, "sh: wait failed\n");
 }
 
 void
