@@ -1,6 +1,8 @@
 #ifndef XV6_USER_TRACEMASK_H
 #define XV6_USER_TRACEMASK_H
 
+#include "kernel/types.h"
+
 // 描述 trace 参数解析是否成功；解析失败时，具体状态用于指导调用方
 // 向用户输出对应的错误信息。
 enum trace_mask_status {
@@ -23,6 +25,6 @@ enum trace_mask_status {
  *   返回 enum trace_mask_status 中的一个状态值。解析失败时不会修改
  *   *mask，便于调用方和测试识别意外产生的部分结果。
  */
-int trace_parse_mask(const char *spec, int *mask);
+int trace_parse_mask(const char *spec, uint64 *mask);
 
 #endif

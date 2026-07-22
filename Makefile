@@ -85,8 +85,7 @@ $(error unsupported SCHED_POLICY='$(SCHED_POLICY)'; use rr, fifo, sjf, stcf, mlf
 endif
 CFLAGS += -DSCHED_POLICY=$(SCHED_POLICY_ID)
 
-# Keep the historical proc.c implementation as a linkable fallback while the
-# policy-aware wrappers in sched.c own the public entry points.
+# 保留 proc.c 的历史入口作为可链接后备，由 sched.c 提供公开调度入口。
 $K/proc.o: CFLAGS += -Dprocinit=legacy_procinit -Dscheduler=legacy_scheduler -Dyield=legacy_yield
 $K/trap.o: CFLAGS += -Dyield=sched_timer_yield
 
@@ -244,6 +243,10 @@ UPROGS=\
 	$U/_bigfile\
 	$U/_symlinktest\
 	$U/_mmaptest\
+	$U/_lab1test\
+	$U/_tracesmoke\
+	$U/_uthreadtest\
+	$U/_xv6test\
 	$U/_schedtest
 
 UEXTRA = $U/xargstest.sh
@@ -255,9 +258,10 @@ fs.img: mkfs/mkfs README $(UEXTRA) $(UPROGS)
 
 clean:
 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
-	*/*.o */*.d */*.asm */*.sym \
-	$U/initcode $U/initcode.out $K/kernel fs.img \
-	mkfs/mkfs .gdbinit $U/usys.S $(UPROGS) ph barrier rbtree_test
+		*/*.o */*.d */*.asm */*.sym \
+		$T/*.o $T/*.d $T/*.asm $T/*.sym \
+		$U/initcode $U/initcode.out $K/kernel fs.img \
+		mkfs/mkfs .gdbinit $U/usys.S $(UPROGS) $(UEXTRA) ph barrier rbtree_test
 
 GDBPORT = $(shell expr `id -u` % 5000 + 25000)
 QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
@@ -292,18 +296,24 @@ barrier: $H/barrier.c
 	gcc -o barrier -g -O2 $H/barrier.c -pthread
 
 test-rbtree:
-	gcc -Wall -Werror -I. -o rbtree_test notxv6/rbtree_test.c kernel/rbtree.c
+	gcc -Wall -Werror -I. -o rbtree_test $H/rbtree_test.c kernel/rbtree.c
 	./rbtree_test
 
+# 默认开发入口：先自测 Python runner，再由同一 Python 入口启动 QEMU
+# 并执行 PR 级回归。使用子 make 保证即使外层带 -j，两阶段仍按顺序执行。
 test:
 	$(MAKE) test-unit
 	$(MAKE) test-integration CPUS=$(CPUS)
 
+# Unit-test the grader itself. This target never boots QEMU and does not need
+# a built xv6 image.
 test-unit: test-rbtree
 	$(PYTHON) -m unittest discover -s tests -p 'test_*.py' -v
 
 test-grader: test-unit
 
+# Integration/system tests: boot a fresh QEMU snapshot for every atomic suite
+# and validate xv6 through its user-visible behavior.
 test-integration: $K/kernel fs.img
 	$(PYTHON) tests/run.py --suite pr --cpus $(CPUS)
 
@@ -319,5 +329,5 @@ test-suite: $K/kernel fs.img
 	@test -n "$(SUITE)" || (echo "usage: make test-suite SUITE=<suite> [CPUS=<n>]"; exit 2)
 	$(PYTHON) tests/run.py --suite $(SUITE) --cpus $(CPUS)
 
-.PHONY: clean qemu qemu-gdb gdb ph barrier test-rbtree test test-unit \
-	test-grader test-integration test-labs test-usertests test-full test-suite
+.PHONY: clean qemu qemu-gdb gdb ph barrier test-rbtree test test-unit test-grader \
+	test-integration test-labs test-usertests test-full test-suite

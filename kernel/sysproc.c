@@ -17,11 +17,20 @@ sys_exit(void)
   if(argint(0, &n) < 0)
     return -1;
   exit(n);
-  return 0;
+  return 0;  // not reached
 }
 
-uint64 sys_getpid(void) { return myproc()->pid; }
-uint64 sys_fork(void) { return fork(); }
+uint64
+sys_getpid(void)
+{
+  return myproc()->pid;
+}
+
+uint64
+sys_fork(void)
+{
+  return fork();
+}
 
 uint64
 sys_wait(void)
@@ -86,15 +95,19 @@ uint64
 sys_kill(void)
 {
   int pid;
+
   if(argint(0, &pid) < 0)
     return -1;
   return kill(pid);
 }
 
+// return how many clock tick interrupts have occurred
+// since start.
 uint64
 sys_uptime(void)
 {
   uint xticks;
+
   acquire(&tickslock);
   xticks = ticks;
   release(&tickslock);
@@ -104,9 +117,10 @@ sys_uptime(void)
 uint64
 sys_trace(void)
 {
-  int mask;
-  if(argint(0, &mask) < 0)
+  uint64 mask;
+  if(argaddr(0, &mask) < 0)
     return -1;
+
   myproc()->mask = mask;
   return 0;
 }
@@ -120,37 +134,44 @@ sys_sysinfo(void)
 
   struct sysinfo info;
   struct proc* p = myproc();
+
   info.freemem = free_mem();
   info.nproc = free_proc();
+
   if(copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
-    return -1;
+      return -1;
   return 0;
 }
 
 uint64
 sys_sigalarm(void)
 {
-  struct proc* p = myproc();
-  int n;
-  uint64 handler;
-  if(argint(0,&n) < 0)
-    return -1;
-  if(argaddr(1, &handler) < 0)
-    return -1;
-  p->handler = (void (*)())handler;
-  p->alarm_interval = n;
-  return 0;
+    struct proc* p = myproc();
+    int n;
+    uint64 handler;
+    if(argint(0,&n) < 0)
+        return -1;
+    if(argaddr(1, &handler) < 0)
+        return -1;
+    p->handler = (void (*)())handler;
+    p->alarm_interval = n;
+    return 0;
 }
 
 uint64
 sys_sigreturn(void)
 {
-  struct proc* p = myproc();
-  restore_user_context(p->trapframe, &p->alarm_context);
-  p->in_handler = 0;
-  return p->trapframe->a0;
+    struct proc* p = myproc();
+    restore_user_context(p->trapframe, &p->alarm_context);
+    p->in_handler = 0;
+    return p->trapframe->a0;
 }
 
+/**
+ * 设置当前进程供 SJF/STCF 教学策略使用的 CPU burst hint。
+ *
+ * @return 参数合法时返回 0，否则返回 -1。
+ */
 uint64
 sys_sched_set_hint(void)
 {
@@ -160,6 +181,11 @@ sys_sched_set_hint(void)
   return sched_set_hint(ticks_hint);
 }
 
+/**
+ * 设置当前进程供 Minimal CFS 使用的整数权重。
+ *
+ * @return 参数合法时返回 0，否则返回 -1。
+ */
 uint64
 sys_sched_set_weight(void)
 {
@@ -169,6 +195,11 @@ sys_sched_set_weight(void)
   return sched_set_weight(weight);
 }
 
+/**
+ * 将当前进程的调度统计复制到用户地址。
+ *
+ * @return 复制成功时返回 0，地址或状态无效时返回 -1。
+ */
 uint64
 sys_sched_get_stats(void)
 {

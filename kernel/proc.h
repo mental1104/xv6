@@ -40,14 +40,17 @@ extern struct cpu cpus[NCPU];
 // then initializes registers from the trapframe's
 // kernel_sp, kernel_hartid, kernel_satp, and jumps to kernel_trap.
 // usertrapret() and userret in trampoline.S set up
-// the trapframe's kernel_*, restore user registers, switch to the user
-// page table, and enter user space.
+// the trapframe's kernel_*, restore user registers from the
+// trapframe, switch to the user page table, and enter user space.
+// the trapframe includes callee-saved user registers like s0-s11 because the
+// return-to-user path via usertrapret() doesn't return through
+// the entire kernel call stack.
 struct trapframe {
-  /*   0 */ uint64 kernel_satp;
-  /*   8 */ uint64 kernel_sp;
-  /*  16 */ uint64 kernel_trap;
-  /*  24 */ uint64 epc;
-  /*  32 */ uint64 kernel_hartid;
+  /*   0 */ uint64 kernel_satp;   // kernel page table
+  /*   8 */ uint64 kernel_sp;     // top of process's kernel stack
+  /*  16 */ uint64 kernel_trap;   // usertrap()
+  /*  24 */ uint64 epc;           // saved user program counter
+  /*  32 */ uint64 kernel_hartid; // saved kernel tp
   /*  40 */ uint64 ra;
   /*  48 */ uint64 sp;
   /*  56 */ uint64 gp;
@@ -81,6 +84,8 @@ struct trapframe {
   /* 280 */ uint64 t6;
 };
 
+// A snapshot of the user-visible execution state.
+// gpr[] stores x1 (ra) through x31 (t6) in trapframe order.
 struct user_context {
   uint64 epc;
   uint64 gpr[31];
@@ -88,8 +93,7 @@ struct user_context {
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
-// Scheduling metadata is embedded in proc so queue operations never allocate
-// memory from interrupt or scheduler context.
+// 调度实体内嵌于 proc，调度器和中断路径无需动态分配队列节点。
 struct sched_entity {
   struct proc *prev;
   struct proc *next;
@@ -116,25 +120,25 @@ struct proc {
   struct spinlock lock;
 
   // p->lock must be held when using these:
-  enum procstate state;
-  struct proc *parent;
-  void *chan;
-  int killed;
-  int xstate;
-  int pid;
-  struct sched_entity sched;
+  enum procstate state;        // Process state
+  struct proc *parent;         // Parent process; wait_lock protects changes.
+  void *chan;                  // If non-zero, sleeping on chan
+  int killed;                  // If non-zero, have been killed
+  int xstate;                  // Exit status to be returned to parent's wait
+  int pid;                     // Process ID
+  struct sched_entity sched;   // Policy-owned scheduling state.
 
   // these are private to the process, so p->lock need not be held.
-  uint64 kstack;
-  uint64 sz;
-  pagetable_t pagetable;
+  uint64 kstack;               // Virtual address of kernel stack
+  uint64 sz;                   // Size of process memory (bytes)
+  pagetable_t pagetable;       // User page table
   pagetable_t kpagetable;
-  struct trapframe *trapframe;
-  struct context context;
-  struct file *ofile[NOFILE];
-  struct inode *cwd;
-  char name[16];
-  int mask;
+  struct trapframe *trapframe; // data page for trampoline.S
+  struct context context;      // swtch() here to run process
+  struct file *ofile[NOFILE];  // Open files
+  struct inode *cwd;           // Current directory
+  char name[16];               // Process name (debugging)
+  uint64 mask;
   void (*handler)();
   int alarm_interval;
   int total_ticks;

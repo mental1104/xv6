@@ -8,7 +8,7 @@
 struct trace_mask_case {
   char *spec;          // 传给 trace_parse_mask() 的输入字符串。
   int expected_status; // 预期返回的 enum trace_mask_status 状态。
-  int expected_mask;   // 解析成功时预期得到的整数掩码。
+  uint64 expected_mask;   // 解析成功时预期得到的整数掩码。
 };
 
 /*
@@ -26,9 +26,9 @@ main(void)
 {
   // 固定用例覆盖名称组合、整数兼容、非法分隔符、未知名称和整数溢出。
   struct trace_mask_case cases[] = {
-    {"read", TRACE_MASK_OK, 1U << SYS_read},
-    {"read,write", TRACE_MASK_OK, (1U << SYS_read) | (1U << SYS_write)},
-    {"read,read", TRACE_MASK_OK, 1U << SYS_read},
+    {"read", TRACE_MASK_OK, 1ULL << SYS_read},
+    {"read,write", TRACE_MASK_OK, (1ULL << SYS_read) | (1ULL << SYS_write)},
+    {"read,read", TRACE_MASK_OK, 1ULL << SYS_read},
     {"32", TRACE_MASK_OK, 32},
     {"0", TRACE_MASK_OK, 0},
     {"", TRACE_MASK_EMPTY, 0},
@@ -46,13 +46,13 @@ main(void)
   for(case_index = 0;
       case_index < (int)(sizeof(cases) / sizeof(cases[0]));
       case_index++){
-    int mask = -1; // 失败路径哨兵值，用于检查解析器是否错误写入输出参数。
+    uint64 mask = ~(uint64)0; // 失败路径哨兵值，用于检查解析器是否错误写入输出参数。
     int status;    // 当前固定用例实际得到的解析状态。
 
     status = trace_parse_mask(cases[case_index].spec, &mask);
     if(status != cases[case_index].expected_status ||
        (status == TRACE_MASK_OK && mask != cases[case_index].expected_mask)){
-      printf("tracemasktest: %s: status %d mask %d\n",
+      printf("tracemasktest: %s: status %d mask %p\n",
              cases[case_index].spec, status, mask);
       failed++;
     }
@@ -62,12 +62,12 @@ main(void)
   for(syscall_number = 1;
       syscall_number < (int)SYSCALL_NAME_COUNT;
       syscall_number++){
-    int mask = 0; // 根据当前已注册系统调用名称生成的实际掩码。
+    uint64 mask = 0; // 根据当前已注册系统调用名称生成的实际掩码。
     int status;   // 当前已注册名称的实际解析状态。
 
     status = trace_parse_mask(syscall_names[syscall_number], &mask);
-    if(status != TRACE_MASK_OK || mask != (int)(1U << syscall_number)){
-      printf("tracemasktest: syscall %s: status %d mask %d\n",
+    if(status != TRACE_MASK_OK || mask != (1ULL << syscall_number)){
+      printf("tracemasktest: syscall %s: status %d mask %p\n",
              syscall_names[syscall_number], status, mask);
       failed++;
     }

@@ -1,6 +1,8 @@
 struct stat;
 struct rtcdate;
 struct sysinfo;
+struct memviz_snapshot;
+struct memviz_va_query;
 struct sched_stats;
 
 // system calls
@@ -25,13 +27,16 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
-int trace(int);
+int trace(uint64);
 int sysinfo(struct sysinfo*);
 int sigalarm(int ticks, void (*handler)());
 int sigreturn(void);
 int symlink(char *target, char *path);
 char *mmap(void *addr, int length, int prot, int flags, int fd, int offset);
 int munmap(void *addr, int length);
+int backtrace(void);
+int memsnapshot(int view, struct memviz_snapshot *snapshot);
+int vaquery(uint64 va, struct memviz_va_query *query);
 int sched_set_hint(int ticks);
 int sched_set_weight(int weight);
 int sched_get_stats(struct sched_stats *stats);
