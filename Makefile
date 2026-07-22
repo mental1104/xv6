@@ -21,6 +21,8 @@ OBJS = \
   $K/trap.o \
   $K/syscall.o \
   $K/sysproc.o \
+  $K/memviz.o \
+  $K/sysmemviz.o \
   $K/bio.o \
   $K/fs.o \
   $K/log.o \
@@ -105,6 +107,16 @@ $U/_%: $T/%.o $(ULIB)
 	$(OBJDUMP) -S $@ > $T/$*.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/$*.sym
 
+$U/_sh: $U/shentry.o $U/sh.o $U/memvizlib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e sh_entry -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/sh.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/sh.sym
+
+$U/_memviz: $U/memviz.o $U/memvizlib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/memviz.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/memviz.sym
+
 $U/_trace: $U/trace.o $U/tracemask.o $(ULIB)
 	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
 	$(OBJDUMP) -S $@ > $U/trace.asm
@@ -163,6 +175,8 @@ UPROGS=\
 	$U/_mkdir\
 	$U/_rm\
 	$U/_sh\
+	$U/_memviz\
+	$U/_memviztest\
 	$U/_wc\
 	$U/_zombie\
 	$U/_pingpong\
