@@ -86,7 +86,7 @@ struct user_context {
   uint64 gpr[31];
 };
 
-enum procstate { UNUSED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
 // Scheduling metadata is embedded in proc so queue operations never allocate
 // memory from interrupt or scheduler context.

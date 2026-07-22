@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "syscall.h"
+#include "syscall_names.h"
 #include "defs.h"
 
 int
