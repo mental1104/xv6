@@ -1,4 +1,5 @@
 #include "kernel/types.h"
+#include "kernel/param.h"
 #include "kernel/memlayout.h"
 #include "kernel/riscv.h"
 #include "kernel/fcntl.h"
