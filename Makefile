@@ -96,6 +96,16 @@ _%: %.o $(ULIB)
 	$(OBJDUMP) -S $@ > $*.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $*.sym
 
+$U/_trace: $U/trace.o $U/tracemask.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/trace.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/trace.sym
+
+$U/_tracemasktest: $U/tracemasktest.o $U/tracemask.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/tracemasktest.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/tracemasktest.sym
+
 $U/usys.S: $U/usys.pl
 	perl $U/usys.pl > $U/usys.S
 
@@ -141,6 +151,7 @@ UPROGS=\
 	$U/_find\
 	$U/_xargs\
 	$U/_trace\
+	$U/_tracemasktest\
 	$U/_sysinfotest\
 	$U/_call\
 	$U/_bttest\
