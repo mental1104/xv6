@@ -68,6 +68,18 @@ struct memviz_pte_entry {
   struct memviz_pte_level levels[3];
 };
 
+// 对单个用户虚拟地址执行只读页表查询的结果。
+struct memviz_va_query {
+  uint64 va;
+  int present;
+  int kalloc_cell;
+  int reserved;
+  uint64 pte;
+  uint64 flags;
+  uint64 pa;
+  struct memviz_pte_level levels[3];
+};
+
 // 一个页表页内部的 PTE 槽占用压缩单元。
 struct memviz_pt_usage_cell {
   uint total_entries;
@@ -149,5 +161,6 @@ struct memviz_snapshot {
 // 以下接口只由内核实现调用；用户态仅使用 memsnapshot() 系统调用。
 void kalloc_mem_snapshot(struct memviz_snapshot *snapshot);
 int memviz_snapshot(int view, struct memviz_snapshot *snapshot);
+int memviz_query_user_va(uint64 va, struct memviz_va_query *query);
 
 #endif
