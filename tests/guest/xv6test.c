@@ -36,6 +36,7 @@ static char *lab5_lazytests_argv[] = {"lazytests", 0};
 static char *lab6_cowtest_argv[] = {"cowtest", 0};
 static char *lab7_uthread_argv[] = {"uthreadtest", 0};
 
+static char *lab8_kalloc_argv[] = {"usertests", "sbrkmuch", 0};
 static char *lab8_createdelete_argv[] = {"usertests", "createdelete", 0};
 static char *lab8_fourfiles_argv[] = {"usertests", "fourfiles", 0};
 static char *lab8_bigwrite_argv[] = {"usertests", "bigwrite", 0};
@@ -78,6 +79,9 @@ static struct xv6_test_case tests[] = {
   {"lab6", "lab6-cowtest", lab6_cowtest_argv},
   {"lab7", "lab7-uthread", lab7_uthread_argv},
 
+  // sbrkmuch 同时验证 Lab3 地址空间增长和 Lab8 allocator 锁路径；保留两个
+  // 稳定名称，使按 Lab 验收时都能覆盖该共享行为。
+  {"lab8", "lab8-kalloc-sbrkmuch", lab8_kalloc_argv},
   {"lab8", "lab8-createdelete", lab8_createdelete_argv},
   {"lab8", "lab8-fourfiles", lab8_fourfiles_argv},
   {"lab8", "lab8-bigwrite", lab8_bigwrite_argv},

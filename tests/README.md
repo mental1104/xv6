@@ -103,9 +103,11 @@ XV6TEST done status=0
 | Lab5 lazy allocation | `xv6test --group lab5` | `lazytests.c` | 无 |
 | Lab6 COW | `xv6test --group lab6` | `cowtest.c` | 无 |
 | Lab7 threads | `xv6test --group lab7` | `guest/uthreadtest.c`；`host/ph.c`、`host/barrier.c` | `ph`、`barrier` 由 Python 在宿主机执行 |
-| Lab8 locks | `xv6test --group lab8` | `usertests.c` 指定用例 | 无不稳定性能阈值 |
+| Lab8 locks | `xv6test --group lab8` | `sbrkmuch`、`createdelete`、`fourfiles`、`bigwrite` | 无不稳定性能阈值 |
 | Lab9 file system | `--run lab9-bigfile` / `--run lab9-symlink` | `bigfile.c`、`symlinktest.c` | 分开 QEMU snapshot |
 | Lab10 mmap | `xv6test --group lab10` | `mmaptest.c` | 无 |
+
+`sbrkmuch` 同时属于 Lab3 地址空间增长和 Lab8 allocator 行为，因此按两个稳定测试名注册；这是有意保留的跨 Lab 共享回归。
 
 Lab9 的两个测试虽然都属于 `lab9` group，但默认宿主机 suite 使用两次 `--run` 并分别启动 snapshot。`bigfile` 会显著修改文件系统，不应与 `symlinktest` 共用自动化 snapshot。
 
