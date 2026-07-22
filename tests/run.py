@@ -151,7 +151,9 @@ SUITES: dict[str, Suite] = {
                 "lab9-bigfile",
                 ("xv6test --run lab9-bigfile",),
                 expected=GUEST_SUCCESS,
-                timeout=420,
+                # 完整边界测试包含 65,803 次写入和读回；共享 CI 主机上
+                # 420 秒会在读回后半段产生假超时，因此保留充足但有限的预算。
+                timeout=900,
             ),
         ),
     ),
