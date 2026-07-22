@@ -62,7 +62,8 @@ sys_sbrk(void)
   struct proc *p = myproc();
   uint64 oldsz = p->sz;
   if(n < 0){
-    uint64 shrink = (uint64)(-n);
+    // 先提升到 int64 再取反，避免 n == INT_MIN 时发生有符号整数溢出。
+    uint64 shrink = (uint64)(-(int64)n);
     if(shrink > oldsz)
       return -1;
     uint64 newsz = oldsz - shrink;
