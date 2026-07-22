@@ -1,6 +1,8 @@
 struct stat;
 struct rtcdate;
 struct sysinfo;
+struct memviz_snapshot;
+struct memviz_va_query;
 
 // system calls
 int fork(void);
@@ -32,6 +34,8 @@ int symlink(char *target, char *path);
 char *mmap(void *addr, int length, int prot, int flags, int fd, int offset);
 int munmap(void *addr, int length);
 int backtrace(void);
+int memsnapshot(int view, struct memviz_snapshot *snapshot);
+int vaquery(uint64 va, struct memviz_va_query *query);
 
 // ulib.c
 int stat(const char*, struct stat*);

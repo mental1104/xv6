@@ -21,6 +21,8 @@ OBJS = \
   $K/trap.o \
   $K/syscall.o \
   $K/sysproc.o \
+  $K/memviz.o \
+  $K/sysmemviz.o \
   $K/bio.o \
   $K/fs.o \
   $K/log.o \
@@ -105,6 +107,31 @@ $U/_%: $T/%.o $(ULIB)
 	$(OBJDUMP) -S $@ > $T/$*.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/$*.sym
 
+$U/_sh: $U/shentry.o $U/sh.o $U/memvizlib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e sh_entry -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/sh.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/sh.sym
+
+$U/_memviz: $U/memviz.o $U/memvizlib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/memviz.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/memviz.sym
+
+$U/_varead: $U/varead.o $U/vaaccesslib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/varead.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/varead.sym
+
+$U/_vawrite: $U/vawrite.o $U/vaaccesslib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/vawrite.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/vawrite.sym
+
+$U/_vaprobe: $U/vaprobe.o $U/vaaccesslib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/vaprobe.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/vaprobe.sym
+
 $U/_trace: $U/trace.o $U/tracemask.o $(ULIB)
 	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
 	$(OBJDUMP) -S $@ > $U/trace.asm
@@ -114,6 +141,11 @@ $U/_tracemasktest: $T/tracemasktest.o $U/tracemask.o $(ULIB)
 	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
 	$(OBJDUMP) -S $@ > $T/tracemasktest.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/tracemasktest.sym
+
+$U/_vaaccesstest: $T/vaaccesstest.o $T/testlib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $T/vaaccesstest.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/vaaccesstest.sym
 
 $U/usys.S: $U/usys.pl
 	perl $U/usys.pl > $U/usys.S
@@ -163,6 +195,12 @@ UPROGS=\
 	$U/_mkdir\
 	$U/_rm\
 	$U/_sh\
+	$U/_memviz\
+	$U/_varead\
+	$U/_vawrite\
+	$U/_vaprobe\
+	$U/_memviztest\
+	$U/_vaaccesstest\
 	$U/_wc\
 	$U/_zombie\
 	$U/_pingpong\

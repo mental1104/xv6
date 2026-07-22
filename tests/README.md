@@ -71,6 +71,7 @@ xv6test --list
 xv6test --group lab1
 xv6test --group lab2
 xv6test --group lab3
+xv6test --run lab3-memviz
 xv6test --group lab4
 xv6test --group lab5
 xv6test --group lab6
@@ -98,7 +99,7 @@ XV6TEST done status=0
 |---|---|---|---|
 | Lab1 utilities | `xv6test --group lab1` | `tests/guest/lab1test.c` | 无 |
 | Lab2 syscall | `xv6test --group lab2` | `tracemasktest.c`、`sysinfotest.c`、`tracesmoke.c` | trace 控制台行 |
-| Lab3 page tables | `xv6test --group lab3` | `usertests.c` 指定用例 | 无 |
+| Lab3 page tables | `xv6test --group lab3` | `usertests.c` 指定用例、`memviztest.c`、`vaaccesstest.c` | 无 |
 | Lab4 traps | `xv6test --group lab4` | `bttest.c`、`alarmtest.c` | backtrace 地址行 |
 | Lab5 lazy allocation | `xv6test --group lab5` | `lazytests.c` | 无 |
 | Lab6 COW | `xv6test --group lab6` | `cowtest.c` | 无 |
@@ -106,6 +107,8 @@ XV6TEST done status=0
 | Lab8 locks | `xv6test --group lab8` | `sbrkmuch`、`createdelete`、`fourfiles`、`bigwrite` | 无不稳定性能阈值 |
 | Lab9 file system | `--run lab9-bigfile` / `--run lab9-symlink` | `bigfile.c`、`symlinktest.c` | 分开 QEMU snapshot |
 | Lab10 mmap | `xv6test --group lab10` | `mmaptest.c` | 无 |
+
+`memviztest` 属于 Lab3 地址空间观察回归，验证用户栈、内核栈、物理页计数、分配与释放不变量；`vaaccesstest` 属于 Lab3 用户态 VA 访问回归，验证普通命中、lazy 首次触页、COW 写时复制和非法 VA fault 隔离；普通 `lab-vm` suite 会通过 `xv6test --group lab3` 自动覆盖它们。
 
 `sbrkmuch` 同时属于 Lab3 地址空间增长和 Lab8 allocator 行为，因此按两个稳定测试名注册；这是有意保留的跨 Lab 共享回归。
 
