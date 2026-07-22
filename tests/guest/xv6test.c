@@ -31,6 +31,7 @@ static char *lab3_copyinstr_argv[] = {"usertests", "copyinstr1", 0};
 static char *lab3_sbrkmuch_argv[] = {"usertests", "sbrkmuch", 0};
 static char *lab3_memviz_argv[] = {"memviztest", 0};
 static char *lab3_vaaccess_argv[] = {"vaaccesstest", 0};
+static char *lab3_address_window_argv[] = {"addresswindowtest", 0};
 
 static char *lab4_backtrace_argv[] = {"bttest", 0};
 static char *lab4_alarm_argv[] = {"alarmtest", 0};
@@ -76,6 +77,7 @@ static struct xv6_test_case tests[] = {
   {"lab3", "lab3-sbrkmuch", lab3_sbrkmuch_argv},
   {"lab3", "lab3-memviz", lab3_memviz_argv},
   {"lab3", "lab3-vaaccess", lab3_vaaccess_argv},
+  {"lab3", "lab3-address-window", lab3_address_window_argv},
 
   {"lab4", "lab4-backtrace", lab4_backtrace_argv},
   {"lab4", "lab4-alarm", lab4_alarm_argv},
