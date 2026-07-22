@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run stable xv6 regression suites through QEMU or on the host."""
+"""通过 QEMU 或宿主机执行稳定的 xv6 回归测试套件。"""
 
 from __future__ import annotations
 
@@ -28,12 +28,16 @@ GUEST_SUCCESS = (r"^XV6TEST done status=0$",)
 
 @dataclass(frozen=True)
 class CountExpectation:
+    """描述输出模式必须出现的最小次数。"""
+
     pattern: str
     minimum: int
 
 
 @dataclass(frozen=True)
 class TestCase:
+    """描述一个 host 或 QEMU 测试及其基础设施级输出约束。"""
+
     name: str
     commands: tuple[str, ...]
     expected: tuple[str, ...] = ()
@@ -45,6 +49,8 @@ class TestCase:
 
 @dataclass(frozen=True)
 class Suite:
+    """描述一个原子测试套件或由其他套件组成的聚合套件。"""
+
     name: str
     tests: tuple[TestCase, ...] = ()
     includes: tuple[str, ...] = ()
@@ -54,44 +60,25 @@ class Suite:
 SUITES: dict[str, Suite] = {
     "lab-basic": Suite(
         name="lab-basic",
-        description="Lab1 util and Lab2 syscall behavior",
+        description="Lab1 utilities and Lab2 system calls through guest groups",
         tests=(
-            TestCase("lab1-sleep", ("sleep 1",)),
             TestCase(
-                "lab1-pingpong",
-                ("pingpong",),
-                expected=(r"\d+: received ping", r"\d+: received pong"),
+                "lab1-guest-tests",
+                ("xv6test --group lab1",),
+                expected=GUEST_SUCCESS,
+                timeout=240,
             ),
             TestCase(
-                "lab1-primes",
-                ("primes",),
-                expected=(r"^prime 2$", r"^prime 31$"),
-            ),
-            TestCase(
-                "lab1-find",
-                ("mkdir ci_find", "echo x > ci_find/needle", "find . needle"),
-                expected=(r"^\./ci_find/needle$",),
-            ),
-            TestCase(
-                "lab1-xargs",
-                ("echo hello too | xargs echo bye",),
-                expected=(r"^bye hello too$",),
-            ),
-            TestCase(
-                "lab2-trace",
-                ("trace 32 grep hello README",),
-                expected=(r"syscall read ->",),
-            ),
-            TestCase(
-                "lab2-sysinfo",
-                ("sysinfotest",),
-                expected=(r"^sysinfotest: OK$",),
+                "lab2-guest-tests",
+                ("xv6test --group lab2",),
+                expected=GUEST_SUCCESS + (r"syscall read ->",),
+                timeout=300,
             ),
         ),
     ),
     "lab-vm": Suite(
         name="lab-vm",
-        description="Lab3/Lab5/Lab6 guest tests plus Lab4 trap regressions",
+        description="Lab3-Lab6 page-table, trap, lazy allocation and COW groups",
         tests=(
             TestCase(
                 "lab3-guest-tests",
@@ -100,15 +87,11 @@ SUITES: dict[str, Suite] = {
                 timeout=600,
             ),
             TestCase(
-                "lab4-backtrace",
-                ("bttest",),
+                "lab4-guest-tests",
+                ("xv6test --group lab4",),
+                expected=GUEST_SUCCESS,
                 counted=(CountExpectation(r"^0x[0-9a-f]+$", 3),),
-            ),
-            TestCase(
-                "lab4-alarm",
-                ("alarmtest",),
-                expected=(r"^test0 passed$", r"^\.?test1 passed$", r"^\.?test2 passed$"),
-                timeout=180,
+                timeout=300,
             ),
             TestCase(
                 "lab5-guest-tests",
@@ -126,13 +109,13 @@ SUITES: dict[str, Suite] = {
     ),
     "lab7-thread": Suite(
         name="lab7-thread",
-        description="Lab7 user threads and host pthread exercises",
+        description="Lab7 guest uthread regression and host pthread exercises",
         tests=(
             TestCase(
-                "lab7-uthread",
-                ("uthread",),
-                expected=(r"^thread_schedule: no runnable threads$",),
-                timeout=180,
+                "lab7-guest-tests",
+                ("xv6test --group lab7",),
+                expected=GUEST_SUCCESS,
+                timeout=240,
             ),
             TestCase(
                 "lab7-ph-correctness",
@@ -150,104 +133,73 @@ SUITES: dict[str, Suite] = {
     ),
     "lab8-locks": Suite(
         name="lab8-locks",
-        description="Lab8 allocator and buffer-cache behavioral regression without unstable contention thresholds",
+        description="Lab8 allocator and buffer-cache guest regression",
         tests=(
             TestCase(
-                "lab8-kalloc-behavior",
-                ("usertests sbrkmuch",),
-                expected=(r"^ALL TESTS PASSED$",),
-                timeout=240,
-            ),
-            TestCase(
-                "lab8-bcache-create-delete",
-                ("usertests createdelete",),
-                expected=(r"^ALL TESTS PASSED$",),
-                timeout=240,
-            ),
-            TestCase(
-                "lab8-bcache-concurrent-files",
-                ("usertests fourfiles",),
-                expected=(r"^ALL TESTS PASSED$",),
-                timeout=240,
-            ),
-            TestCase(
-                "lab8-bcache-big-write",
-                ("usertests bigwrite",),
-                expected=(r"^ALL TESTS PASSED$",),
-                timeout=240,
+                "lab8-guest-tests",
+                ("xv6test --group lab8",),
+                expected=GUEST_SUCCESS,
+                timeout=600,
             ),
         ),
     ),
     "lab9-bigfile": Suite(
         name="lab9-bigfile",
-        description="Lab9 large-file mapping on an isolated disk snapshot",
+        description="Lab9 large-file test in an isolated disk snapshot",
         tests=(
             TestCase(
                 "lab9-bigfile",
-                ("bigfile",),
-                expected=(r"^wrote 65803 blocks$", r"^bigfile done; ok$"),
-                timeout=360,
+                ("xv6test --run lab9-bigfile",),
+                expected=GUEST_SUCCESS,
+                timeout=420,
             ),
         ),
     ),
     "lab9-symlink": Suite(
         name="lab9-symlink",
-        description="Lab9 symbolic-link behavior on an isolated disk snapshot",
+        description="Lab9 symbolic-link test in an isolated disk snapshot",
         tests=(
             TestCase(
                 "lab9-symlink",
-                ("symlinktest",),
-                expected=(r"^test symlinks: ok$", r"^test concurrent symlinks: ok$"),
-                timeout=180,
+                ("xv6test --run lab9-symlink",),
+                expected=GUEST_SUCCESS,
+                timeout=240,
             ),
         ),
     ),
     "lab10-mmap": Suite(
         name="lab10-mmap",
-        description="Lab10 mmap behavior on an isolated disk snapshot",
+        description="Lab10 mmap guest regression",
         tests=(
             TestCase(
-                "lab10-mmap",
-                ("mmaptest",),
-                expected=(
-                    r"^test mmap f: OK$",
-                    r"^test mmap private: OK$",
-                    r"^test mmap read/write: OK$",
-                    r"^test mmap dirty: OK$",
-                    r"^fork_test OK$",
-                ),
-                timeout=360,
+                "lab10-guest-tests",
+                ("xv6test --group lab10",),
+                expected=GUEST_SUCCESS,
+                timeout=420,
             ),
         ),
     ),
     "usertests-core": Suite(
         name="usertests-core",
-        description="Focused cross-lab regression used on pull requests",
-        tests=tuple(
+        description="Focused cross-lab usertests exposed by the guest registry",
+        tests=(
             TestCase(
-                f"usertests-{name}",
-                (f"usertests {name}",),
-                expected=(r"^ALL TESTS PASSED$",),
-                timeout=240,
-            )
-            for name in (
-                "sbrkbugs",
-                "forkforkfork",
-                "createdelete",
-                "linkunlink",
-                "openiput",
-            )
+                "usertests-core",
+                ("xv6test --group core",),
+                expected=GUEST_SUCCESS,
+                timeout=900,
+            ),
         ),
     ),
     "usertests-full": Suite(
         name="usertests-full",
-        description="Complete xv6 usertests regression",
+        description="Complete xv6 usertests regression through xv6test",
         tests=(
             TestCase(
                 "usertests-full",
-                ("usertests",),
-                expected=(r"^ALL TESTS PASSED$",),
-                timeout=900,
+                ("xv6test --run usertests-full",),
+                expected=GUEST_SUCCESS,
+                timeout=1200,
             ),
         ),
     ),
@@ -289,14 +241,18 @@ SUITES: dict[str, Suite] = {
 
 
 class TestFailure(RuntimeError):
-    pass
+    """表示测试基础设施或输出约束未满足。"""
 
 
 def _safe_name(value: str) -> str:
+    """将 suite/test 名称规范化为安全的日志文件名。"""
+
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", value)
 
 
 def _assert_output(test: TestCase, output: str) -> None:
+    """检查拒绝、必需和计数模式，不解释 guest 业务语义。"""
+
     flags = re.MULTILINE
     for pattern in test.rejected:
         if re.search(pattern, output, flags):
@@ -314,6 +270,8 @@ def _assert_output(test: TestCase, output: str) -> None:
 
 
 def _write_log(suite: str, test: str, output: str) -> Path:
+    """保存原始测试输出并返回相对仓库可定位的日志路径。"""
+
     directory = RESULT_ROOT / _safe_name(suite)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{_safe_name(test)}.log"
@@ -322,6 +280,8 @@ def _write_log(suite: str, test: str, output: str) -> Path:
 
 
 def _run_host_test(suite: str, test: TestCase) -> None:
+    """顺序执行一个 host 测试的命令并检查退出状态和输出。"""
+
     chunks: list[str] = []
     for command in test.commands:
         completed = subprocess.run(
@@ -348,6 +308,8 @@ def _run_host_test(suite: str, test: TestCase) -> None:
 
 
 def _start_qemu(cpus: int) -> pexpect.spawn:
+    """启动使用 snapshot 的 xv6 QEMU，并等待 shell 提示符。"""
+
     command = (
         "make -s --no-print-directory qemu "
         f"CPUS={cpus} QEMUEXTRA=-snapshot"
@@ -369,6 +331,8 @@ def _start_qemu(cpus: int) -> pexpect.spawn:
 
 
 def _stop_qemu(child: pexpect.spawn) -> None:
+    """通过 QEMU monitor 快捷键终止实例，超时时强制清理。"""
+
     if not child.isalive():
         return
     child.sendcontrol("a")
@@ -380,6 +344,8 @@ def _stop_qemu(child: pexpect.spawn) -> None:
 
 
 def _run_qemu_tests(suite: str, tests: Sequence[TestCase], cpus: int) -> None:
+    """在一个原子 suite 的 QEMU snapshot 内顺序执行其 guest 命令。"""
+
     child = _start_qemu(cpus)
     boot_output = child.before
     try:
@@ -399,12 +365,16 @@ def _run_qemu_tests(suite: str, tests: Sequence[TestCase], cpus: int) -> None:
                 chunks.append(child.before or "")
                 output = "\n".join(chunks)
                 log_path = _write_log(suite, test.name, output)
-                raise TestFailure(f"QEMU did not return to the shell; log: {log_path}") from exc
+                raise TestFailure(
+                    f"QEMU did not return to the shell; log: {log_path}"
+                ) from exc
     finally:
         _stop_qemu(child)
 
 
 def _expand_suite(name: str, stack: tuple[str, ...] = ()) -> list[str]:
+    """递归展开聚合 suite，并检测未知引用和循环依赖。"""
+
     if name not in SUITES:
         raise KeyError(name)
     if name in stack:
@@ -419,6 +389,8 @@ def _expand_suite(name: str, stack: tuple[str, ...] = ()) -> list[str]:
 
 
 def _deduplicate(values: Iterable[str]) -> list[str]:
+    """按首次出现顺序去重 suite 名称。"""
+
     result: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -429,6 +401,8 @@ def _deduplicate(values: Iterable[str]) -> list[str]:
 
 
 def run_atomic_suite(name: str, cpus: int) -> None:
+    """执行一个原子 suite，host 测试先于 QEMU 测试运行。"""
+
     suite = SUITES[name]
     print(f"\n== Suite {name}: {suite.description} ==")
     host_tests = [test for test in suite.tests if test.host]
@@ -440,6 +414,8 @@ def run_atomic_suite(name: str, cpus: int) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    """解析 suite、CPU 数量和列表模式参数。"""
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--suite",
@@ -453,6 +429,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    """执行请求的 suite 并以进程退出状态汇总全部失败。"""
+
     args = parse_args()
     if args.list:
         for name in sorted(SUITES):

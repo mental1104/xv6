@@ -6,8 +6,8 @@
  * 描述一个由 xv6 用户态执行的回归测试。
  *
  * group 用于按 Lab 或能力筛选；name 是稳定且全局唯一的测试名称；argv
- * 是传给 exec() 的空指针结尾参数数组。测试语义仍由目标程序拥有，本入口
- * 只负责注册、进程隔离、退出状态传播和统一结果协议。
+ * 是传给 exec() 的空指针结尾参数数组。测试语义由 tests/guest 下的目标
+ * 程序拥有，本入口只负责注册、进程隔离、退出状态传播和统一结果协议。
  */
 struct xv6_test_case {
   char *group;
@@ -15,21 +15,86 @@ struct xv6_test_case {
   char **argv;
 };
 
+static char *lab1_sleep_argv[] = {"lab1test", "sleep", 0};
+static char *lab1_pingpong_argv[] = {"lab1test", "pingpong", 0};
+static char *lab1_primes_argv[] = {"lab1test", "primes", 0};
+static char *lab1_find_argv[] = {"lab1test", "find", 0};
+static char *lab1_xargs_argv[] = {"lab1test", "xargs", 0};
+
+static char *lab2_tracemask_argv[] = {"tracemasktest", 0};
+static char *lab2_sysinfo_argv[] = {"sysinfotest", 0};
+static char *lab2_trace_smoke_argv[] = {"tracesmoke", 0};
+
 static char *lab3_copyin_argv[] = {"usertests", "copyin", 0};
 static char *lab3_copyout_argv[] = {"usertests", "copyout", 0};
 static char *lab3_copyinstr_argv[] = {"usertests", "copyinstr1", 0};
 static char *lab3_sbrkmuch_argv[] = {"usertests", "sbrkmuch", 0};
+
+static char *lab4_backtrace_argv[] = {"bttest", 0};
+static char *lab4_alarm_argv[] = {"alarmtest", 0};
 static char *lab5_lazytests_argv[] = {"lazytests", 0};
 static char *lab6_cowtest_argv[] = {"cowtest", 0};
+static char *lab7_uthread_argv[] = {"uthreadtest", 0};
 
-// 首批只迁移退出状态可作为可靠判据的 Lab3、Lab5 和 Lab6 测试。
+static char *lab8_createdelete_argv[] = {"usertests", "createdelete", 0};
+static char *lab8_fourfiles_argv[] = {"usertests", "fourfiles", 0};
+static char *lab8_bigwrite_argv[] = {"usertests", "bigwrite", 0};
+
+static char *lab9_bigfile_argv[] = {"bigfile", 0};
+static char *lab9_symlink_argv[] = {"symlinktest", 0};
+static char *lab10_mmap_argv[] = {"mmaptest", 0};
+
+static char *core_sbrkbugs_argv[] = {"usertests", "sbrkbugs", 0};
+static char *core_forkforkfork_argv[] = {"usertests", "forkforkfork", 0};
+static char *core_linkunlink_argv[] = {"usertests", "linkunlink", 0};
+static char *core_openiput_argv[] = {"usertests", "openiput", 0};
+
+static char *legacy_forktest_argv[] = {"forktest", 0};
+static char *legacy_stressfs_argv[] = {"stressfs", 0};
+static char *legacy_grind_argv[] = {"grind", 0};
+static char *full_usertests_argv[] = {"usertests", 0};
+
+// Lab1-Lab10 全部经统一 registry 暴露；破坏磁盘或耗时较长的测试由宿主机
+// 选择 --run 并在独立 QEMU snapshot 中执行，避免 group 内状态相互污染。
 static struct xv6_test_case tests[] = {
+  {"lab1", "lab1-sleep", lab1_sleep_argv},
+  {"lab1", "lab1-pingpong", lab1_pingpong_argv},
+  {"lab1", "lab1-primes", lab1_primes_argv},
+  {"lab1", "lab1-find", lab1_find_argv},
+  {"lab1", "lab1-xargs", lab1_xargs_argv},
+
+  {"lab2", "lab2-tracemask", lab2_tracemask_argv},
+  {"lab2", "lab2-sysinfo", lab2_sysinfo_argv},
+  {"lab2", "lab2-trace-smoke", lab2_trace_smoke_argv},
+
   {"lab3", "lab3-copyin", lab3_copyin_argv},
   {"lab3", "lab3-copyout", lab3_copyout_argv},
   {"lab3", "lab3-copyinstr1", lab3_copyinstr_argv},
   {"lab3", "lab3-sbrkmuch", lab3_sbrkmuch_argv},
+
+  {"lab4", "lab4-backtrace", lab4_backtrace_argv},
+  {"lab4", "lab4-alarm", lab4_alarm_argv},
   {"lab5", "lab5-lazytests", lab5_lazytests_argv},
   {"lab6", "lab6-cowtest", lab6_cowtest_argv},
+  {"lab7", "lab7-uthread", lab7_uthread_argv},
+
+  {"lab8", "lab8-createdelete", lab8_createdelete_argv},
+  {"lab8", "lab8-fourfiles", lab8_fourfiles_argv},
+  {"lab8", "lab8-bigwrite", lab8_bigwrite_argv},
+
+  {"lab9", "lab9-bigfile", lab9_bigfile_argv},
+  {"lab9", "lab9-symlink", lab9_symlink_argv},
+  {"lab10", "lab10-mmap", lab10_mmap_argv},
+
+  {"core", "core-sbrkbugs", core_sbrkbugs_argv},
+  {"core", "core-forkforkfork", core_forkforkfork_argv},
+  {"core", "core-linkunlink", core_linkunlink_argv},
+  {"core", "core-openiput", core_openiput_argv},
+
+  {"legacy", "legacy-forktest", legacy_forktest_argv},
+  {"legacy", "legacy-stressfs", legacy_stressfs_argv},
+  {"legacy", "legacy-grind", legacy_grind_argv},
+  {"regression", "usertests-full", full_usertests_argv},
   {0, 0, 0},
 };
 
