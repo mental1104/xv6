@@ -45,3 +45,4 @@ entry("mmap");
 entry("munmap");
 entry("backtrace");
 entry("memsnapshot");
+entry("vaquery");

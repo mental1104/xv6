@@ -63,3 +63,29 @@ sys_memsnapshot(void)
   release(&memvizsys_lock);
   return 0;
 }
+
+/**
+ * sys_vaquery 将当前进程中一个用户 VA 的页表链路复制到用户空间。
+ *
+ * 参数 0 是目标虚拟地址，参数 1 是 struct memviz_va_query 的用户地址。
+ * 该系统调用只读页表元数据，不读取目标 VA 的内容，也不为目标 VA 分配页。
+ *
+ * @return 成功返回 0；参数、地址范围或 copyout 失败时返回 -1。
+ */
+uint64
+sys_vaquery(void)
+{
+  uint64 va;
+  uint64 address;
+  struct memviz_va_query query;
+
+  if(argaddr(0, &va) < 0 || argaddr(1, &address) < 0)
+    return -1;
+  if(memviz_query_user_va(va, &query) < 0)
+    return -1;
+
+  struct proc *p = myproc();
+  if(copyout(p->pagetable, address, (char *)&query, sizeof(query)) < 0)
+    return -1;
+  return 0;
+}

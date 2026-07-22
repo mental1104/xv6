@@ -114,6 +114,7 @@ extern uint64 sys_mmap(void);
 extern uint64 sys_munmap(void);
 extern uint64 sys_backtrace(void);
 extern uint64 sys_memsnapshot(void);
+extern uint64 sys_vaquery(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -146,6 +147,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_munmap]    sys_munmap,
 [SYS_backtrace] sys_backtrace,
 [SYS_memsnapshot] sys_memsnapshot,
+[SYS_vaquery] sys_vaquery,
 };
 
 void

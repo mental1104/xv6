@@ -136,6 +136,59 @@ append_pte_entry(struct memviz_snapshot *snapshot, int space, int role,
 }
 
 /**
+ * fill_pte_path 只读记录一个 VA 在指定页表中的 Sv39 三级链路。
+ *
+ * @param pagetable 被查询页表，不会被修改。
+ * @param va 用户传入的目标虚拟地址；函数内部按页向下对齐。
+ * @param levels 接收 L2、L1、L0 三层 PTE 信息，必须有三个元素。
+ * @param pte_out 接收 leaf PTE；没有有效 leaf 时写入 0。
+ * @param flags_out 接收 leaf flags；没有有效 leaf 时写入 0。
+ * @param pa_out 接收 leaf PA；没有有效 leaf 时写入 0。
+ * @return 找到有效 leaf 映射时返回 1；中途缺页或没有 leaf 时返回 0。
+ */
+static int
+fill_pte_path(pagetable_t pagetable, uint64 va,
+              struct memviz_pte_level levels[3], uint64 *pte_out,
+              uint64 *flags_out, uint64 *pa_out)
+{
+  uint64 aligned = PGROUNDDOWN(va);
+
+  *pte_out = 0;
+  *flags_out = 0;
+  *pa_out = 0;
+
+  if(aligned >= MAXVA)
+    return 0;
+
+  for(int level = 2; level >= 0; level--){
+    struct memviz_pte_level *pte_level = &levels[2 - level];
+    pte_level->level = level;
+    pte_level->index = PX(level, aligned);
+
+    pte_t pte = pagetable[pte_level->index];
+    pte_level->pte = pte;
+    pte_level->flags = PTE_FLAGS(pte);
+    if((pte & PTE_V) == 0)
+      return 0;
+
+    pte_level->present = 1;
+    pte_level->pa = PTE2PA(pte);
+    if(level == 0 || (pte & (PTE_R | PTE_W | PTE_X)) != 0){
+      if((pte & (PTE_R | PTE_W | PTE_X)) == 0)
+        return 0;
+      *pte_out = pte;
+      *flags_out = pte_level->flags;
+      *pa_out = pte_level->pa;
+      return 1;
+    }
+
+    pagetable = (pagetable_t)pte_level->pa;
+  }
+
+  return 0;
+}
+
+/**
  * fill_pagetable_observations 采集从 VA 到 PA 的代表性映射闭环。
  *
  * @param p 当前进程；调用期间页表稳定，函数只读 walk() 查询结果。
@@ -302,5 +355,40 @@ memviz_snapshot(int view, struct memviz_snapshot *snapshot)
 
   // kalloc 负责在锁内完成 freelist 采样，返回前已经释放所有 allocator 锁。
   kalloc_mem_snapshot(snapshot);
+  return 0;
+}
+
+/**
+ * memviz_query_user_va 查询当前进程用户页表中一个 VA 的页表链路。
+ *
+ * @param va 目标用户虚拟地址；允许未映射，函数会返回缺失层级信息。
+ * @param query 输出查询结果，必须是可写内核地址。
+ * @return 参数有效时返回 0；地址超出 Sv39 用户可表达范围或 query 为空时返回 -1。
+ *
+ * 该接口只观察 PTE，不读取或写入 va 指向的数据页；因此不会替代用户态
+ * load/store fault 实验，也不会触发 lazy allocation 或 COW。
+ */
+int
+memviz_query_user_va(uint64 va, struct memviz_va_query *query)
+{
+  if(query == 0 || va >= MAXVA)
+    return -1;
+
+  memset(query, 0, sizeof(*query));
+  query->va = PGROUNDDOWN(va);
+
+  struct proc *p = myproc();
+  query->present = fill_pte_path(p->pagetable, query->va, query->levels,
+                                 &query->pte, &query->flags, &query->pa);
+
+  uint64 kalloc_start = PGROUNDUP((uint64)end);
+  uint64 total = (PHYSTOP - kalloc_start) / PGSIZE;
+  query->kalloc_cell = -1;
+  if(query->present && total > 0 && query->pa >= kalloc_start &&
+     query->pa < PHYSTOP){
+    uint64 page = (query->pa - kalloc_start) / PGSIZE;
+    query->kalloc_cell = (page * MEMVIZ_CELLS) / total;
+  }
+
   return 0;
 }
