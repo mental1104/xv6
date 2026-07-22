@@ -3,9 +3,6 @@ name: xv6 CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,7 +13,7 @@ concurrency:
 
 jobs:
   regression:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     timeout-minutes: 50
 
@@ -48,7 +45,6 @@ jobs:
         run: make test-integration CPUS=3
 
       - name: Run complete usertests
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         run: make test-usertests CPUS=3
 
       - name: Upload QEMU logs
