@@ -51,8 +51,11 @@ periodic()
   sigreturn();
 }
 
-// tests whether the kernel calls
-// the alarm handler even a single time.
+/**
+ * 验证内核至少触发一次 alarm handler，并能通过 sigalarm(0, 0) 关闭 alarm。
+ *
+ * @return 无；失败时设置全局 failed，供 main() 汇总退出状态。
+ */
 void
 test0()
 {
@@ -75,6 +78,13 @@ test0()
   }
 }
 
+/**
+ * 执行一次不可内联的寄存器保持测试步骤。
+ *
+ * @param i 当前循环序号，仅用于周期性输出进度。
+ * @param j 调用次数计数器，函数每次调用将其加一。
+ * @return 无；通过 noinline 保证 alarm 返回后需要恢复真实调用现场。
+ */
 void __attribute__ ((noinline)) foo(int i, int *j) {
   if((i % 2500000) == 0) {
     write(2, ".", 1);
@@ -82,14 +92,11 @@ void __attribute__ ((noinline)) foo(int i, int *j) {
   *j += 1;
 }
 
-//
-// tests that the kernel calls the handler multiple times.
-//
-// tests that, when the handler returns, it returns to
-// the point in the program where the timer interrupt
-// occurred, with all registers holding the same values they
-// held when the interrupt occurred.
-//
+/**
+ * 验证周期 alarm 可重复触发，并在 sigreturn() 后恢复中断点和寄存器。
+ *
+ * @return 无；调用次数不足或 i/j 不一致时设置全局 failed。
+ */
 void
 test1()
 {
@@ -124,8 +131,11 @@ test1()
   }
 }
 
-//
-// tests that kernel does not allow reentrant alarm calls.
+/**
+ * 验证 handler 执行期间不会发生 alarm 重入。
+ *
+ * @return 无；子进程状态异常或 handler 重入时设置全局 failed。
+ */
 void
 test2()
 {
