@@ -273,27 +273,30 @@ userinit(void)
 int
 growproc(int n)
 {
-  uint sz;
   struct proc *p = myproc();
+  uint64 oldsz = p->sz;
+  uint64 newsz = oldsz;
 
-  sz = p->sz;
   if(n > 0){
-    if(PGROUNDUP(sz + n) >= PLIC)
+    newsz = oldsz + (uint64)n;
+    if(newsz < oldsz || newsz > USERMAX)
       return -1;
-    if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
+    if((newsz = uvmalloc(p->pagetable, oldsz, newsz)) == 0)
       return -1;
-    }
-    u2kvmcopy(p->pagetable, p->kpagetable, sz-n, sz);
+    u2kvmcopy(p->pagetable, p->kpagetable, oldsz, newsz);
   } else if(n < 0){
-    uint64 newsz = sz + n;
-    if(PGROUNDUP(newsz) < PGROUNDUP(sz)){
+    uint64 shrink = (uint64)(-(int64)n);
+    if(shrink > oldsz)
+      return -1;
+    newsz = oldsz - shrink;
+    if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
       uint64 start = PGROUNDUP(newsz);
-      uint64 npages = (PGROUNDUP(sz) - start) / PGSIZE;
+      uint64 npages = (PGROUNDUP(oldsz) - start) / PGSIZE;
       u2kvmunmap(p->kpagetable, start, npages);
     }
-    sz = uvmdealloc(p->pagetable, sz, newsz);
+    newsz = uvmdealloc(p->pagetable, oldsz, newsz);
   }
-  p->sz = sz;
+  p->sz = newsz;
   return 0;
 }
 
@@ -531,7 +534,7 @@ scheduler(void)
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
-        // It should have changed its p->state before coming back.
+        // It should have changed p->state before coming back.
         c->proc = 0;
 
         found = 1;
@@ -751,8 +754,23 @@ free_proc(void){
   return n;
 }
 
-int lazy_grow_proc(int n){
+int
+lazy_grow_proc(int n)
+{
   struct proc *p = myproc();
-  p->sz = p->sz + n;
+  uint64 oldsz = p->sz;
+
+  if(n >= 0){
+    uint64 newsz = oldsz + (uint64)n;
+    if(newsz < oldsz || newsz > USERMAX)
+      return -1;
+    p->sz = newsz;
+    return 0;
+  }
+
+  uint64 shrink = (uint64)(-(int64)n);
+  if(shrink > oldsz)
+    return -1;
+  p->sz = oldsz - shrink;
   return 0;
 }
