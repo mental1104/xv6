@@ -47,6 +47,15 @@
 #define KERNBASE 0x80000000L
 #define PHYSTOP (KERNBASE + 128*1024*1024)
 
+// 每个进程的普通用户虚拟地址位于 [0, USERMAX)。进程内核页表不再把
+// 用户页映射到相同 VA，而是在 [KUSERBASE, KERNBASE) 建立 supervisor-only
+// 别名。两个 1 GiB 区间分别占用独立的 Sv39 L2 根槽，因此用户 VA 可以跨过
+// CLINT、PLIC、UART 等 MMIO 数值而不与内核设备映射冲突。
+#define KUSERBASE 0x40000000L
+#define USERMAX KUSERBASE
+#define KUSEREND KERNBASE
+#define KUSERADDR(va) (KUSERBASE + (va))
+
 // map the trampoline page to the highest address,
 // in both user and kernel space.
 #define TRAMPOLINE (MAXVA - PGSIZE)
