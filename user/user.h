@@ -32,6 +32,7 @@ int sigreturn(void);
 int symlink(char *target, char *path);
 char *mmap(void *addr, int length, int prot, int flags, int fd, int offset);
 int munmap(void *addr, int length);
+int backtrace(void);
 int memsnapshot(int view, struct memviz_snapshot *snapshot);
 
 // ulib.c

@@ -43,4 +43,5 @@ entry("sigreturn");
 entry("symlink");
 entry("mmap");
 entry("munmap");
+entry("backtrace");
 entry("memsnapshot");

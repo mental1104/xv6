@@ -112,6 +112,7 @@ extern uint64 sys_sigreturn(void);
 extern uint64 sys_symlink(void);
 extern uint64 sys_mmap(void);
 extern uint64 sys_munmap(void);
+extern uint64 sys_backtrace(void);
 extern uint64 sys_memsnapshot(void);
 
 static uint64 (*syscalls[])(void) = {
@@ -143,6 +144,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_symlink]   sys_symlink,
 [SYS_mmap]      sys_mmap,
 [SYS_munmap]    sys_munmap,
+[SYS_backtrace] sys_backtrace,
 [SYS_memsnapshot] sys_memsnapshot,
 };
 

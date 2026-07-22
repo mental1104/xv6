@@ -27,4 +27,5 @@
 #define SYS_symlink    26
 #define SYS_mmap       27
 #define SYS_munmap     28
-#define SYS_memsnapshot 29
+#define SYS_backtrace  29
+#define SYS_memsnapshot 30

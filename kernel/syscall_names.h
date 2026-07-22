@@ -33,6 +33,7 @@ static const char *const syscall_names[] = {
 [SYS_symlink]   = "symlink",
 [SYS_mmap]      = "mmap",
 [SYS_munmap]    = "munmap",
+[SYS_backtrace] = "backtrace",
 [SYS_memsnapshot] = "memsnapshot",
 };
 

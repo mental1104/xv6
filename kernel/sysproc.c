@@ -164,3 +164,18 @@ sys_sigreturn(void)
     p->in_handler = 0;
     return p->trapframe->a0;
 }
+
+/**
+ * 显式打印当前系统调用路径的内核栈回溯。
+ *
+ * 该入口只用于教学和调试，不接受用户地址，也不修改进程状态。将回溯从
+ * sys_sleep() 分离，避免普通 sleep 调用污染控制台。
+ *
+ * @return 打印完成后返回 0。
+ */
+uint64
+sys_backtrace(void)
+{
+  backtrace();
+  return 0;
+}
