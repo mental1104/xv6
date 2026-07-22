@@ -9,7 +9,8 @@
 #include "user/user.h"
 #include "kernel/fcntl.h"
 
-char *argv[] = { "sh", 0 };
+// --login 只由 init 传入，使首个交互 shell 在 prompt 前打印一次自身内存视图。
+char *argv[] = { "sh", "--login", 0 };
 
 int
 main(void)
