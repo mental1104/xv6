@@ -11,4 +11,4 @@
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
 // 文件系统镜像需要容纳 MAXFILE 数据块、间接索引块和仓库内置用户程序。
 #define FSSIZE       200000  // size of file system in blocks
-#define MAXPATH      128   // maximum path name
+#define MAXPATH      128   // maximum file path name
