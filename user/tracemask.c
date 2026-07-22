@@ -40,7 +40,7 @@ is_decimal(const char *spec)
  *   成功返回 TRACE_MASK_OK；超出有符号 int 范围时返回 TRACE_MASK_RANGE。
  */
 static int
-parse_decimal(const char *spec, int *mask)
+parse_decimal(const char *spec, uint64 *mask)
 {
   int index;     // 当前处理的数字字符在 spec 中的下标。
   int value = 0; // 已处理前缀转换得到的十进制累计值。
@@ -118,11 +118,11 @@ lookup_syscall(const char *start, int length)
  *   返回 enum trace_mask_status 中的对应状态值。
  */
 int
-trace_parse_mask(const char *spec, int *mask)
+trace_parse_mask(const char *spec, uint64 *mask)
 {
   const char *field_start; // 当前正在解析字段的首字符地址。
   const char *cursor;      // 当前检查是否为逗号或字符串结尾的字符地址。
-  unsigned int result = 0; // 所有已验证名称通过按位或组合得到的累计掩码。
+  uint64 result = 0; // 所有已验证名称通过按位或组合得到的累计掩码。
 
   if(spec == 0 || mask == 0 || spec[0] == 0)
     return TRACE_MASK_EMPTY;
@@ -145,7 +145,7 @@ trace_parse_mask(const char *spec, int *mask)
         return TRACE_MASK_UNKNOWN;
 
       // 重复名称天然幂等：对已经置位的比特再次按位或不会改变累计掩码。
-      result |= 1U << syscall_number;
+      result |= 1ULL << syscall_number;
       if(*cursor == 0)
         break;
       field_start = cursor + 1;

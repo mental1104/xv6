@@ -27,7 +27,7 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
-int trace(int);
+int trace(uint64);
 int sysinfo(struct sysinfo*);
 int sigalarm(int ticks, void (*handler)());
 int sigreturn(void);

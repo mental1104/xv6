@@ -35,7 +35,7 @@ int
 main(int argc, char *argv[])
 {
   int argument_index; // 复制目标命令参数时使用的 argv 下标。
-  int mask;           // 传给现有 trace 系统调用的整数位掩码。
+  uint64 mask;        // 传给 trace 系统调用的 64 位位掩码。
   int parse_status;   // trace_parse_mask() 返回的详细解析状态。
   char *command_argv[MAXARG]; // 传给目标命令、以空指针结尾的参数数组。
 
