@@ -74,7 +74,8 @@ sys_sbrk(void)
     p->sz = uvmdealloc(p->pagetable, oldsz, newsz);
   } else {
     uint64 newsz = oldsz + (uint64)n;
-    if(newsz < oldsz || PGROUNDUP(newsz) >= PLIC)
+    // USERMAX 是用户 VA 的一过上限；等于 USERMAX 表示最后一页恰好结束在边界。
+    if(newsz < oldsz || newsz > USERMAX)
       return -1;
     p->sz = newsz;
   }
@@ -86,7 +87,6 @@ sys_sleep(void)
 {
   int n;
   uint ticks0;
-
   if(argint(0, &n) < 0)
     return -1;
   acquire(&tickslock);
@@ -106,7 +106,6 @@ uint64
 sys_kill(void)
 {
   int pid;
-
   if(argint(0, &pid) < 0)
     return -1;
   return kill(pid);
@@ -150,32 +149,32 @@ sys_sysinfo(void)
   info.nproc = free_proc();
 
   if(copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
-      return -1;
+    return -1;
   return 0;
 }
 
 uint64
 sys_sigalarm(void)
 {
-    struct proc* p = myproc();
-    int n;
-    uint64 handler;
-    if(argint(0,&n) < 0)
-        return -1;
-    if(argaddr(1, &handler) < 0)
-        return -1;
-    p->handler = (void (*)())handler;
-    p->alarm_interval = n;
-    return 0;
+  struct proc* p = myproc();
+  int n;
+  uint64 handler;
+  if(argint(0,&n) < 0)
+    return -1;
+  if(argaddr(1, &handler) < 0)
+    return -1;
+  p->handler = (void (*)())handler;
+  p->alarm_interval = n;
+  return 0;
 }
 
 uint64
 sys_sigreturn(void)
 {
-    struct proc* p = myproc();
-    restore_user_context(p->trapframe, &p->alarm_context);
-    p->in_handler = 0;
-    return p->trapframe->a0;
+  struct proc* p = myproc();
+  restore_user_context(p->trapframe, &p->alarm_context);
+  p->in_handler = 0;
+  return p->trapframe->a0;
 }
 
 /**
