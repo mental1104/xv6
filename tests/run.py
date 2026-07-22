@@ -250,18 +250,25 @@ def _safe_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", value)
 
 
+def _normalize_output(output: str) -> str:
+    """统一终端行尾供正则匹配；原始日志仍由调用者原样保存。"""
+
+    return output.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _assert_output(test: TestCase, output: str) -> None:
     """检查拒绝、必需和计数模式，不解释 guest 业务语义。"""
 
+    normalized = _normalize_output(output)
     flags = re.MULTILINE
     for pattern in test.rejected:
-        if re.search(pattern, output, flags):
+        if re.search(pattern, normalized, flags):
             raise TestFailure(f"matched rejected pattern: {pattern}")
     for pattern in test.expected:
-        if not re.search(pattern, output, flags):
+        if not re.search(pattern, normalized, flags):
             raise TestFailure(f"missing expected pattern: {pattern}")
     for expectation in test.counted:
-        count = len(re.findall(expectation.pattern, output, flags))
+        count = len(re.findall(expectation.pattern, normalized, flags))
         if count < expectation.minimum:
             raise TestFailure(
                 f"pattern {expectation.pattern!r} matched {count} times; "
