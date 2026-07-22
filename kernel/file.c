@@ -61,6 +61,11 @@ fileclose(struct file *f)
 {
   struct file ff;
 
+  // raw console ownership belongs to the current PID plus this file object.
+  // Run the non-sleeping cleanup before ftable may invalidate the final reference.
+  if(f->type == FD_DEVICE && f->major == CONSOLE)
+    consolefileclose(f, myproc()->pid);
+
   acquire(&ftable.lock);
   if(f->ref < 1)
     panic("fileclose");
@@ -179,4 +184,3 @@ filewrite(struct file *f, uint64 addr, int n)
 
   return ret;
 }
-
