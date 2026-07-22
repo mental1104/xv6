@@ -161,7 +161,8 @@ UPROGS=\
 	$U/_uthread\
 	$U/_bigfile\
 	$U/_symlinktest\
-	$U/_mmaptest
+	$U/_mmaptest\
+	$U/_xv6test
 
 UEXTRA = user/xargstest.sh
 
@@ -208,9 +209,8 @@ ph: notxv6/ph.c
 barrier: notxv6/barrier.c
 	gcc -o barrier -g -O2 notxv6/barrier.c -pthread
 
-# Default developer entry: validate the grader, then boot QEMU and run the
-# pull-request regression suite. Sub-makes keep the two phases ordered even
-# when the caller invokes make with -j.
+# 默认开发入口：先自测 Python runner，再由同一 Python 入口启动 QEMU
+# 并执行 PR 级回归。使用子 make 保证即使外层带 -j，两阶段仍按顺序执行。
 test:
 	$(MAKE) test-unit
 	$(MAKE) test-integration CPUS=$(CPUS)
