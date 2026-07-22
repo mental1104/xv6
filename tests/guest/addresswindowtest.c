@@ -170,7 +170,8 @@ run_worker(void)
     fail("unable to reserve MMIO-crossing range");
 
   uint64 boundaries[] = {CLINT, PLIC, UART0, VIRTIO0};
-  for(int i = 0; i < sizeof(boundaries) / sizeof(boundaries[0]); i++){
+  int boundary_count = sizeof(boundaries) / sizeof(boundaries[0]);
+  for(int i = 0; i < boundary_count; i++){
     volatile char *address = (volatile char *)boundaries[i];
     *address = (char)(0x30 + i);
     if(*address != (char)(0x30 + i))
