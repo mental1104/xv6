@@ -159,7 +159,7 @@ sys_link(void)
 
   return 0;
 
-bad:
+ bad:
   ilock(ip);
   ip->nlink--;
   iupdate(ip);
@@ -235,7 +235,7 @@ sys_unlink(void)
 
   return 0;
 
-bad:
+ bad:
   iunlockput(dp);
   end_op();
   return -1;
@@ -438,9 +438,9 @@ sys_open(void)
   end_op();
   return fd;
 
-fail_inode:
+ fail_inode:
   iunlockput(ip);
-fail_transaction:
+ fail_transaction:
   end_op();
   return -1;
 }
@@ -667,11 +667,10 @@ sys_mmap(void)
     return -1;
 
   // 把映射放在当前进程大小之上，并推进 p->sz，让这段地址进入
-  // 进程的用户地址空间范围。
+  // 进程的用户地址空间范围。结束地址可以恰好等于 USERMAX。
   uint64 base = PGROUNDUP(p->sz);
   uint64 end = base + PGROUNDUP((uint64)length);
-  // TODO: 这里的mmap区域太小了，只能到PLIC，总体还是堆太小的原因，应该考虑封装一个获取最大可用地址的函数。
-  if(end >= PLIC || end < base){
+  if(end > USERMAX || end < base){
     vma_free(v);
     return -1;
   }
