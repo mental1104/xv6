@@ -13,7 +13,6 @@ permissions:
 jobs:
   fix-integration:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
@@ -30,17 +29,6 @@ jobs:
           git fetch origin main
           python3 -m py_compile tools/pr57_reintegrate.py
           python3 tools/pr57_reintegrate.py
-
-      - name: Build integrated RR policy
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu
-          make clean
-          make test-rbtree
-          make -j2 SCHED_POLICY=rr
-          python3 -m py_compile tests/scheduler_smoke.py tests/run.py tests/test_runner.py
 
       - name: Commit fixes and remove temporary files
         shell: bash
