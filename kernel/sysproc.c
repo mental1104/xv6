@@ -40,6 +40,19 @@ sys_wait(void)
 }
 
 uint64
+sys_waitpid(void)
+{
+  int pid, options;
+  uint64 status;
+
+  if(argint(0, &pid) < 0 ||
+     argaddr(1, &status) < 0 ||
+     argint(2, &options) < 0)
+    return -1;
+  return waitpid(pid, status, options);
+}
+
+uint64
 sys_sbrk(void)
 {
   int n;
@@ -115,8 +128,8 @@ sys_uptime(void)
 uint64
 sys_trace(void)
 {
-  int mask;
-  if(argint(0, &mask) < 0)
+  uint64 mask;
+  if(argaddr(0, &mask) < 0)
     return -1;
 
   myproc()->mask = mask;

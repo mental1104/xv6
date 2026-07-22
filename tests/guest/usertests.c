@@ -7,6 +7,7 @@
 #include "kernel/syscall.h"
 #include "kernel/memlayout.h"
 #include "kernel/riscv.h"
+#include "kernel/wait.h"
 
 //
 // Tests xv6 system calls.  usertests without arguments runs them all
@@ -2524,6 +2525,107 @@ execout(char *s)
   exit(0);
 }
 
+static void
+jobctlfail(char *message)
+{
+  printf("jobctl: %s\n", message);
+  exit(1);
+}
+
+static int
+jobctlcontains(char *text, char *needle)
+{
+  int i, j;
+
+  for(i = 0; text[i]; i++){
+    for(j = 0; needle[j] && text[i+j] == needle[j]; j++)
+      ;
+    if(needle[j] == 0)
+      return 1;
+  }
+  return 0;
+}
+
+void
+jobctl(char *s)
+{
+  char output[1024];
+  char *argv[] = { "sh", 0 };
+  char *commands =
+    "sleep 1 &\n"
+    "sleep 3\n"
+    "sleep 20 &\n"
+    "echo foreground\n"
+    "jobs\n"
+    "fg %2\n"
+    "echo fg-done\n";
+  int command_len = strlen(commands);
+  int input[2], result[2], pid, n, total = 0, status;
+
+  pid = fork();
+  if(pid < 0)
+    jobctlfail("waitpid fork failed");
+  if(pid == 0){
+    sleep(10);
+    exit(7);
+  }
+  if(waitpid(pid, &status, WNOHANG) != 0)
+    jobctlfail("WNOHANG did not return 0 for a running child");
+  if(waitpid(pid + 100000, &status, WNOHANG) != -1)
+    jobctlfail("waitpid accepted a non-child pid");
+  if(waitpid(pid, &status, 2) != -1)
+    jobctlfail("waitpid accepted unsupported options");
+  if(waitpid(pid, &status, 0) != pid || status != 7)
+    jobctlfail("blocking waitpid returned the wrong result");
+
+  pid = fork();
+  if(pid < 0)
+    jobctlfail("compatibility fork failed");
+  if(pid == 0)
+    exit(9);
+  if(wait(&status) != pid || status != 9)
+    jobctlfail("wait compatibility regressed");
+
+  if(pipe(input) < 0 || pipe(result) < 0)
+    jobctlfail("pipe failed");
+  pid = fork();
+  if(pid < 0)
+    jobctlfail("shell fork failed");
+  if(pid == 0){
+    close(input[1]);
+    close(result[0]);
+    close(0);
+    dup(input[0]);
+    close(1);
+    dup(result[1]);
+    close(2);
+    dup(result[1]);
+    close(input[0]);
+    close(result[1]);
+    exec("sh", argv);
+    exit(1);
+  }
+
+  close(input[0]);
+  close(result[1]);
+  if(write(input[1], commands, command_len) != command_len)
+    jobctlfail("could not feed shell commands");
+  close(input[1]);
+  while(total + 1 < (int)sizeof(output) &&
+        (n = read(result[0], output + total, sizeof(output) - total - 1)) > 0)
+    total += n;
+  output[total] = 0;
+  close(result[0]);
+
+  if(wait(&status) != pid || status != 0)
+    jobctlfail("shell exited with an error");
+  if(!jobctlcontains(output, "Done sleep 1 &") ||
+     !jobctlcontains(output, "Running sleep 20 &") ||
+     !jobctlcontains(output, "foreground") ||
+     !jobctlcontains(output, "fg-done"))
+    jobctlfail("shell job lifecycle output was incomplete");
+}
+
 //
 // use sbrk() to count how many free physical memory pages there are.
 // touches the pages to force allocation.
@@ -2646,6 +2748,7 @@ main(int argc, char *argv[])
     {truncate2, "truncate2"},
     {truncate3, "truncate3"},
     {reparent2, "reparent2"},
+    {jobctl, "jobctl"},
     {pgbug, "pgbug" },
     {sbrkbugs, "sbrkbugs" },
     // {badwrite, "badwrite" },

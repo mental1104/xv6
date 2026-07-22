@@ -30,3 +30,4 @@
 #define SYS_backtrace  29
 #define SYS_memsnapshot 30
 #define SYS_vaquery    31
+#define SYS_waitpid    32
