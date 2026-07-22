@@ -87,6 +87,195 @@ fill_kernel_layout(struct proc *p, struct memviz_snapshot *snapshot)
 }
 
 /**
+ * append_pte_entry 记录一个代表性虚拟地址对应的叶子 PTE。
+ *
+ * @param snapshot 待填写的快照；函数会追加一条固定大小记录。
+ * @param space MEMVIZ_PTE_SPACE_*，表示查询用户页表还是内核页表。
+ * @param role MEMVIZ_PTE_ROLE_*，表示该 VA 在渲染层中的教学标签。
+ * @param pagetable 被查询的页表，不会被修改。
+ * @param va 需要观察的虚拟地址，函数内部按页向下对齐。
+ */
+static void
+append_pte_entry(struct memviz_snapshot *snapshot, int space, int role,
+                 pagetable_t pagetable, uint64 va)
+{
+  if(snapshot->pagetable_entry_count >= MEMVIZ_PTE_ENTRIES)
+    return;
+
+  struct memviz_pte_entry *entry =
+    &snapshot->pagetable_entries[snapshot->pagetable_entry_count++];
+  entry->space = space;
+  entry->role = role;
+  entry->va = PGROUNDDOWN(va);
+
+  for(int level = 2; level >= 0; level--){
+    struct memviz_pte_level *pte_level = &entry->levels[2 - level];
+    pte_level->level = level;
+    pte_level->index = PX(level, entry->va);
+
+    pte_t pte = pagetable[pte_level->index];
+    pte_level->pte = pte;
+    pte_level->flags = PTE_FLAGS(pte);
+    if((pte & PTE_V) == 0)
+      return;
+
+    pte_level->present = 1;
+    pte_level->pa = PTE2PA(pte);
+    if(level == 0 || (pte & (PTE_R | PTE_W | PTE_X)) != 0){
+      if((pte & (PTE_R | PTE_W | PTE_X)) == 0)
+        return;
+      entry->present = 1;
+      entry->pte = pte;
+      entry->pa = pte_level->pa;
+      entry->flags = pte_level->flags;
+      return;
+    }
+
+    pagetable = (pagetable_t)pte_level->pa;
+  }
+}
+
+/**
+ * fill_pagetable_observations 采集从 VA 到 PA 的代表性映射闭环。
+ *
+ * @param p 当前进程；调用期间页表稳定，函数只读 walk() 查询结果。
+ * @param snapshot 待填写的快照；调用者已经清零并填好布局边界。
+ *
+ * 本视图不递归打印完整页表树，避免在普通 memviz 命令中输出成百上千行。
+ * 采样点覆盖用户 ELF、guard、栈、dynamic、内核 user mirror、内核栈、
+ * trampoline、direct map 与 MMIO，足够解释“用户 VA 如何经页表落到 PA，
+ * 再落入 kalloc 物理池或固定设备映射”。
+ */
+static void
+fill_pagetable_observations(struct proc *p, struct memviz_snapshot *snapshot)
+{
+  snapshot->user_pagetable = (uint64)p->pagetable;
+
+  append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_USER,
+                   MEMVIZ_PTE_ROLE_ELF_FIRST, p->pagetable, 0);
+  if(snapshot->image_end > PGSIZE)
+    append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_USER,
+                     MEMVIZ_PTE_ROLE_ELF_LAST, p->pagetable,
+                     snapshot->image_end - PGSIZE);
+  if(snapshot->user_stack_valid){
+    append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_USER,
+                     MEMVIZ_PTE_ROLE_GUARD, p->pagetable,
+                     snapshot->stack_guard_start);
+    append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_USER,
+                     MEMVIZ_PTE_ROLE_USER_STACK, p->pagetable,
+                     snapshot->stack_bottom);
+  }
+  if(snapshot->process_size > snapshot->dynamic_start)
+    append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_USER,
+                     MEMVIZ_PTE_ROLE_DYNAMIC, p->pagetable,
+                     snapshot->dynamic_start);
+
+  append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_KERNEL,
+                   MEMVIZ_PTE_ROLE_USER_MIRROR, p->kpagetable, 0);
+  append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_KERNEL,
+                   MEMVIZ_PTE_ROLE_KERNEL_STACK_GUARD, p->kpagetable,
+                   snapshot->kernel_stack_guard_start);
+  append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_KERNEL,
+                   MEMVIZ_PTE_ROLE_KERNEL_STACK, p->kpagetable,
+                   snapshot->kernel_stack_bottom);
+  append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_KERNEL,
+                   MEMVIZ_PTE_ROLE_TRAMPOLINE, p->kpagetable,
+                   snapshot->trampoline);
+  append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_KERNEL,
+                   MEMVIZ_PTE_ROLE_KERNEL_TEXT, p->kpagetable,
+                   snapshot->kernel_text_start);
+  append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_KERNEL,
+                   MEMVIZ_PTE_ROLE_RAM_DIRECT, p->kpagetable,
+                   snapshot->kernel_data_start);
+  append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_KERNEL,
+                   MEMVIZ_PTE_ROLE_UART, p->kpagetable, snapshot->uart_start);
+  append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_KERNEL,
+                   MEMVIZ_PTE_ROLE_VIRTIO, p->kpagetable,
+                   snapshot->virtio_start);
+  append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_KERNEL,
+                   MEMVIZ_PTE_ROLE_CLINT, p->kpagetable, snapshot->clint_start);
+  append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_KERNEL,
+                   MEMVIZ_PTE_ROLE_PLIC, p->kpagetable, snapshot->plic_start);
+}
+
+/**
+ * append_pt_usage_page 记录一个已分配页表页的 PTE 槽占用矩阵。
+ *
+ * @param snapshot 待填写的快照；函数会追加一个页表页摘要。
+ * @param space MEMVIZ_PTE_SPACE_*，表示属于用户页表还是内核页表。
+ * @param level Sv39 页表层级，2 为根页表，0 为 leaf PTE 所在页表。
+ * @param pagetable 当前页表页的内核可访问地址。
+ *
+ * 每个 cell 覆盖连续 PTE 槽，只记录 valid PTE 数量，不追踪普通数据页内容。
+ */
+static void
+append_pt_usage_page(struct memviz_snapshot *snapshot, int space, int level,
+                     pagetable_t pagetable)
+{
+  if(snapshot->pagetable_usage_count >= MEMVIZ_PT_USAGE_PAGES)
+    return;
+
+  struct memviz_pt_usage_page *page =
+    &snapshot->pagetable_usage[snapshot->pagetable_usage_count++];
+  page->space = space;
+  page->level = level;
+  page->pa = (uint64)pagetable;
+  page->total_entries = 512;
+
+  for(int i = 0; i < 512; i++){
+    int cell = (i * MEMVIZ_PT_USAGE_CELLS) / 512;
+    page->cells[cell].total_entries++;
+    if((pagetable[i] & PTE_V) != 0){
+      page->cells[cell].used_entries++;
+      page->used_entries++;
+    }
+  }
+}
+
+/**
+ * scan_pt_usage 递归扫描已分配页表页的占用情况。
+ *
+ * @param snapshot 待填写的快照。
+ * @param space MEMVIZ_PTE_SPACE_*，表示所属地址空间。
+ * @param level 当前 Sv39 层级。
+ * @param pagetable 当前页表页的内核可访问地址。
+ *
+ * 只沿 valid 且非 leaf 的 PTE 继续递归，因此不会遍历普通物理数据页。
+ */
+static void
+scan_pt_usage(struct memviz_snapshot *snapshot, int space, int level,
+              pagetable_t pagetable)
+{
+  append_pt_usage_page(snapshot, space, level, pagetable);
+  if(level == 0 || snapshot->pagetable_usage_count >= MEMVIZ_PT_USAGE_PAGES)
+    return;
+
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V) == 0)
+      continue;
+    if((pte & (PTE_R | PTE_W | PTE_X)) != 0)
+      continue;
+    scan_pt_usage(snapshot, space, level - 1, (pagetable_t)PTE2PA(pte));
+    if(snapshot->pagetable_usage_count >= MEMVIZ_PT_USAGE_PAGES)
+      return;
+  }
+}
+
+/**
+ * fill_pagetable_usage 采集用户页表和内核页表页的槽位余量。
+ *
+ * @param p 当前进程；函数只读 p->pagetable 和 p->kpagetable。
+ * @param snapshot 待填写的快照。
+ */
+static void
+fill_pagetable_usage(struct proc *p, struct memviz_snapshot *snapshot)
+{
+  scan_pt_usage(snapshot, MEMVIZ_PTE_SPACE_USER, 2, p->pagetable);
+  scan_pt_usage(snapshot, MEMVIZ_PTE_SPACE_KERNEL, 2, p->kpagetable);
+}
+
+/**
  * memviz_snapshot 采集指定视图所需的稳定内存快照。
  *
  * @param view MEMVIZ_VIEW_* 之一。
@@ -99,7 +288,7 @@ memviz_snapshot(int view, struct memviz_snapshot *snapshot)
   if(snapshot == 0)
     return -1;
   if(view != MEMVIZ_VIEW_USER && view != MEMVIZ_VIEW_PHYS &&
-     view != MEMVIZ_VIEW_KERNEL)
+     view != MEMVIZ_VIEW_KERNEL && view != MEMVIZ_VIEW_PAGETABLE)
     return -1;
 
   memset(snapshot, 0, sizeof(*snapshot));
@@ -108,6 +297,8 @@ memviz_snapshot(int view, struct memviz_snapshot *snapshot)
   struct proc *p = myproc();
   fill_user_layout(p, snapshot);
   fill_kernel_layout(p, snapshot);
+  fill_pagetable_observations(p, snapshot);
+  fill_pagetable_usage(p, snapshot);
 
   // kalloc 负责在锁内完成 freelist 采样，返回前已经释放所有 allocator 锁。
   kalloc_mem_snapshot(snapshot);

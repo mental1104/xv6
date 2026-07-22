@@ -10,7 +10,7 @@
 static void
 usage(void)
 {
-  fprintf(2, "usage: memviz <user|phys|kernel|all> [--plain]\n");
+  fprintf(2, "usage: memviz <user|phys|kernel|pagetable|all> [filter] [--plain]\n");
 }
 
 /**
@@ -23,27 +23,38 @@ usage(void)
 int
 main(int argc, char **argv)
 {
-  if(argc < 2 || argc > 3){
+  if(argc < 2 || argc > 4){
     usage();
     exit(1);
   }
 
   int plain = 0;
-  if(argc == 3){
-    if(strcmp(argv[2], "--plain") != 0){
+  char *filter = 0;
+  for(int i = 2; i < argc; i++){
+    if(strcmp(argv[i], "--plain") == 0){
+      plain = 1;
+    } else if(filter == 0){
+      filter = argv[i];
+    } else {
       usage();
       exit(1);
     }
-    plain = 1;
   }
 
   int result;
+  if(strcmp(argv[1], "pagetable") != 0 && filter != 0){
+    usage();
+    exit(1);
+  }
+
   if(strcmp(argv[1], "user") == 0)
     result = memviz_print(MEMVIZ_VIEW_USER, plain);
   else if(strcmp(argv[1], "phys") == 0)
     result = memviz_print(MEMVIZ_VIEW_PHYS, plain);
   else if(strcmp(argv[1], "kernel") == 0)
     result = memviz_print(MEMVIZ_VIEW_KERNEL, plain);
+  else if(strcmp(argv[1], "pagetable") == 0)
+    result = memviz_print_filtered(MEMVIZ_VIEW_PAGETABLE, plain, filter);
   else if(strcmp(argv[1], "all") == 0)
     result = memviz_print_all(plain);
   else {
