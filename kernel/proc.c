@@ -533,6 +533,10 @@ scheduler(void)
 
         swtch(&c->context, &p->context);
 
+        // 在释放 p->lock 前切回全局内核页表。另一 CPU 的 wait() 随后可能
+        // 回收 zombie 的 p->kpagetable，scheduler 不得继续引用该页表。
+        kvminithart();
+
         // Process is done running for now.
         // It should have changed p->state before coming back.
         c->proc = 0;
