@@ -2,6 +2,8 @@
 
 #include "kernel/types.h"
 #include "user/user.h"
+#include "user/history.h"
+#include "user/shellinput.h"
 #include "kernel/fcntl.h"
 #include "kernel/wait.h"
 
@@ -27,6 +29,7 @@ struct job {
 
 static struct job jobs[MAXJOBS];
 static int nextjid = 1;
+static struct shell_history command_history;
 
 struct cmd {
   int type;
@@ -217,6 +220,20 @@ showjobs(void)
       printf("[%d] %d Running %s\n", job->jid, job->pid, job->command);
 }
 
+/**
+ * 按从旧到新的顺序输出当前 Shell 进程拥有的会话历史。
+ *
+ * history 命令在进入内置命令分派前已写入 command_history，因此输出包含自身。
+ */
+static void
+showhistory(void)
+{
+  for(int i = 0; i < shell_history_count(&command_history); i++){
+    const struct shell_history_entry *entry = shell_history_at(&command_history, i);
+    printf("%d %s\n", entry->number, entry->command);
+  }
+}
+
 static int
 parsejid(char *s)
 {
@@ -266,9 +283,19 @@ startswith(char *s, char *prefix)
   return *prefix == 0;
 }
 
+/**
+ * 在 Shell 父进程内分派需要持久状态或影响当前 Shell 的内置命令。
+ *
+ * @param buf 已去除行尾的完整命令。
+ * @return 命中内置命令并完成处理时返回 1，否则返回 0。
+ */
 static int
 runbuiltin(char *buf)
 {
+  if(strcmp(buf, "history") == 0){
+    showhistory();
+    return 1;
+  }
   if(strcmp(buf, "jobs") == 0){
     showjobs();
     return 1;
@@ -363,15 +390,19 @@ runcmd(struct cmd *cmd)
   exit(0);
 }
 
+/**
+ * 输出提示符并读取一条命令。
+ *
+ * @param buf 命令缓冲区。
+ * @param nbuf 缓冲区容量。
+ * @return 成功提交一行返回 0；EOF、空行 Ctrl-D 或读取失败返回 -1。
+ */
 int
 getcmd(char *buf, int nbuf)
 {
   fprintf(2, "$ ");
   memset(buf, 0, nbuf);
-  gets(buf, nbuf);
-  if(buf[0] == 0) // EOF
-    return -1;
-  return 0;
+  return shell_readline(buf, nbuf, &command_history);
 }
 
 int
@@ -379,6 +410,8 @@ main(void)
 {
   static char buf[100];
   int fd;
+
+  shell_history_init(&command_history);
 
   // Ensure that three file descriptors are open.
   while((fd = open("console", O_RDWR)) >= 0){
@@ -398,6 +431,8 @@ main(void)
       buf[len-1] = 0;
     if(buf[0] == 0)
       continue;
+    // 历史先于内置命令分派更新，保证 `history` 输出包含当前这一条命令。
+    shell_history_add(&command_history, buf);
     if(runbuiltin(buf))
       continue;
     runline(parsecmd(buf));
