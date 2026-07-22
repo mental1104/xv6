@@ -118,6 +118,13 @@ run(void f(char *), char *s) {
   }
 }
 
+/**
+ * 执行 lazy allocation 测试并通过进程退出状态返回汇总结果。
+ *
+ * @param argc 命令行参数数量；可选第二个参数用于只运行同名子测试。
+ * @param argv 参数数组；argv[1] 存在时必须与测试名称精确匹配。
+ * @return 全部选中测试通过时通过 exit(0) 结束，任一失败时通过 exit(1) 结束。
+ */
 int
 main(int argc, char *argv[])
 {
@@ -149,5 +156,7 @@ main(int argc, char *argv[])
     printf("ALL TESTS PASSED\n");
   else
     printf("SOME TESTS FAILED\n");
-  exit(1);   // not reached.
+
+  // 统一把汇总结果传播给 xv6test 和宿主机 runner，避免失败用例被误判为通过。
+  exit(fail);
 }
