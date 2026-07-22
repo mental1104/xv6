@@ -12,6 +12,7 @@
 #include "proc.h"
 #include "fcntl.h"
 #include "vma.h"
+
 /*
  * the kernel's page table.
  */
@@ -101,7 +102,8 @@ int
 uvmlazyalloc(struct proc *p, uint64 va)
 {
   uint64 va0 = PGROUNDDOWN(va);
-  if(p == 0 || va >= p->sz || va0 < PGROUNDDOWN(p->trapframe->sp))
+  if(p == 0 || va >= USERMAX || va >= p->sz ||
+     va0 < PGROUNDDOWN(p->trapframe->sp))
     return -1;
   if(vma_find(p, va))
     return -1;
@@ -126,7 +128,7 @@ uvmlazyalloc(struct proc *p, uint64 va)
 uint64
 walkaddr(pagetable_t pagetable, uint64 va)
 {
-  if(va >= MAXVA)
+  if(va >= USERMAX)
     return 0;
 
   pte_t *pte = walk(pagetable, va, 0);
@@ -212,10 +214,8 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
       continue;
-      //panic("uvmunmap: walk");
     if((*pte & PTE_V) == 0)
       continue;
-      //panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -265,6 +265,8 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 
   if(newsz < oldsz)
     return oldsz;
+  if(newsz > USERMAX)
+    return 0;
 
   oldsz = PGROUNDUP(oldsz);
   for(a = oldsz; a < newsz; a += PGSIZE){
@@ -286,7 +288,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 // Deallocate user pages to bring the process size from oldsz to
 // newsz.  oldsz and newsz need not be page-aligned, nor does newsz
 // need to be less than oldsz.  oldsz can be larger than the actual
-// process size.  Returns the new process size.
+// process size.  Returns the new size.
 uint64
 uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 {
@@ -347,10 +349,8 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       continue;
-      //panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       continue;
-      //panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
 
@@ -428,47 +428,50 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   return copyinstr_new(pagetable, dst, srcva, max);
 }
 
-
-void vmwalk(pagetable_t pagetable, int depth){
+void
+vmwalk(pagetable_t pagetable, int depth)
+{
   for(int i = 0; i < 512; i++){
-      pte_t pte = pagetable[i];
-      if(pte & PTE_V){
-        uint64 pa = PTE2PA(pte);
+    pte_t pte = pagetable[i];
+    if(pte & PTE_V){
+      uint64 pa = PTE2PA(pte);
 
-        int temp = depth;
-        while(temp--)
-            printf(".. ");
+      int temp = depth;
+      while(temp--)
+        printf(".. ");
 
-        printf("..%d: pte %p pa %p\n",i, pte, pa);
-        if(depth<2)
-            vmwalk((pagetable_t)pa, depth+1);
-      }
+      printf("..%d: pte %p pa %p\n", i, pte, pa);
+      if(depth < 2)
+        vmwalk((pagetable_t)pa, depth+1);
+    }
   }
 }
 
-void vmprint(pagetable_t pagetable){
-   printf("page table %p\n", pagetable);
-   vmwalk(pagetable, 0);
+void
+vmprint(pagetable_t pagetable)
+{
+  printf("page table %p\n", pagetable);
+  vmwalk(pagetable, 0);
 }
 
 void
 kvmmapkern(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm)
 {
-  if (mappages(pagetable, va, sz, pa, perm) != 0)
+  if(mappages(pagetable, va, sz, pa, perm) != 0)
     panic("kvmmap");
 }
 
-// proc's version of kvminit
+// 创建进程私有内核页表。L2[0] 保存 MMIO，L2[1] 留给用户别名窗口，
+// 从 KERNBASE 所在根槽开始复用全局内核映射。
 pagetable_t
 kvmcreate()
 {
-  pagetable_t pagetable;
-  int i;
+  pagetable_t pagetable = uvmcreate();
+  if(pagetable == 0)
+    return 0;
 
-  pagetable = uvmcreate();
-  for(i = 1; i < 512; i++) {
+  for(int i = PX(2, KERNBASE); i < 512; i++)
     pagetable[i] = kernel_pagetable[i];
-  }
 
   // uart registers
   kvmmapkern(pagetable, UART0, UART0, PGSIZE, PTE_R | PTE_W);
@@ -485,37 +488,56 @@ kvmcreate()
   return pagetable;
 }
 
-
-void
-kvmfree(pagetable_t kpagetale)
+// 释放进程内核页表私有子树。叶子映射指向 MMIO 或用户物理页，均不归
+// kpagetable 所有；这里只释放为 L2[0..1] 分配的页表页。
+static void
+kvmfreewalk(pagetable_t pagetable, int level)
 {
-  pte_t pte = kpagetale[0];
-  pagetable_t level1 = (pagetable_t) PTE2PA(pte);
-  for (int i = 0; i < 512; i++) {
-    pte_t pte = level1[i];
-    if (pte & PTE_V) {
-      uint64 level2 = PTE2PA(pte);
-      kfree((void *) level2);
-      level1[i] = 0;
-    }
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V) == 0)
+      continue;
+    if(level > 0 && (pte & (PTE_R | PTE_W | PTE_X)) == 0)
+      kvmfreewalk((pagetable_t)PTE2PA(pte), level - 1);
+    else if(level > 0)
+      panic("kvmfreewalk: leaf");
+    pagetable[i] = 0;
   }
-  kfree((void *) level1);
-  kfree((void *) kpagetale);
+  kfree((void*)pagetable);
 }
 
+void
+kvmfree(pagetable_t kpagetable)
+{
+  for(int i = 0; i < PX(2, KERNBASE); i++){
+    pte_t pte = kpagetable[i];
+    if((pte & PTE_V) == 0)
+      continue;
+    if(pte & (PTE_R | PTE_W | PTE_X))
+      panic("kvmfree: root leaf");
+    kvmfreewalk((pagetable_t)PTE2PA(pte), 1);
+    kpagetable[i] = 0;
+  }
+  kfree((void*)kpagetable);
+}
+
+// 将用户页同步到进程内核页表的高地址别名窗口。user_va 与 alias_va
+// 映射同一物理页，但别名清除 PTE_U，只允许 supervisor 模式访问。
 void
 u2kvmcopy(pagetable_t pagetable, pagetable_t kpagetable,
           uint64 oldsz, uint64 newsz)
 {
   if(newsz < oldsz)
     return;
+  if(newsz > USERMAX)
+    panic("u2kvmcopy: range");
 
   uint64 start = PGROUNDDOWN(oldsz);
   for(uint64 a = start; a < newsz; a += PGSIZE){
     pte_t *from = walk(pagetable, a, 0);
     if(from == 0 || (*from & PTE_V) == 0)
       continue;
-    pte_t *to = walk(kpagetable, a, 1);
+    pte_t *to = walk(kpagetable, KUSERADDR(a), 1);
     if(to == 0)
       panic("u2kvmcopy");
     uint flags = PTE_FLAGS(*from) & ~PTE_U;
@@ -529,6 +551,8 @@ u2kvmunmap(pagetable_t kpagetable, uint64 va, uint64 npages)
 {
   if(npages == 0)
     return;
-  uvmunmap(kpagetable, va, npages, 0);
+  if(va >= USERMAX || npages > (USERMAX - va) / PGSIZE)
+    panic("u2kvmunmap: range");
+  uvmunmap(kpagetable, KUSERADDR(va), npages, 0);
   sfence_vma();
 }
