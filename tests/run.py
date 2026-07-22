@@ -22,6 +22,8 @@ DEFAULT_REJECTED = (
     r"exec .* failed",
     r"\bFAIL(?:ED)?\b",
 )
+# guest-first 测试只向宿主机暴露稳定结束协议，不再匹配各测试程序的业务输出。
+GUEST_SUCCESS = (r"^XV6TEST done status=0$",)
 
 
 @dataclass(frozen=True)
@@ -89,31 +91,13 @@ SUITES: dict[str, Suite] = {
     ),
     "lab-vm": Suite(
         name="lab-vm",
-        description="Lab3 page-table paths, Lab4 traps, Lab5 lazy allocation and Lab6 COW",
+        description="Lab3/Lab5/Lab6 guest tests plus Lab4 trap regressions",
         tests=(
             TestCase(
-                "lab3-copyin",
-                ("usertests copyin",),
-                expected=(r"^ALL TESTS PASSED$",),
-                timeout=180,
-            ),
-            TestCase(
-                "lab3-copyout",
-                ("usertests copyout",),
-                expected=(r"^ALL TESTS PASSED$",),
-                timeout=180,
-            ),
-            TestCase(
-                "lab3-copyinstr",
-                ("usertests copyinstr1",),
-                expected=(r"^ALL TESTS PASSED$",),
-                timeout=180,
-            ),
-            TestCase(
-                "lab3-address-space-growth",
-                ("usertests sbrkmuch",),
-                expected=(r"^ALL TESTS PASSED$",),
-                timeout=240,
+                "lab3-guest-tests",
+                ("xv6test --group lab3",),
+                expected=GUEST_SUCCESS,
+                timeout=600,
             ),
             TestCase(
                 "lab4-backtrace",
@@ -127,16 +111,16 @@ SUITES: dict[str, Suite] = {
                 timeout=180,
             ),
             TestCase(
-                "lab5-lazy-allocation",
-                ("lazytests",),
-                expected=(r"^test lazy unmap: OK$", r"^test lazy alloc: OK$"),
-                timeout=240,
+                "lab5-guest-tests",
+                ("xv6test --group lab5",),
+                expected=GUEST_SUCCESS,
+                timeout=300,
             ),
             TestCase(
-                "lab6-copy-on-write",
-                ("cowtest",),
-                expected=(r"^ALL COW TESTS PASSED$",),
-                timeout=300,
+                "lab6-guest-tests",
+                ("xv6test --group lab6",),
+                expected=GUEST_SUCCESS,
+                timeout=360,
             ),
         ),
     ),
@@ -249,9 +233,6 @@ SUITES: dict[str, Suite] = {
             for name in (
                 "sbrkbugs",
                 "forkforkfork",
-                "copyin",
-                "copyout",
-                "copyinstr1",
                 "createdelete",
                 "linkunlink",
                 "openiput",
