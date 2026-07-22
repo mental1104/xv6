@@ -1,0 +1,180 @@
+name: Temporary fix PR 49 main integration
+
+on:
+  push:
+    branches:
+      - concept/47-xv6-job-control-shell
+    paths:
+      - .github/workflows/fix-pr49-main-integration.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix-integration:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: concept/47-xv6-job-control-shell
+          fetch-depth: 0
+
+      - name: Restore main invariants and reapply waitpid
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+
+          python3 - <<'PY'
+          """把 waitpid 重新应用到最新 main，避免保留旧分支覆盖掉的系统调用与 wait_lock 语义。"""
+
+          from pathlib import Path
+          import subprocess
+
+
+          def main_file(path: str) -> str:
+              """读取 origin/main 中的文件文本。
+
+              Args:
+                  path: 仓库内相对路径。
+
+              Returns:
+                  指定文件在最新 main 上的 UTF-8 文本。
+              """
+              return subprocess.check_output(
+                  ["git", "show", f"origin/main:{path}"], text=True
+              )
+
+
+          syscall_h = main_file("kernel/syscall.h")
+          if not syscall_h.endswith("\n"):
+              syscall_h += "\n"
+          Path("kernel/syscall.h").write_text(
+              syscall_h + "#define SYS_waitpid    32\n", encoding="utf-8"
+          )
+
+          syscall_c = main_file("kernel/syscall.c")
+          syscall_c = syscall_c.replace(
+              "extern uint64 sys_vaquery(void);\n",
+              "extern uint64 sys_vaquery(void);\nextern uint64 sys_waitpid(void);\n",
+              1,
+          )
+          syscall_c = syscall_c.replace(
+              "[SYS_vaquery] sys_vaquery,\n",
+              "[SYS_vaquery] sys_vaquery,\n[SYS_waitpid] sys_waitpid,\n",
+              1,
+          )
+          Path("kernel/syscall.c").write_text(syscall_c, encoding="utf-8")
+
+          syscall_names = main_file("kernel/syscall_names.h")
+          syscall_names = syscall_names.replace(
+              "[SYS_memsnapshot] = \"memsnapshot\",\n",
+              "[SYS_memsnapshot] = \"memsnapshot\",\n"
+              "[SYS_waitpid]   = \"waitpid\",\n",
+              1,
+          )
+          Path("kernel/syscall_names.h").write_text(
+              syscall_names, encoding="utf-8"
+          )
+
+          proc_c = main_file("kernel/proc.c")
+          proc_c = proc_c.replace(
+              '#include "fcntl.h"\n',
+              '#include "fcntl.h"\n#include "wait.h"\n',
+              1,
+          )
+          start = proc_c.index("// Wait for a child process to exit and return its pid.\n")
+          end = proc_c.index("// Per-CPU process scheduler.\n", start)
+          wait_section = r'''// 等待任意直接子进程退出，并返回被回收子进程的 PID。
+          int
+          wait(uint64 addr)
+          {
+            return waitpid(-1, addr, 0);
+          }
+
+          // 等待指定直接子进程退出；target_pid == -1 表示任意直接子进程。
+          // WNOHANG 在匹配子进程仍运行时返回 0，不进入睡眠。
+          int
+          waitpid(int target_pid, uint64 addr, int options)
+          {
+            struct proc *np;
+            int havekids, child_pid;
+            struct proc *p = myproc();
+
+            if(target_pid == 0 || target_pid < -1 || (options & ~WNOHANG) != 0)
+              return -1;
+
+            // wait_lock 串行化 parent、ZOMBIE 发布与扫描，避免退出通知丢失。
+            acquire(&wait_lock);
+
+            for(;;){
+              havekids = 0;
+              for(np = proc; np < &proc[NPROC]; np++){
+                if(np->parent == p &&
+                   (target_pid == -1 || np->pid == target_pid)){
+                  // wait_lock 固定父子关系；np->lock 保护状态与回收路径。
+                  acquire(&np->lock);
+                  havekids = 1;
+                  if(np->state == ZOMBIE){
+                    child_pid = np->pid;
+                    if(addr != 0 && copyout(p->pagetable, addr, (char *)&np->xstate,
+                                            sizeof(np->xstate)) < 0) {
+                      release(&np->lock);
+                      release(&wait_lock);
+                      return -1;
+                    }
+                    freeproc(np);
+                    release(&np->lock);
+                    release(&wait_lock);
+                    return child_pid;
+                  }
+                  release(&np->lock);
+                }
+              }
+
+              acquire(&p->lock);
+              int killed = p->killed;
+              release(&p->lock);
+
+              if(!havekids || killed){
+                release(&wait_lock);
+                return -1;
+              }
+
+              if(options & WNOHANG){
+                release(&wait_lock);
+                return 0;
+              }
+
+              // sleep 原子释放并重新获取 wait_lock，保持主线的无丢失唤醒协议。
+              sleep(p, &wait_lock);  //DOC: wait-sleep
+            }
+          }
+
+          '''
+          Path("kernel/proc.c").write_text(
+              proc_c[:start] + wait_section + proc_c[end:], encoding="utf-8"
+          )
+          PY
+
+      - name: Build integrated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu
+          make clean
+          make -j2
+
+      - name: Commit fix and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add kernel/proc.c kernel/syscall.c kernel/syscall.h kernel/syscall_names.h
+          git commit -m "fix: preserve main wait and syscall invariants"
+          git rm .github/workflows/fix-pr49-main-integration.yml
+          git commit -m "chore: remove temporary PR 49 integration workflow"
+          git push origin HEAD:concept/47-xv6-job-control-shell
