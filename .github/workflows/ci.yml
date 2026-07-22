@@ -44,6 +44,9 @@ jobs:
       - name: Run Lab1-10 QEMU regression
         run: make test-integration CPUS=3
 
+      - name: Run VM regression single-core
+        run: make test-suite SUITE=lab-vm CPUS=1
+
       - name: Run complete usertests
         run: make test-usertests CPUS=3
 
