@@ -35,11 +35,7 @@ extern struct cpu cpus[NCPU];
 // uservec in trampoline.S saves user registers in the trapframe,
 // then initializes registers from the trapframe's
 // kernel_sp, kernel_hartid, kernel_satp, and jumps to kernel_trap.
-// usertrapret() and userret in trampoline.S set up
-// the trapframe's kernel_*, restore user registers from the
-// trapframe, switch to the user page table, and enter user space.
-// the trapframe includes callee-saved user registers like s0-s11 because the
-// return-to-user path via usertrapret() doesn't return through
+// usertrapret() and userret in trampoline.S set up the trapframe,
 // the entire kernel call stack.
 struct trapframe {
   /*   0 */ uint64 kernel_satp;   // kernel page table
@@ -87,7 +83,7 @@ struct user_context {
   uint64 gpr[31];
 };
 
-enum procstate { UNUSED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
 // Per-process state
 struct proc {
@@ -95,7 +91,7 @@ struct proc {
 
   // p->lock must be held when using these:
   enum procstate state;        // Process state
-  struct proc *parent;         // Parent process
+  struct proc *parent;         // Parent process; wait_lock protects changes.
   void *chan;                  // If non-zero, sleeping on chan
   int killed;                  // If non-zero, have been killed
   int xstate;                  // Exit status to be returned to parent's wait
