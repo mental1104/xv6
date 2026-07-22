@@ -47,6 +47,16 @@ jobs:
       - name: Run complete usertests
         run: make test-usertests CPUS=3
 
+      # _start_qemu() can fail before the Python runner creates its first log.
+      # Capture one bounded serial boot attempt so startup panics are preserved.
+      - name: Capture QEMU boot log
+        if: failure()
+        run: |
+          mkdir -p test-results/infrastructure
+          timeout 30s make -s --no-print-directory qemu \
+            CPUS=3 QEMUEXTRA=-snapshot \
+            > test-results/infrastructure/qemu-boot.log 2>&1 || true
+
       - name: Upload QEMU logs
         if: failure()
         uses: actions/upload-artifact@v4
