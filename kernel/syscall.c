@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "syscall.h"
+#include "syscall_names.h"
 #include "defs.h"
 
 // Fetch the uint64 at addr from the current process.
@@ -186,10 +187,8 @@ syscall(void)
   num = p->trapframe->a7;
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     p->trapframe->a0 = syscalls[num]();
-    //These two lines are new added.
     if((1U << num) & p->mask)
-      printf("%d: syscall %s -> %d\n",p->pid, sysname[num], p->trapframe->a0);
-    //...
+      printf("%d: syscall %s -> %d\n", p->pid, syscall_names[num], p->trapframe->a0);
   } else {
     printf("%d %s: unknown sys call %d\n",
             p->pid, p->name, num);

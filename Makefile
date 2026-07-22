@@ -1,5 +1,7 @@
 K=kernel
 U=user
+T=tests/guest
+H=tests/host
 
 OBJS = \
   $K/entry.o \
@@ -19,6 +21,8 @@ OBJS = \
   $K/trap.o \
   $K/syscall.o \
   $K/sysproc.o \
+  $K/memviz.o \
+  $K/sysmemviz.o \
   $K/bio.o \
   $K/fs.o \
   $K/log.o \
@@ -51,6 +55,7 @@ TOOLPREFIX := $(shell if riscv64-unknown-elf-objdump -i 2>&1 | grep 'elf64-big' 
 endif
 
 QEMU = qemu-system-riscv64
+PYTHON ?= python3
 
 CC = $(TOOLPREFIX)gcc
 AS = $(TOOLPREFIX)gas
@@ -95,22 +100,84 @@ _%: %.o $(ULIB)
 	$(OBJDUMP) -S $@ > $*.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $*.sym
 
+# 测试源代码统一保存在 tests/guest；生成的 xv6 用户程序仍写入 user/_*
+# 以保持 mkfs 输入格式和 guest 命令名不变。
+$U/_%: $T/%.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $T/$*.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/$*.sym
+
+$U/_sh: $U/shentry.o $U/sh.o $U/memvizlib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e sh_entry -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/sh.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/sh.sym
+
+$U/_memviz: $U/memviz.o $U/memvizlib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/memviz.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/memviz.sym
+
+$U/_varead: $U/varead.o $U/vaaccesslib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/varead.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/varead.sym
+
+$U/_vawrite: $U/vawrite.o $U/vaaccesslib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/vawrite.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/vawrite.sym
+
+$U/_vaprobe: $U/vaprobe.o $U/vaaccesslib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/vaprobe.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/vaprobe.sym
+
+$U/_trace: $U/trace.o $U/tracemask.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/trace.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/trace.sym
+
+$U/_tracemasktest: $T/tracemasktest.o $U/tracemask.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $T/tracemasktest.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/tracemasktest.sym
+
+$U/_vaaccesstest: $T/vaaccesstest.o $T/testlib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $T/vaaccesstest.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/vaaccesstest.sym
+
 $U/usys.S: $U/usys.pl
 	perl $U/usys.pl > $U/usys.S
 
 $U/usys.o: $U/usys.S
 	$(CC) $(CFLAGS) -c -o $U/usys.o $U/usys.S
 
-$U/_forktest: $U/forktest.o $(ULIB)
-	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $U/_forktest $U/forktest.o $U/ulib.o $U/usys.o
-	$(OBJDUMP) -S $U/_forktest > $U/forktest.asm
+$U/_forktest: $T/forktest.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $U/_forktest $T/forktest.o $U/ulib.o $U/usys.o
+	$(OBJDUMP) -S $U/_forktest > $T/forktest.asm
+
+$U/_lab1test: $T/lab1test.o $T/testlib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $T/lab1test.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/lab1test.sym
+
+$U/_uthreadtest: $T/uthreadtest.o $T/testlib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $T/uthreadtest.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/uthreadtest.sym
 
 $U/uthread_switch.o: $U/uthread_switch.S
 	$(CC) $(CFLAGS) -c -o $U/uthread_switch.o $U/uthread_switch.S
 
 $U/_uthread: $U/uthread.o $U/uthread_switch.o $(ULIB)
-	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $U/_uthread $U/uthread.o $U/uthread_switch.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $U/uthread.o $U/uthread_switch.o $(ULIB)
 	$(OBJDUMP) -S $U/_uthread > $U/uthread.asm
+
+# xargstest.sh 是测试输入脚本，源文件放在 tests/guest；构建时复制到 user/
+# 只是为了满足 mkfs 对输入路径不能包含多级目录的既有约束。
+$U/xargstest.sh: $T/xargstest.sh
+	cp $< $@
 
 mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
 	gcc -Werror -Wall -I. -o mkfs/mkfs mkfs/mkfs.c
@@ -120,7 +187,6 @@ mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
 UPROGS=\
 	$U/_cat\
 	$U/_echo\
-	$U/_forktest\
 	$U/_grep\
 	$U/_init\
 	$U/_kill\
@@ -129,9 +195,12 @@ UPROGS=\
 	$U/_mkdir\
 	$U/_rm\
 	$U/_sh\
-	$U/_stressfs\
-	$U/_usertests\
-	$U/_grind\
+	$U/_memviz\
+	$U/_varead\
+	$U/_vawrite\
+	$U/_vaprobe\
+	$U/_memviztest\
+	$U/_vaaccesstest\
 	$U/_wc\
 	$U/_zombie\
 	$U/_pingpong\
@@ -140,29 +209,39 @@ UPROGS=\
 	$U/_find\
 	$U/_xargs\
 	$U/_trace\
-	$U/_sysinfotest\
 	$U/_call\
+	$U/_uthread\
+	$U/_forktest\
+	$U/_stressfs\
+	$U/_usertests\
+	$U/_grind\
+	$U/_tracemasktest\
+	$U/_sysinfotest\
 	$U/_bttest\
 	$U/_alarmtest\
 	$U/_lazytests\
 	$U/_cowtest\
-	$U/_uthread\
 	$U/_bigfile\
 	$U/_symlinktest\
-	$U/_mmaptest
+	$U/_mmaptest\
+	$U/_lab1test\
+	$U/_tracesmoke\
+	$U/_uthreadtest\
+	$U/_xv6test
 
-UEXTRA = user/xargstest.sh
+UEXTRA = $U/xargstest.sh
 
 fs.img: mkfs/mkfs README $(UEXTRA) $(UPROGS)
 	mkfs/mkfs fs.img README $(UEXTRA) $(UPROGS)
 
--include kernel/*.d user/*.d
+-include kernel/*.d user/*.d tests/guest/*.d
 
 clean:
 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
-	*/*.o */*.d */*.asm */*.sym \
-	$U/initcode $U/initcode.out $K/kernel fs.img \
-	mkfs/mkfs .gdbinit $U/usys.S $(UPROGS) ph barrier
+		*/*.o */*.d */*.asm */*.sym \
+		$T/*.o $T/*.d $T/*.asm $T/*.sym \
+		$U/initcode $U/initcode.out $K/kernel fs.img \
+		mkfs/mkfs .gdbinit $U/usys.S $(UPROGS) $(UEXTRA) ph barrier
 
 GDBPORT = $(shell expr `id -u` % 5000 + 25000)
 QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
@@ -175,6 +254,7 @@ endif
 QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
+QEMUOPTS += $(QEMUEXTRA)
 
 qemu: $K/kernel fs.img
 	$(QEMU) $(QEMUOPTS)
@@ -189,10 +269,41 @@ qemu-gdb: $K/kernel .gdbinit fs.img
 gdb:
 	riscv64-linux-gnu-gdb kernel/kernel
 
-ph: notxv6/ph.c
-	gcc -o ph -g -O2 notxv6/ph.c -pthread
+ph: $H/ph.c
+	gcc -o ph -g -O2 $H/ph.c -pthread
 
-barrier: notxv6/barrier.c
-	gcc -o barrier -g -O2 notxv6/barrier.c -pthread
+barrier: $H/barrier.c
+	gcc -o barrier -g -O2 $H/barrier.c -pthread
 
-.PHONY: clean qemu qemu-gdb gdb ph barrier
+# 默认开发入口：先自测 Python runner，再由同一 Python 入口启动 QEMU
+# 并执行 PR 级回归。使用子 make 保证即使外层带 -j，两阶段仍按顺序执行。
+test:
+	$(MAKE) test-unit
+	$(MAKE) test-integration CPUS=$(CPUS)
+
+# Unit-test the grader itself. This target never boots QEMU and does not need
+# a built xv6 image.
+test-unit:
+	$(PYTHON) -m unittest discover -s tests -p 'test_*.py' -v
+
+test-grader: test-unit
+
+# Integration/system tests: boot a fresh QEMU snapshot for every atomic suite
+# and validate xv6 through its user-visible behavior.
+test-integration: $K/kernel fs.img
+	$(PYTHON) tests/run.py --suite pr --cpus $(CPUS)
+
+test-labs: test-integration
+
+test-usertests: $K/kernel fs.img
+	$(PYTHON) tests/run.py --suite usertests-full --cpus $(CPUS)
+
+test-full: $K/kernel fs.img
+	$(PYTHON) tests/run.py --suite full --cpus $(CPUS)
+
+test-suite: $K/kernel fs.img
+	@test -n "$(SUITE)" || (echo "usage: make test-suite SUITE=<suite> [CPUS=<n>]"; exit 2)
+	$(PYTHON) tests/run.py --suite $(SUITE) --cpus $(CPUS)
+
+.PHONY: clean qemu qemu-gdb gdb ph barrier test test-unit test-grader \
+	test-integration test-labs test-usertests test-full test-suite

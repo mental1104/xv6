@@ -9,6 +9,7 @@
 #include "riscv.h"
 #include "defs.h"
 #include "proc.h"
+#include "memviz.h"
 
 void freerange(void *pa_start, void *pa_end);
 
@@ -169,6 +170,55 @@ free_mem(void)
     release(&kmem[i].lock);
   }
   return pages * PGSIZE;
+}
+
+/**
+ * kalloc_mem_snapshot 按物理地址采集 allocator 管理页的空闲分布。
+ *
+ * @param snapshot 输出快照；调用者必须先清零，函数会填写 kalloc 相关字段。
+ *
+ * 所有 kmem 锁按 CPU 编号递增获取、递减释放。持锁期间只遍历 freelist 和
+ * 写内核栈上的快照，不打印、不 copyout，也不申请新页。
+ */
+void
+kalloc_mem_snapshot(struct memviz_snapshot *snapshot)
+{
+  uint64 start = PGROUNDUP((uint64)end);
+  uint64 total = (PHYSTOP - start) / PGSIZE;
+
+  snapshot->kalloc_start = start;
+  snapshot->kalloc_end = PHYSTOP;
+  snapshot->total_pages = total;
+
+  // total_pages 与后续 free page 使用同一映射公式，避免边界取整不一致。
+  for(uint64 page = 0; page < total; page++){
+    int cell = (page * MEMVIZ_CELLS) / total;
+    snapshot->physical[cell].total_pages++;
+  }
+
+  for(int i = 0; i < NCPU; i++)
+    acquire(&kmem[i].lock);
+
+  uint64 free = 0;
+  for(int cpu = 0; cpu < NCPU; cpu++){
+    for(struct run *r = kmem[cpu].freelist; r; r = r->next){
+      uint64 pa = (uint64)r;
+      if(pa < start || pa >= PHYSTOP || ((pa - start) % PGSIZE) != 0)
+        panic("kalloc snapshot");
+
+      uint64 page = (pa - start) / PGSIZE;
+      int cell = (page * MEMVIZ_CELLS) / total;
+      snapshot->physical[cell].free_pages++;
+      snapshot->cpu_free_pages[cpu]++;
+      free++;
+    }
+  }
+
+  for(int i = NCPU - 1; i >= 0; i--)
+    release(&kmem[i].lock);
+
+  snapshot->free_pages = free;
+  snapshot->used_pages = total - free;
 }
 
 void
