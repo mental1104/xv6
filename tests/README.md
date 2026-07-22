@@ -6,12 +6,13 @@
 tests/
 ├── guest/                 编译并在 xv6 内运行的 C/ASM/脚本测试源码
 ├── host/                  在宿主机 pthread 环境运行的测试源码
+├── legacy/                保留的课程评分脚本与其支持库
 ├── run.py                 宿主机 QEMU 生命周期、超时、日志和 suite 编排
 ├── test_runner.py         不启动 QEMU 的 Python runner 自测
 └── README.md
 ```
 
-`user/`、`kernel/` 与 `notxv6/` 只保存被测实现或非测试示例。测试二进制仍生成到 `user/_<name>`，这是构建产物位置，不是源码所有权；这样可以保持 `mkfs` 输入格式和 xv6 shell 中的命令名不变。
+仓库根目录、`user/`、`kernel/` 与 `notxv6/` 不保存测试源码；旧课程评分入口位于 `tests/legacy/`。测试二进制仍生成到 `user/_<name>`，这是构建产物位置，不是源码所有权；这样可以保持 `mkfs` 输入格式和 xv6 shell 中的命令名不变。
 
 ## 责任边界
 
@@ -39,6 +40,12 @@ tests/
 这两个检查都建立在 `XV6TEST done status=0` 已成立的基础上，不替代 guest 的退出状态。
 
 ## 常用命令
+
+旧课程 util grader 如需运行，入口改为：
+
+```bash
+python3 tests/legacy/grade-lab-util
+```
 
 ```bash
 # 默认入口：先验证 Python runner，再运行 Lab1-Lab10 与 focused usertests。

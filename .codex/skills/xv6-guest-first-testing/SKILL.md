@@ -22,6 +22,9 @@ tests/guest/
 tests/host/
 └── host-only pthread 测试源码
 
+tests/legacy/
+└── 保留的课程评分脚本和支持库
+
 tests/run.py
 ├── QEMU 生命周期
 ├── snapshot 隔离
@@ -171,6 +174,7 @@ tests/guest/*.h
 tests/guest/*.sh
 tests/host/*.c
 tests/host/*.h
+tests/legacy/*
 tests/*.py
 ```
 
@@ -183,7 +187,12 @@ notxv6/*test.c
 notxv6/ph.c
 notxv6/barrier.c
 user/xv6test.c
+仓库根目录的 grade-* / gradelib.py
 ```
+
+### 旧课程评分脚本
+
+`grade-lab-util`、`gradelib.py` 等历史评分入口统一放在 `tests/legacy/`。迁移后以该目录中的脚本路径运行，不在仓库根目录保留包装副本。
 
 ### 被测实现
 
@@ -456,7 +465,7 @@ PR 必须包含：
 
 ## 禁止事项
 
-- 禁止把测试源码放入 `user/`、`kernel/` 或 `notxv6/`；
+- 禁止把测试源码或评分脚本放入仓库根目录、`user/`、`kernel/` 或 `notxv6/`；
 - 禁止把被测实现复制到测试目录；
 - 禁止把测试业务语义写成 Python 正则；
 - 禁止空 group 假通过；
@@ -472,7 +481,7 @@ PR 必须包含：
 
 ## 交付检查表
 
-- [ ] 测试源码全部位于 `tests/`；
+- [ ] 测试源码、host 测试和旧评分脚本全部位于 `tests/`；
 - [ ] `user/`、`kernel/`、`notxv6/` 不包含测试源码；
 - [ ] 被测实现未复制；
 - [ ] 成功和失败退出状态可靠；

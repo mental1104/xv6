@@ -20,6 +20,7 @@ sys.modules[SPEC.name] = RUNNER
 SPEC.loader.exec_module(RUNNER)
 
 HOST_SOURCE_NAMES = ("ph.c", "barrier.c")
+LEGACY_SOURCE_NAMES = ("grade-lab-util", "gradelib.py")
 
 GUEST_SOURCE_NAMES = (
     "forktest.c",
@@ -202,6 +203,11 @@ class RepositoryLayoutTests(unittest.TestCase):
             self.assertFalse((REPO_ROOT / "notxv6" / name).exists(), name)
             self.assertFalse((REPO_ROOT / "user" / name).exists(), name)
             self.assertFalse((REPO_ROOT / "kernel" / name).exists(), name)
+
+    def test_legacy_graders_live_only_under_tests_legacy(self) -> None:
+        for name in LEGACY_SOURCE_NAMES:
+            self.assertTrue((REPO_ROOT / "tests" / "legacy" / name).is_file(), name)
+            self.assertFalse((REPO_ROOT / name).exists(), name)
 
     def test_makefile_builds_tests_from_canonical_directories(self) -> None:
         makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
