@@ -16,9 +16,12 @@ import pexpect
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESULT_ROOT = REPO_ROOT / "test-results"
-DEFAULT_REJECTED = (
-    r"panic:",
-    r"kerneltrap",
+QEMU_SHELL_PROMPT = "$ "
+QEMU_FATAL_OUTPUTS = (
+    "panic:",
+    "kerneltrap",
+)
+DEFAULT_REJECTED = QEMU_FATAL_OUTPUTS + (
     r"exec .* failed",
     r"\bFAIL(?:ED)?\b",
 )
@@ -55,6 +58,14 @@ class Suite:
     tests: tuple[TestCase, ...] = ()
     includes: tuple[str, ...] = ()
     description: str = ""
+
+
+@dataclass(frozen=True)
+class QemuCommandResult:
+    """记录一次 guest 命令等待 shell prompt 的输出和失败原因。"""
+
+    output: str
+    failure: str | None = None
 
 
 SUITES: dict[str, Suite] = {
@@ -332,7 +343,7 @@ def _start_qemu(cpus: int) -> pexpect.spawn:
         timeout=120,
     )
     try:
-        child.expect_exact("$ ")
+        child.expect_exact(QEMU_SHELL_PROMPT)
     except (pexpect.TIMEOUT, pexpect.EOF):
         child.terminate(force=True)
         raise
@@ -352,6 +363,57 @@ def _stop_qemu(child: pexpect.spawn) -> None:
         child.terminate(force=True)
 
 
+def _wait_for_qemu_command(child: pexpect.spawn) -> QemuCommandResult:
+    """等待 guest 命令返回 shell，并对已知内核致命输出快速失败。
+
+    Args:
+        child: 已启动并进入 xv6 shell 的 pexpect 子进程；函数会消费本次命令输出。
+
+    Returns:
+        返回已捕获输出和可选失败原因。出现 prompt 时 failure 为 None；出现
+        panic、kerneltrap、EOF 或 timeout 时返回可直接写入 TestFailure 的原因。
+    """
+
+    expectations = (
+        QEMU_SHELL_PROMPT,
+        *QEMU_FATAL_OUTPUTS,
+        pexpect.EOF,
+        pexpect.TIMEOUT,
+    )
+    matched = child.expect_exact(expectations)
+    output = child.before or ""
+
+    if matched == 0:
+        return QemuCommandResult(output=output)
+
+    fatal_end = 1 + len(QEMU_FATAL_OUTPUTS)
+    if matched < fatal_end:
+        fatal = QEMU_FATAL_OUTPUTS[matched - 1]
+        output += child.after or fatal
+
+        # panic 文本本身已经足以判定失败；额外最多等待一秒读取该行余下内容，
+        # 使日志保留 `panic: acquire` 这类真正用于定位根因的信息。
+        tail_match = child.expect_exact(("\n", pexpect.EOF, pexpect.TIMEOUT), timeout=1)
+        output += child.before or ""
+        if tail_match == 0:
+            output += child.after or "\n"
+        return QemuCommandResult(
+            output=output,
+            failure=f"matched fatal output: {fatal}",
+        )
+
+    if matched == fatal_end:
+        return QemuCommandResult(
+            output=output,
+            failure="QEMU exited before returning to the shell",
+        )
+
+    return QemuCommandResult(
+        output=output,
+        failure="QEMU did not return to the shell before timeout",
+    )
+
+
 def _run_qemu_tests(suite: str, tests: Sequence[TestCase], cpus: int) -> None:
     """在一个原子 suite 的 QEMU snapshot 内顺序执行其 guest 命令。"""
 
@@ -360,23 +422,19 @@ def _run_qemu_tests(suite: str, tests: Sequence[TestCase], cpus: int) -> None:
     try:
         for test in tests:
             chunks = [boot_output]
-            try:
-                for command in test.commands:
-                    child.timeout = test.timeout
-                    child.sendline(command)
-                    child.expect_exact("$ ")
-                    chunks.append(f"$ {command}\n{child.before}")
-                output = "\n".join(chunks)
-                log_path = _write_log(suite, test.name, output)
-                _assert_output(test, output)
-                print(f"PASS {test.name} ({log_path.relative_to(REPO_ROOT)})")
-            except (pexpect.TIMEOUT, pexpect.EOF) as exc:
-                chunks.append(child.before or "")
-                output = "\n".join(chunks)
-                log_path = _write_log(suite, test.name, output)
-                raise TestFailure(
-                    f"QEMU did not return to the shell; log: {log_path}"
-                ) from exc
+            for command in test.commands:
+                child.timeout = test.timeout
+                child.sendline(command)
+                result = _wait_for_qemu_command(child)
+                chunks.append(f"$ {command}\n{result.output}")
+                if result.failure is not None:
+                    output = "\n".join(chunks)
+                    log_path = _write_log(suite, test.name, output)
+                    raise TestFailure(f"{result.failure}; log: {log_path}")
+            output = "\n".join(chunks)
+            log_path = _write_log(suite, test.name, output)
+            _assert_output(test, output)
+            print(f"PASS {test.name} ({log_path.relative_to(REPO_ROOT)})")
     finally:
         _stop_qemu(child)
 
