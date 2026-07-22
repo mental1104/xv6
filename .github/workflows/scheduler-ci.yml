@@ -32,8 +32,12 @@ jobs:
           sudo apt-get install -y \
             gcc-riscv64-linux-gnu \
             binutils-riscv64-linux-gnu \
-            qemu-system-misc \
-            python3-pexpect
+            qemu-system-misc
+
+      - name: Build scheduler smoke runner
+        run: |
+          gcc -Wall -Werror -std=c11 -D_POSIX_C_SOURCE=200809L \
+            -o scheduler_smoke tests/host/scheduler_smoke.c
 
       - name: Test red-black tree
         run: make test-rbtree
@@ -44,7 +48,7 @@ jobs:
           make -j2 SCHED_POLICY=${{ matrix.policy }}
 
       - name: Run single-CPU scheduler behavior test
-        run: python3 tests/scheduler_smoke.py --policy ${{ matrix.policy }} --cpus 1
+        run: ./scheduler_smoke --policy ${{ matrix.policy }} --cpus 1
 
   smp-smoke:
     runs-on: ubuntu-24.04
@@ -64,8 +68,12 @@ jobs:
           sudo apt-get install -y \
             gcc-riscv64-linux-gnu \
             binutils-riscv64-linux-gnu \
-            qemu-system-misc \
-            python3-pexpect
+            qemu-system-misc
+
+      - name: Build scheduler smoke runner
+        run: |
+          gcc -Wall -Werror -std=c11 -D_POSIX_C_SOURCE=200809L \
+            -o scheduler_smoke tests/host/scheduler_smoke.c
 
       - name: Build policy
         run: |
@@ -73,7 +81,7 @@ jobs:
           make -j2 SCHED_POLICY=${{ matrix.policy }}
 
       - name: Run three-CPU scheduler smoke test
-        run: python3 tests/scheduler_smoke.py --policy ${{ matrix.policy }} --cpus 3
+        run: ./scheduler_smoke --policy ${{ matrix.policy }} --cpus 3
 
   regression:
     runs-on: ubuntu-24.04
