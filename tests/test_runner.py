@@ -19,6 +19,8 @@ RUNNER = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = RUNNER
 SPEC.loader.exec_module(RUNNER)
 
+HOST_SOURCE_NAMES = ("ph.c", "barrier.c")
+
 GUEST_SOURCE_NAMES = (
     "forktest.c",
     "stressfs.c",
@@ -194,11 +196,21 @@ class RepositoryLayoutTests(unittest.TestCase):
             self.assertFalse((REPO_ROOT / "user" / name).exists(), name)
             self.assertFalse((REPO_ROOT / "kernel" / name).exists(), name)
 
-    def test_makefile_builds_guest_sources_into_stable_user_binaries(self) -> None:
+    def test_host_test_sources_live_only_under_tests_host(self) -> None:
+        for name in HOST_SOURCE_NAMES:
+            self.assertTrue((REPO_ROOT / "tests" / "host" / name).is_file(), name)
+            self.assertFalse((REPO_ROOT / "notxv6" / name).exists(), name)
+            self.assertFalse((REPO_ROOT / "user" / name).exists(), name)
+            self.assertFalse((REPO_ROOT / "kernel" / name).exists(), name)
+
+    def test_makefile_builds_tests_from_canonical_directories(self) -> None:
         makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 
         self.assertIn("T=tests/guest", makefile)
+        self.assertIn("H=tests/host", makefile)
         self.assertIn("$U/_%: $T/%.o $(ULIB)", makefile)
+        self.assertIn("ph: $H/ph.c", makefile)
+        self.assertIn("barrier: $H/barrier.c", makefile)
         self.assertIn("-include kernel/*.d user/*.d tests/guest/*.d", makefile)
 
 

@@ -1,6 +1,7 @@
 K=kernel
 U=user
 T=tests/guest
+H=tests/host
 
 OBJS = \
   $K/entry.o \
@@ -230,11 +231,11 @@ qemu-gdb: $K/kernel .gdbinit fs.img
 gdb:
 	riscv64-linux-gnu-gdb kernel/kernel
 
-ph: notxv6/ph.c
-	gcc -o ph -g -O2 notxv6/ph.c -pthread
+ph: $H/ph.c
+	gcc -o ph -g -O2 $H/ph.c -pthread
 
-barrier: notxv6/barrier.c
-	gcc -o barrier -g -O2 notxv6/barrier.c -pthread
+barrier: $H/barrier.c
+	gcc -o barrier -g -O2 $H/barrier.c -pthread
 
 # 默认开发入口：先自测 Python runner，再由同一 Python 入口启动 QEMU
 # 并执行 PR 级回归。使用子 make 保证即使外层带 -j，两阶段仍按顺序执行。
