@@ -1,0 +1,139 @@
+name: Temporary fix PR 49 trace mask
+
+on:
+  push:
+    branches:
+      - concept/47-xv6-job-control-shell
+    paths:
+      - .github/workflows/fix-pr49-trace-mask.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix-trace-mask:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: concept/47-xv6-job-control-shell
+          fetch-depth: 0
+
+      - name: Extend trace mask for syscall 32
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          python3 - <<'PY'
+          """将 trace 掩码扩展为 64 位，使 waitpid 等 32 号以上系统调用可安全跟踪。"""
+
+          from pathlib import Path
+
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              """在文本文件中精确替换一次内容。
+
+              Args:
+                  path: 仓库内相对文件路径。
+                  old: 必须出现一次的旧文本。
+                  new: 替换后的新文本。
+
+              Raises:
+                  RuntimeError: 旧文本出现次数不是一次时抛出，避免静默改错文件。
+              """
+              file_path = Path(path)
+              content = file_path.read_text(encoding="utf-8")
+              if content.count(old) != 1:
+                  raise RuntimeError(f"expected one match in {path}: {old!r}")
+              file_path.write_text(content.replace(old, new, 1), encoding="utf-8")
+
+
+          replace_once("kernel/proc.h", "  int mask;\n", "  uint64 mask;\n")
+          replace_once("kernel/syscall.c", "(1U << num)", "(1ULL << num)")
+          replace_once(
+              "kernel/syscall_names.h",
+              '[SYS_memsnapshot] = "memsnapshot",\n[SYS_waitpid]   = "waitpid",\n',
+              '[SYS_memsnapshot] = "memsnapshot",\n'
+              '[SYS_vaquery]    = "vaquery",\n'
+              '[SYS_waitpid]    = "waitpid",\n',
+          )
+          replace_once(
+              "kernel/sysproc.c",
+              "uint64\nsys_trace(void)\n{\n  int mask;\n  if(argint(0, &mask) < 0)\n",
+              "uint64\nsys_trace(void)\n{\n  uint64 mask;\n  if(argaddr(0, &mask) < 0)\n",
+          )
+          replace_once("user/user.h", "int trace(int);\n", "int trace(uint64);\n")
+          replace_once(
+              "user/tracemask.h",
+              "#define XV6_USER_TRACEMASK_H\n",
+              '#define XV6_USER_TRACEMASK_H\n\n#include "kernel/types.h"\n',
+          )
+          replace_once(
+              "user/tracemask.h",
+              "int trace_parse_mask(const char *spec, int *mask);",
+              "int trace_parse_mask(const char *spec, uint64 *mask);",
+          )
+          replace_once(
+              "user/tracemask.c",
+              "parse_decimal(const char *spec, int *mask)",
+              "parse_decimal(const char *spec, uint64 *mask)",
+          )
+          replace_once(
+              "user/tracemask.c",
+              "trace_parse_mask(const char *spec, int *mask)",
+              "trace_parse_mask(const char *spec, uint64 *mask)",
+          )
+          replace_once(
+              "user/tracemask.c", "unsigned int result = 0;", "uint64 result = 0;"
+          )
+          tracemask = Path("user/tracemask.c")
+          tracemask.write_text(
+              tracemask.read_text(encoding="utf-8").replace(
+                  "1U << syscall_number", "1ULL << syscall_number"
+              ),
+              encoding="utf-8",
+          )
+          replace_once(
+              "user/trace.c",
+              "  int mask;           // 传给现有 trace 系统调用的整数位掩码。\n",
+              "  uint64 mask;        // 传给 trace 系统调用的 64 位位掩码。\n",
+          )
+
+          test_path = Path("tests/guest/tracemasktest.c")
+          test_content = test_path.read_text(encoding="utf-8")
+          test_content = test_content.replace("int expected_mask;", "uint64 expected_mask;")
+          test_content = test_content.replace("1U <<", "1ULL <<")
+          test_content = test_content.replace("    int mask = -1;", "    uint64 mask = ~(uint64)0;")
+          test_content = test_content.replace("    int mask = 0;", "    uint64 mask = 0;")
+          test_content = test_content.replace(
+              "mask != (int)(1ULL << syscall_number)",
+              "mask != (1ULL << syscall_number)",
+          )
+          test_content = test_content.replace("mask %d", "mask %p")
+          test_path.write_text(test_content, encoding="utf-8")
+          PY
+
+      - name: Build integrated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu
+          make clean
+          make -j2
+          python3 -m py_compile tests/run.py tests/test_runner.py
+
+      - name: Commit fix and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add kernel/proc.h kernel/syscall.c kernel/syscall_names.h kernel/sysproc.c \
+            user/user.h user/tracemask.h user/tracemask.c user/trace.c \
+            tests/guest/tracemasktest.c
+          git commit -m "fix: extend trace mask for added syscalls"
+          git rm .github/workflows/fix-pr49-trace-mask.yml
+          git commit -m "chore: remove temporary PR 49 trace workflow"
+          git push origin HEAD:concept/47-xv6-job-control-shell
