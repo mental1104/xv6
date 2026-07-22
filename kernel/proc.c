@@ -431,17 +431,15 @@ exit(int status)
   panic("zombie exit");
 }
 
-// Wait for a child process to exit and return its pid.
-// Return -1 if this process has no children.
+// 等待任意直接子进程退出，并返回被回收子进程的 PID。
 int
 wait(uint64 addr)
 {
   return waitpid(-1, addr, 0);
 }
 
-// Wait for a selected child to exit.
-// pid == -1 selects any child; WNOHANG returns 0 if a matching child
-// exists but has not exited yet.
+// 等待指定直接子进程退出；target_pid == -1 表示任意直接子进程。
+// WNOHANG 在匹配子进程仍运行时返回 0，不进入睡眠。
 int
 waitpid(int target_pid, uint64 addr, int options)
 {
@@ -452,25 +450,18 @@ waitpid(int target_pid, uint64 addr, int options)
   if(target_pid == 0 || target_pid < -1 || (options & ~WNOHANG) != 0)
     return -1;
 
-  // hold p->lock for the whole time to avoid lost
-  // wakeups from a child's exit().
-  acquire(&p->lock);
+  // wait_lock 串行化 parent、ZOMBIE 发布与扫描，避免退出通知丢失。
+  acquire(&wait_lock);
 
   for(;;){
-    // Scan through table looking for exited children.
     havekids = 0;
     for(np = proc; np < &proc[NPROC]; np++){
-      // this code uses np->parent without holding np->lock.
-      // acquiring the lock first would cause a deadlock,
-      // since np might be an ancestor, and we already hold p->lock.
       if(np->parent == p &&
          (target_pid == -1 || np->pid == target_pid)){
-        // np->parent can't change between the check and the acquire()
-        // because only the parent changes it, and we're the parent.
+        // wait_lock 固定父子关系；np->lock 保护状态与回收路径。
         acquire(&np->lock);
         havekids = 1;
         if(np->state == ZOMBIE){
-          // Found one.
           child_pid = np->pid;
           if(addr != 0 && copyout(p->pagetable, addr, (char *)&np->xstate,
                                   sizeof(np->xstate)) < 0) {
@@ -480,7 +471,7 @@ waitpid(int target_pid, uint64 addr, int options)
           }
           freeproc(np);
           release(&np->lock);
-          release(&p->lock);
+          release(&wait_lock);
           return child_pid;
         }
         release(&np->lock);
@@ -491,19 +482,18 @@ waitpid(int target_pid, uint64 addr, int options)
     int killed = p->killed;
     release(&p->lock);
 
-    // No point waiting if we don't have any children.
     if(!havekids || killed){
       release(&wait_lock);
       return -1;
     }
 
     if(options & WNOHANG){
-      release(&p->lock);
+      release(&wait_lock);
       return 0;
     }
 
-    // Wait for a child to exit.
-    sleep(p, &p->lock);  //DOC: wait-sleep
+    // sleep 原子释放并重新获取 wait_lock，保持主线的无丢失唤醒协议。
+    sleep(p, &wait_lock);  //DOC: wait-sleep
   }
 }
 

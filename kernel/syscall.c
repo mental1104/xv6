@@ -112,6 +112,9 @@ extern uint64 sys_sigreturn(void);
 extern uint64 sys_symlink(void);
 extern uint64 sys_mmap(void);
 extern uint64 sys_munmap(void);
+extern uint64 sys_backtrace(void);
+extern uint64 sys_memsnapshot(void);
+extern uint64 sys_vaquery(void);
 extern uint64 sys_waitpid(void);
 
 static uint64 (*syscalls[])(void) = {
@@ -143,39 +146,10 @@ static uint64 (*syscalls[])(void) = {
 [SYS_symlink]   sys_symlink,
 [SYS_mmap]      sys_mmap,
 [SYS_munmap]    sys_munmap,
-[SYS_waitpid]   sys_waitpid,
-};
-
-char *sysname[] = {
-[SYS_fork]      "fork",
-[SYS_exit]      "exit",
-[SYS_wait]      "wait",
-[SYS_pipe]      "pipe",
-[SYS_read]      "read",
-[SYS_kill]      "kill",
-[SYS_exec]      "exec",
-[SYS_fstat]     "fstat",
-[SYS_chdir]     "chdir",
-[SYS_dup]       "dup",
-[SYS_getpid]    "getpid",
-[SYS_sbrk]      "sbrk",
-[SYS_sleep]     "sleep",
-[SYS_uptime]    "uptime",
-[SYS_open]      "open",
-[SYS_write]     "write",
-[SYS_mknod]     "mknod",
-[SYS_unlink]    "unlink",
-[SYS_link]      "link",
-[SYS_mkdir]     "mkdir",
-[SYS_close]     "close",
-[SYS_trace]     "trace",
-[SYS_sysinfo]   "sysinfo",
-[SYS_sigalarm]  "sigalarm",
-[SYS_sigreturn] "sigreturn",
-[SYS_symlink]   "symlink",
-[SYS_mmap]      "mmap",
-[SYS_munmap]    "munmap",
-[SYS_waitpid]   "waitpid",
+[SYS_backtrace] sys_backtrace,
+[SYS_memsnapshot] sys_memsnapshot,
+[SYS_vaquery] sys_vaquery,
+[SYS_waitpid] sys_waitpid,
 };
 
 void
