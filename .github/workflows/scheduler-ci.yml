@@ -29,15 +29,12 @@ jobs:
           python3 -m py_compile tools/pr57_reintegrate.py
           python3 tools/pr57_reintegrate.py
 
-      - name: Restore formal scheduler CI and push
+      - name: Commit code fixes and push
         shell: bash
         run: |
           set -euo pipefail
-          git show 25f606bdd45f89594c2f5800815b5ec3bdc28e5e:.github/workflows/scheduler-ci.yml \
-            > .github/workflows/scheduler-ci.yml
-          sed -i 's/types: \[opened, synchronize, reopened\]/types: [opened, synchronize, reopened, ready_for_review]/' \
-            .github/workflows/scheduler-ci.yml
-          rm -f .github/workflows/fix-pr57-main-integration.yml tools/pr57_reintegrate.py
-          git add -A
+          git checkout -- .github/workflows/scheduler-ci.yml
+          git add Makefile kernel tests user
+          git rm tools/pr57_reintegrate.py
           git commit -m "fix: preserve main build test and syscall invariants"
           git push origin HEAD:concept/50-minimal-scheduler-family
