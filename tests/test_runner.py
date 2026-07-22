@@ -61,6 +61,18 @@ class OutputMatchingTests(unittest.TestCase):
         with self.assertRaisesRegex(RUNNER.TestFailure, "expected at least 3"):
             RUNNER._assert_output(test, "frame\nframe\n")
 
+    def test_guest_protocol_requires_successful_done_marker(self) -> None:
+        """guest 测试必须输出 status=0 的稳定结束行，其他自然语言不能代替它。"""
+        test = RUNNER.TestCase(
+            name="guest",
+            commands=("xv6test --group lab3",),
+            expected=RUNNER.GUEST_SUCCESS,
+        )
+
+        RUNNER._assert_output(test, "XV6TEST summary selected=4 passed=4 failed=0\nXV6TEST done status=0\n")
+        with self.assertRaisesRegex(RUNNER.TestFailure, "missing expected pattern"):
+            RUNNER._assert_output(test, "XV6TEST done status=1\n")
+
 
 class SuiteCompositionTests(unittest.TestCase):
     def test_all_include_references_exist(self) -> None:
@@ -104,6 +116,26 @@ class SuiteCompositionTests(unittest.TestCase):
                 len(set(names)),
                 f"suite {suite.name} contains duplicate test names",
             )
+
+    def test_vm_suite_routes_migrated_labs_through_guest_runner(self) -> None:
+        """Lab3、Lab5、Lab6 只通过 xv6test group 暴露给宿主机 runner。"""
+        suite = RUNNER.SUITES["lab-vm"]
+        commands = {test.commands for test in suite.tests}
+
+        self.assertIn(("xv6test --group lab3",), commands)
+        self.assertIn(("xv6test --group lab5",), commands)
+        self.assertIn(("xv6test --group lab6",), commands)
+        self.assertNotIn(("usertests copyin",), commands)
+        self.assertNotIn(("lazytests",), commands)
+        self.assertNotIn(("cowtest",), commands)
+
+    def test_core_suite_does_not_repeat_migrated_lab3_cases(self) -> None:
+        """PR 级 focused usertests 不再重复执行已迁移到 guest group 的 Lab3 用例。"""
+        commands = {test.commands for test in RUNNER.SUITES["usertests-core"].tests}
+
+        self.assertNotIn(("usertests copyin",), commands)
+        self.assertNotIn(("usertests copyout",), commands)
+        self.assertNotIn(("usertests copyinstr1",), commands)
 
     def test_unknown_suite_is_rejected(self) -> None:
         with self.assertRaises(KeyError):
