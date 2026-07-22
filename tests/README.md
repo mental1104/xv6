@@ -17,6 +17,20 @@ make test
 
 `tests/test_runner.py` unit-tests the host runner without booting QEMU. It checks suite composition, output matching, failure detection, counted expectations, the guest protocol, and helper behavior.
 
+## Adding or migrating tests
+
+Read [the xv6 guest-first testing Skill](../.codex/skills/xv6-guest-first-testing/SKILL.md) before adding or migrating tests. It defines the decision tree, registration templates, exit-status contract, validation order, and the constraints an AI coding agent must follow.
+
+The usual path is:
+
+```text
+make the guest test return a reliable exit status
+→ register it in user/xv6test.c
+→ reuse an existing group when possible
+→ update tests/run.py only for a new group or isolation boundary
+→ verify the group twice in QEMU
+```
+
 ## Commands
 
 ```bash
