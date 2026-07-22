@@ -201,6 +201,7 @@ UPROGS=\
 	$U/_vaprobe\
 	$U/_memviztest\
 	$U/_vaaccesstest\
+	$U/_addresswindowtest\
 	$U/_wc\
 	$U/_zombie\
 	$U/_pingpong\
