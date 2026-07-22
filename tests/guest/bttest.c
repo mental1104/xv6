@@ -1,6 +1,7 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "user/user.h"
+#include "tests/guest/test_assert.h"
 
 /**
  * 显式请求内核打印当前系统调用路径的栈回溯。
@@ -11,9 +12,6 @@
 int
 main(void)
 {
-  if(backtrace() < 0){
-    printf("bttest: backtrace syscall failed\n");
-    exit(1);
-  }
-  exit(0);
+  EXPECT_EQ(0, backtrace());
+  TEST_EXIT();
 }
