@@ -10,6 +10,7 @@
 #include "sched.h"
 #include "schedstat.h"
 #include "schedtrace.h"
+#include "jobctl.h"
 
 uint64
 sys_exit(void)
@@ -53,6 +54,43 @@ sys_waitpid(void)
      argint(2, &options) < 0)
     return -1;
   return waitpid(pid, status, options);
+}
+
+/** 将当前进程或直接子进程放入指定进程组。 */
+uint64
+sys_setpgid(void)
+{
+  int pid;
+  int pgid;
+
+  if(argint(0, &pid) < 0 || argint(1, &pgid) < 0)
+    return -1;
+  return setpgid(pid, pgid);
+}
+
+/** 查询当前进程或直接子进程的 PGID。 */
+uint64
+sys_getpgid(void)
+{
+  int pid;
+
+  if(argint(0, &pid) < 0)
+    return -1;
+  return getpgid(pid);
+}
+
+/** 对整个进程组执行停止、继续或终止动作。 */
+uint64
+sys_procctl(void)
+{
+  int pgid;
+  int action;
+
+  if(argint(0, &pgid) < 0 || argint(1, &action) < 0)
+    return -1;
+  if(action != JOBCTL_STOP && action != JOBCTL_CONT && action != JOBCTL_TERM)
+    return -1;
+  return proc_group_control(pgid, action);
 }
 
 uint64
