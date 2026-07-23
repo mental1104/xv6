@@ -54,9 +54,9 @@ void            iupdate(struct inode*);
 int             namecmp(const char*, const char*);
 struct inode*   namei(char*);
 struct inode*   nameiparent(char*, char*);
-int             readi(struct inode*, int, uint64, uint, uint);
+int             readi(struct inode*, int, uint64, uint64, uint);
 void            stati(struct inode*, struct stat*);
-int             writei(struct inode*, int, uint64, uint, uint);
+int             writei(struct inode*, int, uint64, uint64, uint);
 void            itrunc(struct inode*);
 
 // ramdisk.c
@@ -189,7 +189,7 @@ void            vmwalk(pagetable_t pagetable, int depth);
 void            vmprint(pagetable_t pagetable);
 void            kvmmapkern(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm);
 pagetable_t     kvmcreate();
-void            kvmfree(pagetable_t kpagetale) ;
+void            kvmfree(pagetable_t kpagetale);
 void            u2kvmcopy(pagetable_t, pagetable_t, uint64, uint64);
 void            u2kvmunmap(pagetable_t, uint64, uint64);
 int             uvmlazyalloc(struct proc*, uint64);
@@ -207,6 +207,7 @@ void            virtio_disk_intr(void);
 
 uint64          free_proc(void);
 uint64          free_mem(void);
+
 // vma.c
 void            vma_init(void);
 struct VMA*     vma_alloc(void);

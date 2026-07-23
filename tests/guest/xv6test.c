@@ -45,6 +45,7 @@ static char *lab8_bigwrite_argv[] = {"usertests", "bigwrite", 0};
 
 static char *lab9_bigfile_argv[] = {"bigfile", 0};
 static char *lab9_symlink_argv[] = {"symlinktest", 0};
+static char *largefs_4gib_argv[] = {"largefile", 0};
 static char *lab10_mmap_argv[] = {"mmaptest", 0};
 
 static char *core_sbrkbugs_argv[] = {"usertests", "sbrkbugs", 0};
@@ -93,6 +94,7 @@ static struct xv6_test_case tests[] = {
 
   {"lab9", "lab9-bigfile", lab9_bigfile_argv},
   {"lab9", "lab9-symlink", lab9_symlink_argv},
+  {"largefs", "largefs-4gib", largefs_4gib_argv},
   {"lab10", "lab10-mmap", lab10_mmap_argv},
 
   {"core", "core-sbrkbugs", core_sbrkbugs_argv},

@@ -1,7 +1,6 @@
 // On-disk file system format.
 // Both the kernel and user programs use this header file.
 
-
 #define ROOTINO  1   // root i-number
 #define BSIZE 1024  // block size
 
@@ -24,31 +23,35 @@ struct superblock {
 
 #define FSMAGIC 0x10203040
 
-#define NDIRECT 11
-#define NINDIRECT (BSIZE / sizeof(uint))//256
-#define NDOUBLEINDIRECT ((BSIZE / sizeof(uint)) * (BSIZE / sizeof(uint)))//256*256
-#define MAXFILE (NDIRECT + NINDIRECT + NDOUBLEINDIRECT)
+#define NDIRECT 9
+#define NINDIRECT (BSIZE / sizeof(uint))
+#define NDOUBLEINDIRECT ((uint64)NINDIRECT * NINDIRECT)
+#define NTRIPLEINDIRECT (NDOUBLEINDIRECT * NINDIRECT)
+#define NINDIRECT_LEVELS 3
+#define MAXFILE ((uint64)NDIRECT + NINDIRECT + NDOUBLEINDIRECT + NTRIPLEINDIRECT)
+#define MAXFILE_BYTES (MAXFILE * (uint64)BSIZE)
 
-// On-disk inode structure
+// On-disk inode structure. Keep this structure exactly 64 bytes so that the
+// inode density and the surrounding disk layout stay stable.
 struct dinode {
-  short type;           // File type
-  short major;          // Major device number (T_DEVICE only)
-  short minor;          // Minor device number (T_DEVICE only)
-  short nlink;          // Number of links to inode in file system
-  uint size;            // Size of file (bytes)
-  uint addrs[NDIRECT+2];   // Data block addresses
+  short type;                        // File type
+  short major;                       // Major device number (T_DEVICE only)
+  short minor;                       // Minor device number (T_DEVICE only)
+  short nlink;                       // Number of links to inode in file system
+  uint64 size;                       // Size of file (bytes)
+  uint addrs[NDIRECT+NINDIRECT_LEVELS]; // Direct and 1/2/3-level index roots
 };
 
 // Inodes per block.
-#define IPB           (BSIZE / sizeof(struct dinode))
+#define IPB (BSIZE / sizeof(struct dinode))
 
-// Block containing inode i
-#define IBLOCK(i, sb)     ((i) / IPB + sb.inodestart)
+// Block containing inode i.
+#define IBLOCK(i, sb) ((i) / IPB + sb.inodestart)
 
-// Bitmap bits per block
-#define BPB           (BSIZE*8)
+// Bitmap bits per block.
+#define BPB (BSIZE*8)
 
-// Block of free map containing bit for block b
+// Block of free map containing bit for block b.
 #define BBLOCK(b, sb) ((b)/BPB + sb.bmapstart)
 
 // Directory is a file containing a sequence of dirent structures.
@@ -58,4 +61,3 @@ struct dirent {
   ushort inum;
   char name[DIRSIZ];
 };
-
