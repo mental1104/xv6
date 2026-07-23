@@ -1,3 +1,4 @@
+#include <sys/types.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -64,17 +65,31 @@ xint(uint x)
   return y;
 }
 
+/** 将 64 位值编码为 xv6 磁盘使用的小端字节序。 */
+uint64
+xlong(uint64 x)
+{
+  uint64 y;
+  uchar *a = (uchar*)&y;
+  for(int i = 0; i < 8; i++)
+    a[i] = x >> (8 * i);
+  return y;
+}
+
 int
 main(int argc, char *argv[])
 {
   int i, cc, fd;
-  uint rootino, inum, off;
+  uint rootino, inum;
+  uint64 off;
   struct dirent de;
   char buf[BSIZE];
   struct dinode din;
 
 
   static_assert(sizeof(int) == 4, "Integers must be 4 bytes!");
+  static_assert(sizeof(uint64) == 8, "uint64 must be 8 bytes!");
+  static_assert(sizeof(struct dinode) == 64, "dinode must remain 64 bytes!");
 
   if(argc < 2){
     fprintf(stderr, "Usage: mkfs fs.img files...\n");
@@ -165,9 +180,9 @@ main(int argc, char *argv[])
 
   // fix size of root inode dir
   rinode(rootino, &din);
-  off = xint(din.size);
+  off = xlong(din.size);
   off = ((off/BSIZE) + 1) * BSIZE;
-  din.size = xint(off);
+  din.size = xlong(off);
   winode(rootino, &din);
 
   balloc(freeblock);
@@ -175,10 +190,12 @@ main(int argc, char *argv[])
   exit(0);
 }
 
+/** 在宿主机上按完整 off_t 偏移写入一个文件系统块。 */
 void
 wsect(uint sec, void *buf)
 {
-  if(lseek(fsfd, sec * BSIZE, 0) != sec * BSIZE){
+  off_t offset = (off_t)sec * BSIZE;
+  if(lseek(fsfd, offset, 0) != offset){
     perror("lseek");
     exit(1);
   }
@@ -215,10 +232,12 @@ rinode(uint inum, struct dinode *ip)
   *ip = *dip;
 }
 
+/** 在宿主机上按完整 off_t 偏移读取一个文件系统块。 */
 void
 rsect(uint sec, void *buf)
 {
-  if(lseek(fsfd, sec * BSIZE, 0) != sec * BSIZE){
+  off_t offset = (off_t)sec * BSIZE;
+  if(lseek(fsfd, offset, 0) != offset){
     perror("lseek");
     exit(1);
   }
@@ -237,7 +256,7 @@ ialloc(ushort type)
   bzero(&din, sizeof(din));
   din.type = xshort(type);
   din.nlink = xshort(1);
-  din.size = xint(0);
+  din.size = xlong(0);
   winode(inum, &din);
   return inum;
 }
@@ -260,22 +279,29 @@ balloc(int used)
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
+/**
+ * 把宿主机文件内容追加到普通启动镜像 inode。
+ *
+ * 启动镜像输入保持较小，本路径只负责直接块和一级间接块；运行中的内核负责
+ * 二级、三级间接扩展。size 使用完整 64 位磁盘编码，避免依赖宿主机字节序。
+ */
 void
 iappend(uint inum, void *xp, int n)
 {
   char *p = (char*)xp;
-  uint fbn, off, n1;
+  uint64 fbn, off;
+  uint n1;
   struct dinode din;
   char buf[BSIZE];
   uint indirect[NINDIRECT];
   uint x;
 
   rinode(inum, &din);
-  off = xint(din.size);
+  off = xlong(din.size);
   // printf("append inum %d at off %d sz %d\n", inum, off, n);
   while(n > 0){
     fbn = off / BSIZE;
-    assert(fbn < MAXFILE);
+    assert(fbn < (uint64)NDIRECT + NINDIRECT);
     if(fbn < NDIRECT){
       if(xint(din.addrs[fbn]) == 0){
         din.addrs[fbn] = xint(freeblock++);
@@ -292,14 +318,14 @@ iappend(uint inum, void *xp, int n)
       }
       x = xint(indirect[fbn-NDIRECT]);
     }
-    n1 = min(n, (fbn + 1) * BSIZE - off);
+    n1 = min((uint)n, BSIZE - off % BSIZE);
     rsect(x, buf);
-    bcopy(p, buf + off - (fbn * BSIZE), n1);
+    bcopy(p, buf + off % BSIZE, n1);
     wsect(x, buf);
     n -= n1;
     off += n1;
     p += n1;
   }
-  din.size = xint(off);
+  din.size = xlong(off);
   winode(inum, &din);
 }

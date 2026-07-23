@@ -7,31 +7,14 @@
 #include "fs.h"
 #include "buf.h"
 
-// Simple logging that allows concurrent FS system calls.
-//
-// A log transaction contains the updates of multiple FS system
-// calls. The logging system only commits when there are
-// no FS system calls active. Thus there is never
-// any reasoning required about whether a commit might
-// write an uncommitted system call's updates to disk.
-//
-// A system call should call begin_op()/end_op() to mark
-// its start and end. Usually begin_op() just increments
-// the count of in-progress FS system calls and returns.
-// But if it thinks the log is close to running out, it
-// sleeps until the last outstanding end_op() commits.
-//
-// The log is a physical re-do log containing disk blocks.
-// The on-disk log format:
-//   header block, containing block #s for block A, B, C, ...
-//   block A
-//   block B
-//   block C
-//   ...
-// Log appends are synchronous.
+#define min(a, b) ((a) < (b) ? (a) : (b))
 
-// Contents of the header block, used for both the on-disk header block
-// and to keep track in memory of logged block# before commit.
+// 物理 redo log。所有数据块和续接头块落盘后，最后写入首头块中的 n，
+// 由这一块原子发布事务；安装完成后清零 n。
+
+#define LOG_FIRST_HEADER_ENTRIES ((BSIZE - sizeof(int)) / sizeof(int))
+#define LOG_NEXT_HEADER_ENTRIES  (BSIZE / sizeof(int))
+
 struct logheader {
   int n;
   int block[LOGSIZE];
@@ -40,194 +23,257 @@ struct logheader {
 struct log {
   struct spinlock lock;
   int start;
-  int size;
-  int outstanding; // how many FS sys calls are executing.
-  int committing;  // in commit(), please wait.
+  int size;          // 可用数据槽数量，不包含固定头块。
+  int header_blocks;
+  int outstanding;
+  int committing;
   int dev;
   struct logheader lh;
 };
+
 struct log log;
 
 static void recover_from_log(void);
-static void commit();
+static void commit(void);
 
+/** 返回编码最大日志头所需的固定磁盘块数。 */
+static int
+log_header_block_count(void)
+{
+  if(LOGSIZE <= LOG_FIRST_HEADER_ENTRIES)
+    return 1;
+  return 1 + (LOGSIZE - LOG_FIRST_HEADER_ENTRIES +
+              LOG_NEXT_HEADER_ENTRIES - 1) / LOG_NEXT_HEADER_ENTRIES;
+}
+
+/** 返回编码 n 个 home block 编号实际需要的头块数。 */
+static int
+header_blocks_for_entries(int n)
+{
+  if(n <= LOG_FIRST_HEADER_ENTRIES)
+    return 1;
+  return 1 + (n - LOG_FIRST_HEADER_ENTRIES +
+              LOG_NEXT_HEADER_ENTRIES - 1) / LOG_NEXT_HEADER_ENTRIES;
+}
+
+/** 返回第一个日志数据镜像块的位置。 */
+static int
+log_data_start(void)
+{
+  return log.start + log.header_blocks;
+}
+
+/** 初始化日志几何信息并恢复已发布但未安装的事务。 */
 void
 initlog(int dev, struct superblock *sb)
 {
-  if (sizeof(struct logheader) >= BSIZE)
-    panic("initlog: too big logheader");
-
   initlock(&log.lock, "log");
   log.start = sb->logstart;
-  log.size = sb->nlog;
+  log.header_blocks = log_header_block_count();
+  log.size = sb->nlog - log.header_blocks;
   log.dev = dev;
+
+  if(log.size < MAXOPBLOCKS || log.size > LOGSIZE)
+    panic("initlog: invalid log size");
+
   recover_from_log();
 }
 
-// Copy committed blocks from log to their home location
+/** 把每个已提交日志镜像复制回 home block。 */
 static void
-install_trans(void)
+install_trans(int recovering)
 {
-  int tail;
-
-  for (tail = 0; tail < log.lh.n; tail++) {
-    struct buf *lbuf = bread(log.dev, log.start+tail+1); // read log block
-    struct buf *dbuf = bread(log.dev, log.lh.block[tail]); // read dst
-    memmove(dbuf->data, lbuf->data, BSIZE);  // copy block to dst
-    bwrite(dbuf);  // write dst to disk
-    bunpin(dbuf);
+  for(int tail = 0; tail < log.lh.n; tail++){
+    struct buf *lbuf = bread(log.dev, log_data_start() + tail);
+    struct buf *dbuf = bread(log.dev, log.lh.block[tail]);
+    memmove(dbuf->data, lbuf->data, BSIZE);
+    bwrite(dbuf);
+    if(!recovering)
+      bunpin(dbuf);
     brelse(lbuf);
     brelse(dbuf);
   }
 }
 
-// Read the log header from disk into the in-memory log header
+/** 从多块日志头恢复已发布的 home block 列表。 */
 static void
 read_head(void)
 {
-  struct buf *buf = bread(log.dev, log.start);
-  struct logheader *lh = (struct logheader *) (buf->data);
-  int i;
-  log.lh.n = lh->n;
-  for (i = 0; i < log.lh.n; i++) {
-    log.lh.block[i] = lh->block[i];
+  struct buf *first = bread(log.dev, log.start);
+  int *words = (int*)first->data;
+  int n = words[0];
+
+  if(n < 0 || n > log.size || n > LOGSIZE){
+    brelse(first);
+    panic("read_head: invalid count");
   }
-  brelse(buf);
+
+  log.lh.n = n;
+  int copied = min(n, LOG_FIRST_HEADER_ENTRIES);
+  for(int i = 0; i < copied; i++)
+    log.lh.block[i] = words[i + 1];
+  brelse(first);
+
+  int needed = header_blocks_for_entries(n);
+  for(int header = 1; header < needed; header++){
+    struct buf *bp = bread(log.dev, log.start + header);
+    int *entries = (int*)bp->data;
+    int remaining = n - copied;
+    int count = min(remaining, LOG_NEXT_HEADER_ENTRIES);
+    for(int i = 0; i < count; i++)
+      log.lh.block[copied + i] = entries[i];
+    copied += count;
+    brelse(bp);
+  }
 }
 
-// Write in-memory log header to disk.
-// This is the true point at which the
-// current transaction commits.
+/**
+ * 持久化内存日志头。
+ *
+ * 先写续接头块，最后写含 n 的首头块，使单块写入仍是事务发布点。
+ */
 static void
 write_head(void)
 {
-  struct buf *buf = bread(log.dev, log.start);
-  struct logheader *hb = (struct logheader *) (buf->data);
-  int i;
-  hb->n = log.lh.n;
-  for (i = 0; i < log.lh.n; i++) {
-    hb->block[i] = log.lh.block[i];
+  int n = log.lh.n;
+
+  if(n == 0){
+    struct buf *bp = bread(log.dev, log.start);
+    memset(bp->data, 0, BSIZE);
+    bwrite(bp);
+    brelse(bp);
+    return;
   }
-  bwrite(buf);
-  brelse(buf);
+
+  int needed = header_blocks_for_entries(n);
+  int copied = LOG_FIRST_HEADER_ENTRIES;
+  for(int header = 1; header < needed; header++){
+    struct buf *bp = bread(log.dev, log.start + header);
+    memset(bp->data, 0, BSIZE);
+    int *entries = (int*)bp->data;
+    int remaining = n - copied;
+    int count = min(remaining, LOG_NEXT_HEADER_ENTRIES);
+    for(int i = 0; i < count; i++)
+      entries[i] = log.lh.block[copied + i];
+    copied += count;
+    bwrite(bp);
+    brelse(bp);
+  }
+
+  struct buf *first = bread(log.dev, log.start);
+  memset(first->data, 0, BSIZE);
+  int *words = (int*)first->data;
+  int count = min(n, LOG_FIRST_HEADER_ENTRIES);
+  for(int i = 0; i < count; i++)
+    words[i + 1] = log.lh.block[i];
+  words[0] = n;
+  bwrite(first);
+  brelse(first);
 }
 
+/** 重放已发布事务并清除其提交标记。 */
 static void
 recover_from_log(void)
 {
   read_head();
-  install_trans(); // if committed, copy from log to disk
+  install_trans(1);
   log.lh.n = 0;
-  write_head(); // clear the log
+  write_head();
 }
 
-// Caller must hold log.lock.
+/** 在持锁状态判断能否再预留一个最坏文件系统操作。 */
 static int
 log_has_space_for_new_op_locked(void)
 {
-  int reserved;
-
-  reserved = log.lh.n + (log.outstanding + 1) * MAXOPBLOCKS;
-  return reserved <= LOGSIZE;
+  int reserved = log.lh.n + (log.outstanding + 1) * MAXOPBLOCKS;
+  return reserved <= log.size;
 }
 
-// called at the start of each FS system call.
+/** 进入文件系统操作；提交中或空间不足时睡眠。 */
 void
 begin_op(void)
 {
   acquire(&log.lock);
-
   while(log.committing || !log_has_space_for_new_op_locked())
     sleep(&log, &log.lock);
-
-  log.outstanding += 1;
+  log.outstanding++;
   release(&log.lock);
 }
 
-// called at the end of each FS system call.
-// commits if this was the last outstanding operation.
+/** 离开文件系统操作；最后一个参与者负责提交。 */
 void
 end_op(void)
 {
   acquire(&log.lock);
-  log.outstanding -= 1;
-
+  log.outstanding--;
   if(log.committing)
     panic("log.committing");
 
   if(log.outstanding != 0){
-    // A waiting begin_op() may now fit in the reserved log space.
     wakeup(&log);
     release(&log.lock);
     return;
   }
 
-  // Block new operations before dropping log.lock for disk I/O.
   log.committing = 1;
   release(&log.lock);
-
   commit();
-
   acquire(&log.lock);
   log.committing = 0;
   wakeup(&log);
   release(&log.lock);
 }
 
-// Copy modified blocks from cache to log.
+/** 把修改后的 home buffer 复制到连续日志数据槽。 */
 static void
 write_log(void)
 {
-  int tail;
-
-  for (tail = 0; tail < log.lh.n; tail++) {
-    struct buf *to = bread(log.dev, log.start+tail+1); // log block
-    struct buf *from = bread(log.dev, log.lh.block[tail]); // cache block
+  for(int tail = 0; tail < log.lh.n; tail++){
+    struct buf *to = bread(log.dev, log_data_start() + tail);
+    struct buf *from = bread(log.dev, log.lh.block[tail]);
     memmove(to->data, from->data, BSIZE);
-    bwrite(to);  // write the log
+    bwrite(to);
     brelse(from);
     brelse(to);
   }
 }
 
+/** 提交当前吸收后的事务。 */
 static void
-commit()
+commit(void)
 {
-  if (log.lh.n > 0) {
-    write_log();     // Write modified blocks from cache to log
-    write_head();    // Write header to disk -- the real commit
-    install_trans(); // Now install writes to home locations
+  if(log.lh.n > 0){
+    write_log();
+    write_head();
+    install_trans(0);
     log.lh.n = 0;
-    write_head();    // Erase the transaction from the log
+    write_head();
   }
 }
 
-// Caller has modified b->data and is done with the buffer.
-// Record the block number and pin in the cache by increasing refcnt.
-// commit()/write_log() will do the disk write.
-//
-// log_write() replaces bwrite(); a typical use is:
-//   bp = bread(...)
-//   modify bp->data[]
-//   log_write(bp)
-//   brelse(bp)
+/**
+ * 将一个已锁定的修改 buffer 吸收到当前事务，并保持 pin 直到提交。
+ *
+ * @param b 当前内容必须进入日志的已锁定 buffer。
+ */
 void
 log_write(struct buf *b)
 {
-  int i;
-
-  if (log.lh.n >= LOGSIZE || log.lh.n >= log.size - 1)
-    panic("too big a transaction");
-  if (log.outstanding < 1)
+  if(log.outstanding < 1)
     panic("log_write outside of trans");
 
   acquire(&log.lock);
-  for (i = 0; i < log.lh.n; i++) {
-    if (log.lh.block[i] == b->blockno)   // log absorbtion
+  int i;
+  for(i = 0; i < log.lh.n; i++)
+    if(log.lh.block[i] == b->blockno)
       break;
-  }
-  log.lh.block[i] = b->blockno;
-  if (i == log.lh.n) {  // Add new block to log?
+
+  if(i == log.lh.n){
+    if(log.lh.n >= log.size || log.lh.n >= LOGSIZE){
+      release(&log.lock);
+      panic("too big a transaction");
+    }
+    log.lh.block[i] = b->blockno;
     bpin(b);
     log.lh.n++;
   }
