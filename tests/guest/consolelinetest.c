@@ -59,11 +59,11 @@ run_jobctl_test(void)
 
   ASSERT_EQ(0, pipe(report_pipe));
   leader = fork();
-  ASSERT_TRUE(leader > 0);
   if(leader == 0){
     close(report_pipe[0]);
     group_leader(report_pipe[1]);
   }
+  ASSERT_TRUE(leader > 0);
 
   close(report_pipe[1]);
   EXPECT_EQ(0, setpgid(leader, leader));
@@ -96,7 +96,6 @@ run_jobctl_test(void)
   // 当前测试程序属于前台组；新建子进程组读取 console 必须立即失败。
   ASSERT_EQ(0, pipe(result_pipe));
   int reader = fork();
-  ASSERT_TRUE(reader > 0);
   if(reader == 0){
     char byte = 0;
     close(result_pipe[0]);
@@ -107,6 +106,7 @@ run_jobctl_test(void)
     close(result_pipe[1]);
     exit(count == -1 ? 0 : 1);
   }
+  ASSERT_TRUE(reader > 0);
   close(result_pipe[1]);
   EXPECT_EQ(0, setpgid(reader, reader));
   int read_result = 0;
