@@ -11,6 +11,321 @@
 #include "schedstat.h"
 #include "schedtrace.h"
 #include "jobctl.h"
+#include "wait.h"
+
+extern struct proc proc[NPROC];
+extern struct spinlock wait_lock;
+
+/**
+ * 保存独立于 proc 槽位生命周期的作业控制状态。
+ *
+ * pid 用于识别槽位复用；当 proc 槽位被分配给新 PID 时，PGID 会从当前父进程
+ * 惰性继承，停止请求和待消费事件则重新清零。全部字段由 wait_lock 保护。
+ */
+struct job_proc_state {
+  int pid;
+  int pgid;
+  int stop_requested;
+  int wait_events;
+};
+
+static struct job_proc_state job_states[NPROC];
+
+/** 返回进程在固定 proc 表中的作业控制状态，调用者必须持有 wait_lock。 */
+static struct job_proc_state*
+job_state_locked(struct proc *p)
+{
+  struct job_proc_state *state = &job_states[p - proc];
+
+  if(state->pid != p->pid){
+    state->pid = p->pid;
+    state->stop_requested = 0;
+    state->wait_events = 0;
+    if(p->parent != 0)
+      state->pgid = job_state_locked(p->parent)->pgid;
+    else
+      state->pgid = p->pid;
+  }
+
+  // struct proc 中的字段只作为调试观察镜像，真实同步仍由 wait_lock 负责。
+  p->pgid = state->pgid;
+  p->stop_requested = state->stop_requested;
+  p->wait_events = state->wait_events;
+  return state;
+}
+
+/** 在 fork 返回父进程前固化子进程继承到的 PGID。 */
+static void
+job_register_fork_child(int child_pid)
+{
+  struct proc *parent = myproc();
+
+  acquire(&wait_lock);
+  for(struct proc *child = proc; child < &proc[NPROC]; child++){
+    acquire(&child->lock);
+    if(child->pid == child_pid && child->parent == parent &&
+       child->state != UNUSED){
+      struct job_proc_state *parent_state = job_state_locked(parent);
+      struct job_proc_state *child_state = job_state_locked(child);
+      child_state->pgid = parent_state->pgid;
+      child->pgid = child_state->pgid;
+      release(&child->lock);
+      break;
+    }
+    release(&child->lock);
+  }
+  release(&wait_lock);
+}
+
+/**
+ * 将当前进程或其直接子进程放入指定进程组。
+ *
+ * pid 为 0 时选择当前进程；pgid 为 0 时创建以目标 PID 为组号的新进程组。
+ * 为保持教学接口可审阅，本实现不允许修改任意无亲缘关系进程。
+ */
+int
+setpgid(int pid, int pgid)
+{
+  struct proc *caller = myproc();
+  int target_pid = pid == 0 ? caller->pid : pid;
+  int result = -1;
+
+  if(target_pid <= 0 || pgid < 0)
+    return -1;
+
+  acquire(&wait_lock);
+  for(struct proc *target = proc; target < &proc[NPROC]; target++){
+    acquire(&target->lock);
+    if(target->pid == target_pid && target->state != UNUSED &&
+       target->state != ZOMBIE &&
+       (target == caller || target->parent == caller)){
+      struct job_proc_state *state = job_state_locked(target);
+      state->pgid = pgid == 0 ? target_pid : pgid;
+      target->pgid = state->pgid;
+      result = 0;
+      release(&target->lock);
+      break;
+    }
+    release(&target->lock);
+  }
+  release(&wait_lock);
+  return result;
+}
+
+/** 查询当前进程或直接子进程的 PGID。 */
+int
+getpgid(int pid)
+{
+  struct proc *caller = myproc();
+  int target_pid = pid == 0 ? caller->pid : pid;
+  int result = -1;
+
+  if(target_pid <= 0)
+    return -1;
+
+  acquire(&wait_lock);
+  for(struct proc *target = proc; target < &proc[NPROC]; target++){
+    acquire(&target->lock);
+    if(target->pid == target_pid && target->state != UNUSED &&
+       target->state != ZOMBIE &&
+       (target == caller || target->parent == caller)){
+      result = job_state_locked(target)->pgid;
+      release(&target->lock);
+      break;
+    }
+    release(&target->lock);
+  }
+  release(&wait_lock);
+  return result;
+}
+
+/**
+ * 对目标进程组应用停止、继续或终止动作。
+ *
+ * STOPPED 进程保留地址空间和文件等资源，但 scheduler 不会选择该状态。正在其他
+ * CPU 运行的成员只记录 stop_requested，并在下一次返回用户态前自行进入 STOPPED，
+ * 避免从远端 CPU 强行修改其运行现场。每个 STOPPED/CONTINUED 事件只置位一次，
+ * 由扩展 waitpid() 在 wait_lock 下消费。
+ */
+int
+proc_group_control(int pgid, int action)
+{
+  int found = 0;
+
+  if(pgid <= 0 ||
+     (action != JOBCTL_STOP && action != JOBCTL_CONT &&
+      action != JOBCTL_TERM))
+    return -1;
+
+  acquire(&wait_lock);
+  for(struct proc *target = proc; target < &proc[NPROC]; target++){
+    struct proc *parent = 0;
+    int event = 0;
+
+    acquire(&target->lock);
+    if(target->state != UNUSED && target->state != ZOMBIE){
+      struct job_proc_state *state = job_state_locked(target);
+      if(state->pgid == pgid){
+        found = 1;
+        parent = target->parent;
+        if(action == JOBCTL_STOP){
+          if(target->state == RUNNING){
+            state->stop_requested = 1;
+            target->stop_requested = 1;
+          } else if(target->state != STOPPED){
+            target->state = STOPPED;
+            state->stop_requested = 0;
+            target->stop_requested = 0;
+            event = PROC_EVENT_STOPPED;
+          }
+        } else if(action == JOBCTL_CONT){
+          if(target->state == STOPPED){
+            target->state = RUNNABLE;
+            state->stop_requested = 0;
+            target->stop_requested = 0;
+            event = PROC_EVENT_CONTINUED;
+          } else if(state->stop_requested){
+            state->stop_requested = 0;
+            target->stop_requested = 0;
+          }
+        } else {
+          target->killed = 1;
+          state->stop_requested = 0;
+          target->stop_requested = 0;
+          if(target->state == SLEEPING || target->state == STOPPED)
+            target->state = RUNNABLE;
+        }
+      }
+    }
+    release(&target->lock);
+
+    // wakeup() 会获取 proc 表中的锁，因此必须位于目标 p->lock 临界区之外。
+    if(event != 0){
+      struct job_proc_state *state = &job_states[target - proc];
+      state->wait_events |= event;
+      target->wait_events = state->wait_events;
+      if(parent != 0)
+        wakeup(parent);
+    }
+  }
+  release(&wait_lock);
+  return found ? 0 : -1;
+}
+
+/**
+ * 让当前 RUNNING 进程在安全调度点兑现远端 STOP 请求。
+ *
+ * 函数先发布停止事件，再持有自身 p->lock 进入 sched()。继续或终止操作必须先取得
+ * wait_lock，因而不会在 STOPPED 状态尚未交给 scheduler 时提前把进程重新设为
+ * RUNNABLE，避免同一 proc 同时在两个 CPU 上运行。
+ */
+void
+proc_stop_if_requested(void)
+{
+  struct proc *p = myproc();
+  struct proc *parent;
+
+  acquire(&wait_lock);
+  acquire(&p->lock);
+  struct job_proc_state *state = job_state_locked(p);
+  if(!state->stop_requested || p->state != RUNNING){
+    release(&p->lock);
+    release(&wait_lock);
+    return;
+  }
+
+  state->stop_requested = 0;
+  state->wait_events |= PROC_EVENT_STOPPED;
+  p->stop_requested = 0;
+  p->wait_events = state->wait_events;
+  p->state = STOPPED;
+  parent = p->parent;
+
+  release(&p->lock);
+  if(parent != 0)
+    wakeup(parent);
+  acquire(&p->lock);
+  release(&wait_lock);
+
+  sched();
+  release(&p->lock);
+}
+
+/** 在 wait_lock 下查找并复制一个匹配的停止或继续事件。 */
+static int
+job_wait_event_locked(int target_pid, uint64 status_addr, int options)
+{
+  struct proc *parent = myproc();
+
+  for(struct proc *child = proc; child < &proc[NPROC]; child++){
+    if(child->parent != parent ||
+       (target_pid != -1 && child->pid != target_pid))
+      continue;
+
+    struct job_proc_state *state = job_state_locked(child);
+    int event = 0;
+    int status = 0;
+    if((options & WUNTRACED) && (state->wait_events & PROC_EVENT_STOPPED)){
+      event = PROC_EVENT_STOPPED;
+      status = WAIT_STATUS_STOPPED;
+    } else if((options & WCONTINUED) &&
+              (state->wait_events & PROC_EVENT_CONTINUED)){
+      event = PROC_EVENT_CONTINUED;
+      status = WAIT_STATUS_CONTINUED;
+    }
+    if(event == 0)
+      continue;
+
+    if(status_addr != 0 &&
+       copyout(parent->pagetable, status_addr, (char *)&status,
+               sizeof(status)) < 0)
+      return -1;
+
+    state->wait_events &= ~event;
+    child->wait_events = state->wait_events;
+    return child->pid;
+  }
+  return 0;
+}
+
+/**
+ * 扩展 waitpid()，一次性消费 STOPPED/CONTINUED 事件并复用旧实现回收 ZOMBIE。
+ *
+ * 原 wait() 仍直接进入 proc.c 的阻塞回收路径。只有显式传入 WUNTRACED 或
+ * WCONTINUED 时才启用事件轮询；事件位持久保存，因此按时钟 tick 短暂睡眠不会
+ * 丢失通知，也不需要把 freeproc() 从 proc.c 的私有边界暴露出来。
+ */
+static int
+job_waitpid(int target_pid, uint64 status_addr, int options)
+{
+  int supported = WNOHANG | WUNTRACED | WCONTINUED;
+
+  if(target_pid == 0 || target_pid < -1 || (options & ~supported) != 0)
+    return -1;
+  if((options & (WUNTRACED | WCONTINUED)) == 0)
+    return waitpid(target_pid, status_addr, options);
+
+  for(;;){
+    acquire(&wait_lock);
+    int event_pid = job_wait_event_locked(target_pid, status_addr, options);
+    release(&wait_lock);
+    if(event_pid != 0)
+      return event_pid;
+
+    int exited_pid = waitpid(target_pid, status_addr, WNOHANG);
+    if(exited_pid != 0)
+      return exited_pid;
+    if(options & WNOHANG)
+      return 0;
+
+    // 事件位不会丢失；等待一个 tick 避免在停止态作业上忙轮询。
+    acquire(&tickslock);
+    uint start = ticks;
+    while(ticks == start)
+      sleep(&ticks, &tickslock);
+    release(&tickslock);
+  }
+}
 
 uint64
 sys_exit(void)
@@ -31,7 +346,10 @@ sys_getpid(void)
 uint64
 sys_fork(void)
 {
-  return fork();
+  int pid = fork();
+  if(pid > 0)
+    job_register_fork_child(pid);
+  return pid;
 }
 
 uint64
@@ -53,7 +371,7 @@ sys_waitpid(void)
      argaddr(1, &status) < 0 ||
      argint(2, &options) < 0)
     return -1;
-  return waitpid(pid, status, options);
+  return job_waitpid(pid, status, options);
 }
 
 /** 将当前进程或直接子进程放入指定进程组。 */
@@ -87,8 +405,6 @@ sys_procctl(void)
   int action;
 
   if(argint(0, &pgid) < 0 || argint(1, &action) < 0)
-    return -1;
-  if(action != JOBCTL_STOP && action != JOBCTL_CONT && action != JOBCTL_TERM)
     return -1;
   return proc_group_control(pgid, action);
 }
