@@ -1,0 +1,112 @@
+name: Scheduler family CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduler-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scheduler:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        policy: [rr, fifo, sjf, stcf, mlfq, cfs]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu \
+            qemu-system-misc
+
+      - name: Build scheduler smoke runner
+        run: |
+          gcc -Wall -Werror -std=c11 -D_POSIX_C_SOURCE=200809L \
+            -o scheduler_smoke tests/host/scheduler_smoke.c
+
+      - name: Test red-black tree
+        run: make test-rbtree
+
+      - name: Build policy
+        run: |
+          make clean
+          make -j2 SCHED_POLICY=${{ matrix.policy }}
+
+      - name: Run single-CPU scheduler behavior test
+        run: ./scheduler_smoke --policy ${{ matrix.policy }} --cpus 1
+
+  smp-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        policy: [rr, mlfq, cfs]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu \
+            qemu-system-misc
+
+      - name: Build scheduler smoke runner
+        run: |
+          gcc -Wall -Werror -std=c11 -D_POSIX_C_SOURCE=200809L \
+            -o scheduler_smoke tests/host/scheduler_smoke.c
+
+      - name: Build policy
+        run: |
+          make clean
+          make -j2 SCHED_POLICY=${{ matrix.policy }}
+
+      - name: Run three-CPU scheduler smoke test
+        run: ./scheduler_smoke --policy ${{ matrix.policy }} --cpus 3
+
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu \
+            qemu-system-misc \
+            python3-pexpect
+
+      - name: Build default RR policy
+        run: |
+          make clean
+          make -j2 SCHED_POLICY=rr
+
+      - name: Run pull-request regression
+        run: make test-integration CPUS=3 SCHED_POLICY=rr
+
+      - name: Run complete usertests
+        run: make test-usertests CPUS=3 SCHED_POLICY=rr

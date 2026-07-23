@@ -21,11 +21,21 @@ vma_init(void)
   initlock(&vma_table.lock, "vma_table");
 }
 
+/**
+ * 从全局 VMA 池中分配一个空闲描述符。
+ *
+ * @return 成功时返回由调用方持有的 VMA 指针；池中无空闲项时返回 0。
+ *
+ * `sys_mmap()` 会先在当前进程的 `p->vma[NOFILE]` 中预留槽位，`fork()`
+ * 也只复制父进程已有的 `NOFILE` 个槽位。结合最多 `NPROC` 个进程，合法
+ * 状态下的 VMA 总数不会超过 `NPROC * NOFILE`，因此单个进程最多占用
+ * `NOFILE` 项，不能独占整个全局池。该不变量依赖调用方不绕过进程槽位
+ * 直接申请描述符；返回 0 仍作为资源泄漏或未来模型变化时的防御性失败路径。
+ */
 struct VMA*
 vma_alloc(void)
 {
   acquire(&vma_table.lock);
-  // TODO: 这里的vma_table.areas是每个进程×NOFILE的大小，那么理论上一个进程可以把所有VMA份额全部用掉，是合理的吗？
   for(struct VMA *v = vma_table.areas;
       v < vma_table.areas + NPROC * NOFILE; v++){
     if(!v->used){

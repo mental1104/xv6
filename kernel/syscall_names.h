@@ -38,6 +38,10 @@ static const char *const syscall_names[] = {
 [SYS_vaquery]    = "vaquery",
 [SYS_waitpid]    = "waitpid",
 [SYS_consolemode] = "consolemode",
+[SYS_sched_set_hint]   = "sched_set_hint",
+[SYS_sched_set_weight] = "sched_set_weight",
+[SYS_sched_get_stats]  = "sched_get_stats",
+[SYS_schedtrace]       = "schedtrace",
 };
 
 // 名称表中可访问的元素数量（包含下标 0），用于限制遍历和查找范围。

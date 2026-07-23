@@ -46,6 +46,10 @@ start()
   // ask for clock interrupts.
   timerinit();
 
+  // 调度可视化使用 r_time() 作为跨 CPU 统一时间戳；machine mode 必须先允许
+  // supervisor mode 读取 time CSR，否则 S-mode 执行 rdtime 会触发 illegal instruction。
+  w_mcounteren(r_mcounteren() | 2);
+
   // keep each CPU's hartid in its tp register, for cpuid().
   int id = r_mhartid();
   w_tp(id);

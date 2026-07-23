@@ -1,3 +1,7 @@
+#include "rbtree.h"
+
+struct proc;
+
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -89,6 +93,32 @@ struct user_context {
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+// 调度实体内嵌于 proc，调度器和中断路径无需动态分配队列节点。
+struct sched_entity {
+  struct proc *prev;
+  struct proc *next;
+  struct rb_node rb;
+  int on_rq;
+  int reserved;
+  int generation;
+  int weight;
+  int mlfq_level;
+  int force_preempt;
+  // 当前时间片结束时写入 schedtrace 的停止原因，由抢占路径先标记。
+  int pending_stop_reason;
+  uint64 mlfq_used;
+  uint64 mlfq_epoch;
+  uint64 enqueue_seq;
+  // 最近一次进入 CPU 的调度器逻辑时钟，用于计算本次运行片长度。
+  uint64 last_clock;
+  uint64 runtime_ticks;
+  uint64 dispatches;
+  uint64 burst_hint;
+  uint64 remaining_hint;
+  uint64 vruntime;
+  uint64 slice_ticks;
+};
+
 // Per-process state
 struct proc {
   struct spinlock lock;
@@ -100,6 +130,7 @@ struct proc {
   int killed;                  // If non-zero, have been killed
   int xstate;                  // Exit status to be returned to parent's wait
   int pid;                     // Process ID
+  struct sched_entity sched;   // Policy-owned scheduling state.
 
   // these are private to the process, so p->lock need not be held.
   uint64 kstack;               // Virtual address of kernel stack
