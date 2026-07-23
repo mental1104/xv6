@@ -144,13 +144,16 @@ SUITES: dict[str, Suite] = {
     ),
     "lab8-locks": Suite(
         name="lab8-locks",
-        description="Lab8 allocator and buffer-cache guest regression",
+        description="Fast Lab8 buffer-cache guest regression",
         tests=(
             TestCase(
-                "lab8-guest-tests",
-                ("xv6test --group lab8",),
+                "lab8-fast-guest-tests",
+                (
+                    "xv6test --run lab8-createdelete",
+                    "xv6test --run lab8-fourfiles",
+                ),
                 expected=GUEST_SUCCESS,
-                timeout=600,
+                timeout=180,
             ),
         ),
     ),

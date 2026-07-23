@@ -105,13 +105,13 @@ XV6TEST done status=0
 | Lab5 lazy allocation | `xv6test --group lab5` | `lazytests.c` | 无 |
 | Lab6 COW | `xv6test --group lab6` | `cowtest.c` | 无 |
 | Lab7 threads | `xv6test --group lab7` | `guest/uthreadtest.c`；`host/ph.c`、`host/barrier.c` | `ph`、`barrier` 由 Python 在宿主机执行 |
-| Lab8 locks | `xv6test --group lab8` | `sbrkmuch`、`createdelete`、`fourfiles`、`bigwrite` | 无不稳定性能阈值 |
+| Lab8 locks | `xv6test --run lab8-createdelete` / `xv6test --run lab8-fourfiles` | `createdelete`、`fourfiles` | `sbrkmuch`、`bigwrite` 保留在 guest registry，不进入默认 PR suite |
 | Lab9 file system | `--run lab9-bigfile` / `--run lab9-symlink` | `bigfile.c`、`symlinktest.c` | 分开 QEMU snapshot |
 | Lab10 mmap | `xv6test --group lab10` | `mmaptest.c` | 无 |
 
 `memviztest` 属于 Lab3 地址空间观察回归，验证用户栈、内核栈、物理页计数、分配与释放不变量；`vaaccesstest` 属于 Lab3 用户态 VA 访问回归，验证普通命中、lazy 首次触页、COW 写时复制和非法 VA fault 隔离；普通 `lab-vm` suite 会通过 `xv6test --group lab3` 自动覆盖它们。
 
-`sbrkmuch` 同时属于 Lab3 地址空间增长和 Lab8 allocator 行为，因此按两个稳定测试名注册；这是有意保留的跨 Lab 共享回归。
+`sbrkmuch` 同时属于 Lab3 地址空间增长和 Lab8 allocator 行为，因此按两个稳定测试名注册；这是有意保留的跨 Lab 共享回归。默认 PR suite 的 Lab8 入口只保留 `createdelete` 和 `fourfiles` 两个较快用例，避免 `sbrkmuch`、`bigwrite` 这类高成本 usertests 阻塞每次 PR 回归。
 
 `core-schedtrace` 属于教学调度器的基础观察回归，验证 `schedtrace` 默认关闭、启停/reset/read、PID 过滤、容量丢弃、RUN_START/RUN_STOP 配对和 `schedviz` 参数错误退出；策略图形语义由 `make schedviz SCHED_POLICY=<policy> CPUS=<n>` 的宿主端 visualizer 生成 trace/SVG 后检查。
 
