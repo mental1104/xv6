@@ -63,6 +63,11 @@ jobs:
           echo "Changed files:"
           cat /tmp/changed-files.txt
           python3 tests/ci_plan.py < /tmp/changed-files.txt | tee -a "$GITHUB_OUTPUT"
+          if grep -qx 'tests/guest/usertests_2g.c' /tmp/changed-files.txt; then
+            echo 'full_usertests=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'full_usertests=false' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run shell history interaction regression
         if: >-
@@ -87,11 +92,33 @@ jobs:
           printf 'Selected PR suites: %s\n' "${suites[*]}"
           python3 tests/run.py "${args[@]}" --cpus 3
 
+      - name: Run VM regression single-core
+        if: >-
+          github.event_name == 'pull_request' &&
+          contains(steps.plan.outputs.suites, 'lab-vm')
+        run: make test-suite SUITE=lab-vm CPUS=1
+
+      - name: Run complete usertests for adapter changes
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.plan.outputs.full_usertests == 'true'
+        run: make test-usertests CPUS=3
+
       - name: Run scheduled or manual full regression
         if: github.event_name != 'pull_request'
         run: |
           python3 tests/shell_history_interactive.py --cpus 3
           make test-full CPUS=3
+
+      # _start_qemu() can fail before the Python runner creates its first log.
+      # Capture one bounded serial boot attempt so startup panics are preserved.
+      - name: Capture QEMU boot log
+        if: failure()
+        run: |
+          mkdir -p test-results/infrastructure
+          timeout 30s make -s --no-print-directory qemu \
+            CPUS=3 QEMUEXTRA=-snapshot \
+            > test-results/infrastructure/qemu-boot.log 2>&1 || true
 
       - name: Upload QEMU logs
         if: failure()

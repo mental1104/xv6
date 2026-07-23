@@ -190,7 +190,7 @@ void            vmprint(pagetable_t pagetable);
 void            kvmmapkern(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm);
 pagetable_t     kvmcreate();
 void            kvmfree(pagetable_t kpagetale);
-void            u2kvmcopy(pagetable_t, pagetable_t, uint64, uint64);
+int             u2kvmcopy(pagetable_t, pagetable_t, uint64, uint64);
 void            u2kvmunmap(pagetable_t, uint64, uint64);
 int             uvmlazyalloc(struct proc*, uint64);
 

@@ -21,7 +21,7 @@ fill_user_layout(struct proc *p, struct memviz_snapshot *snapshot)
 {
   uint64 sp = p->trapframe->sp;
   snapshot->process_size = p->sz;
-  snapshot->user_limit = PLIC;
+  snapshot->user_limit = USERMAX;
   snapshot->image_start = 0;
   snapshot->user_sp = sp;
 
@@ -82,8 +82,8 @@ fill_kernel_layout(struct proc *p, struct memviz_snapshot *snapshot)
   snapshot->virtio_start = VIRTIO0;
   snapshot->virtio_end = VIRTIO0 + PGSIZE;
   snapshot->trampoline = TRAMPOLINE;
-  snapshot->user_mirror_start = 0;
-  snapshot->user_mirror_end = p->sz;
+  snapshot->user_mirror_start = KUSERBASE;
+  snapshot->user_mirror_end = KUSERADDR(p->sz);
 }
 
 /**
@@ -195,9 +195,9 @@ fill_pte_path(pagetable_t pagetable, uint64 va,
  * @param snapshot 待填写的快照；调用者已经清零并填好布局边界。
  *
  * 本视图不递归打印完整页表树，避免在普通 memviz 命令中输出成百上千行。
- * 采样点覆盖用户 ELF、guard、栈、dynamic、内核 user mirror、内核栈、
+ * 采样点覆盖用户 ELF、guard、栈、dynamic、内核 user alias、内核栈、
  * trampoline、direct map 与 MMIO，足够解释“用户 VA 如何经页表落到 PA，
- * 再落入 kalloc 物理池或固定设备映射”。
+ * 再通过别名窗口被内核访问”。
  */
 static void
 fill_pagetable_observations(struct proc *p, struct memviz_snapshot *snapshot)
@@ -224,7 +224,7 @@ fill_pagetable_observations(struct proc *p, struct memviz_snapshot *snapshot)
                      snapshot->dynamic_start);
 
   append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_KERNEL,
-                   MEMVIZ_PTE_ROLE_USER_MIRROR, p->kpagetable, 0);
+                   MEMVIZ_PTE_ROLE_USER_MIRROR, p->kpagetable, KUSERBASE);
   append_pte_entry(snapshot, MEMVIZ_PTE_SPACE_KERNEL,
                    MEMVIZ_PTE_ROLE_KERNEL_STACK_GUARD, p->kpagetable,
                    snapshot->kernel_stack_guard_start);
@@ -363,7 +363,7 @@ memviz_snapshot(int view, struct memviz_snapshot *snapshot)
  *
  * @param va 目标用户虚拟地址；允许未映射，函数会返回缺失层级信息。
  * @param query 输出查询结果，必须是可写内核地址。
- * @return 参数有效时返回 0；地址超出 Sv39 用户可表达范围或 query 为空时返回 -1。
+ * @return 参数有效时返回 0；地址超出普通用户 VA 范围或 query 为空时返回 -1。
  *
  * 该接口只观察 PTE，不读取或写入 va 指向的数据页；因此不会替代用户态
  * load/store fault 实验，也不会触发 lazy allocation 或 COW。
@@ -371,7 +371,7 @@ memviz_snapshot(int view, struct memviz_snapshot *snapshot)
 int
 memviz_query_user_va(uint64 va, struct memviz_va_query *query)
 {
-  if(query == 0 || va >= MAXVA)
+  if(query == 0 || va >= USERMAX)
     return -1;
 
   memset(query, 0, sizeof(*query));

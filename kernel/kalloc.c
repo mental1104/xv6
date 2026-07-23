@@ -59,8 +59,11 @@ cow_install_writable_page(pagetable_t pagetable, uint64 va,
   *pte = PA2PTE(pa) | flags;
 
   struct proc *p = myproc();
-  if(p && p->pagetable == pagetable)
-    u2kvmcopy(p->pagetable, p->kpagetable, va, va + PGSIZE);
+  if(p && p->pagetable == pagetable &&
+     u2kvmcopy(p->pagetable, p->kpagetable, va, va + PGSIZE) < 0)
+    // 每个当前用户叶子在进入 COW 前都必须已有 alias 路径；这里失败说明
+    // 生命周期不变量被破坏，而不是一个可由当前写故障安全回滚的普通 OOM。
+    panic("cow alias");
 
   sfence_vma();
 }
@@ -74,17 +77,33 @@ kinit()
   freerange(end, (void*)PHYSTOP);
 }
 
+/**
+ * freerange 将启动时尚未使用的物理页一次性挂入 CPU 0 freelist。
+ *
+ * @param pa_start 可回收物理区间的起点；函数内部向上按页对齐。
+ * @param pa_end 可回收物理区间的一过终点，不会加入该地址所在页面。
+ *
+ * 启动阶段只有 hart 0 执行 kinit，因此可以在各持一次锁的临界区内批量
+ * 初始化引用计数和链表。这里故意不复用 kfree()：正常 kfree() 会把整页
+ * 写成毒化字节，用于发现释放后使用；若对 2 GiB 初始 RAM 的每一页都做
+ * 4 KiB memset，会让每次 QEMU 启动无意义地写满全部物理内存。kalloc()
+ * 仍会在页面真正分配时写入调试字节，因此该优化不改变已分配页的初始化语义。
+ */
 void
 freerange(void *pa_start, void *pa_end)
 {
-  char *p;
-  p = (char*)PGROUNDUP((uint64)pa_start);
+  char *p = (char*)PGROUNDUP((uint64)pa_start);
+
+  acquire(&pageref.lock);
+  acquire(&kmem[0].lock);
   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE){
-    acquire(&pageref.lock);
-    pageref.count[pa_index((uint64)p)] = 1;
-    release(&pageref.lock);
-    kfree(p);
+    struct run *r = (struct run*)p;
+    pageref.count[pa_index((uint64)p)] = 0;
+    r->next = kmem[0].freelist;
+    kmem[0].freelist = r;
   }
+  release(&kmem[0].lock);
+  release(&pageref.lock);
 }
 
 void

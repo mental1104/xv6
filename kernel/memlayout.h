@@ -45,7 +45,7 @@
 // for use by the kernel and user pages
 // from physical address 0x80000000 to PHYSTOP.
 #define KERNBASE 0x80000000L
-#define PHYSTOP (KERNBASE + 128*1024*1024)
+#define PHYSTOP (KERNBASE + 2L*1024*1024*1024)
 
 // map the trampoline page to the highest address,
 // in both user and kernel space.
@@ -65,3 +65,13 @@
 //   TRAPFRAME (p->trapframe, used by the trampoline)
 //   TRAMPOLINE (the same page as in the kernel)
 #define TRAPFRAME (TRAMPOLINE - PGSIZE)
+
+// Sv39 将 39 位虚拟地址按 bit 38 做符号扩展：低规范半区是
+// [0, MAXVA)，高规范半区是 [KUSERBASE, 2^64)。普通用户地址占用低半区，
+// 并在 TRAPFRAME 前结束；进程内核页表把同一批用户物理页映射到完整高半区
+// alias window。这样用户 VA 可以跨过 MMIO、KERNBASE 和物理 direct map 数值，
+// 同时不会与内核低半区映射冲突。
+#define KUSERBASE 0xffffffc000000000ULL
+#define USERMAX TRAPFRAME
+#define KUSERADDR(va) (KUSERBASE + (va))
+#define KUSEREND KUSERADDR(USERMAX)

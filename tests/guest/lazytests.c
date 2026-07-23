@@ -12,7 +12,7 @@
 #define OOM_CHUNK_SIZE (4 * 1024 * 1024)
 
 /**
- * 在当前 PLIC 用户地址上限内保留一段足够大的稀疏测试区。
+ * 在当前 USERMAX 用户地址上限内保留一段足够大的稀疏测试区。
  *
  * @param start 接收 sbrk 前的旧 break。
  * @return 成功时返回页对齐区域大小；可用虚拟空间不足或 sbrk 失败时返回 -1。
@@ -25,13 +25,13 @@ reserve_sparse_region(char **start)
     return -1;
 
   uint64 address = (uint64)current;
-  if(address >= PLIC)
+  if(address >= USERMAX)
     return -1;
 
-  uint64 room = PLIC - address;
+  uint64 room = USERMAX - address;
   uint64 region = MAX_SPARSE_REGION;
-  // sys_sbrk 要求 PGROUNDUP(newsz) 严格小于 PLIC，因此至少保留一页余量。
-  if(region + PGSIZE >= room)
+  // 为后续边界测试保留一页余量；sys_sbrk 允许 break 恰好到达 USERMAX。
+  if(region + PGSIZE > room)
     region = PGROUNDDOWN(room / 2);
   if(region < 4 * PGSIZE || region > 0x7fffffff)
     return -1;
@@ -51,7 +51,7 @@ sparse_memory(char *s)
   int region_size = reserve_sparse_region(&prev_end);
 
   if(region_size < 0){
-    printf("unable to reserve sparse region below PLIC\n");
+    printf("unable to reserve sparse region below USERMAX\n");
     exit(1);
   }
   new_end = prev_end + region_size;
@@ -78,7 +78,7 @@ sparse_memory_unmap(char *s)
   int region_size = reserve_sparse_region(&prev_end);
 
   if(region_size < 0){
-    printf("unable to reserve sparse unmap region below PLIC\n");
+    printf("unable to reserve sparse unmap region below USERMAX\n");
     exit(1);
   }
   new_end = prev_end + region_size;
