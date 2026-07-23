@@ -153,6 +153,16 @@ usertrap(void)
     p->killed = 1;
   }
 
+  // consoleintr() 只记录 Ctrl-C/Ctrl-Z；在不持有 cons.lock 时应用到整个 PGID。
+  console_apply_pending_control();
+
+  if(p->killed)
+    exit(-1);
+
+  // 远端 CPU 对 RUNNING 成员只能设置 stop_requested；当前进程在这里安全停下。
+  proc_stop_if_requested();
+
+  // STOPPED 作业可能由 TERM 唤醒；恢复后必须在返回用户态前完成退出。
   if(p->killed)
     exit(-1);
 
@@ -186,7 +196,7 @@ usertrapret(void)
   // we're back in user space, where usertrap() is correct.
   intr_off();
 
-  // send syscalls, interrupts, and exceptions to trampoline.S
+  // send interrupts and exceptions to trampoline.S
   w_stvec(TRAMPOLINE + (uservec - trampoline));
 
   // set up trapframe values that uservec will need when
@@ -196,8 +206,9 @@ usertrapret(void)
   p->trapframe->kernel_trap = (uint64)usertrap;
   p->trapframe->kernel_hartid = r_tp();         // hartid for cpuid()
 
-  // set up the registers that the trampoline.S's sret will use
-  // to get to user space.
+  // we're about to switch the destination of traps from
+  // kerneltrap() to usertrap(), so turn off interrupts until
+  // we're back in user space, where usertrap() is correct.
 
   // set S Previous Privilege mode to User.
   unsigned long x = r_sstatus();
@@ -239,6 +250,9 @@ kerneltrap()
     panic("kerneltrap");
   }
 
+  // 前台作业可能正在 sleep()，因此 UART 控制事件也必须能由内核态 trap 代为执行。
+  console_apply_pending_control();
+
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
     yield();
@@ -256,53 +270,4 @@ clockintr()
   ticks++;
   wakeup(&ticks);
   release(&tickslock);
-}
-
-// check if it's an external interrupt or software interrupt,
-// and handle it.
-// returns 2 if timer interrupt,
-// 1 if other device,
-// 0 if not recognized.
-int
-devintr()
-{
-  uint64 scause = r_scause();
-
-  if((scause & 0x8000000000000000L) &&
-     (scause & 0xff) == 9){
-    // this is a supervisor external interrupt, via PLIC.
-
-    // irq indicates which device interrupted.
-    int irq = plic_claim();
-
-    if(irq == UART0_IRQ){
-      uartintr();
-    } else if(irq == VIRTIO0_IRQ){
-      virtio_disk_intr();
-    } else if(irq){
-      printf("unexpected interrupt irq=%d\n", irq);
-    }
-
-    // the PLIC allows each device to raise at most one
-    // interrupt at a time; tell the device is now allowed to interrupt again.
-    if(irq)
-      plic_complete(irq);
-
-    return 1;
-  } else if(scause == 0x8000000000000001L){
-    // software interrupt from a machine-mode timer interrupt,
-    // forwarded by timervec in kernelvec.S.
-
-    if(cpuid() == 0){
-      clockintr();
-    }
-
-    // acknowledge the software interrupt by clearing
-    // the SSIP bit in sip.
-    w_sip(r_sip() & ~2);
-
-    return 2;
-  } else {
-    return 0;
-  }
 }
