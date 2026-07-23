@@ -119,7 +119,7 @@ filestat(struct file *f, uint64 addr)
 /**
  * 按 SEEK_SET、SEEK_CUR 或 SEEK_END 更新普通文件的共享 64 位偏移。
  *
- * @param f 已打开的 file 对象；仅 FD_INODE 支持定位。
+ * @param f 已打开的 file 对象；仅 T_FILE-backed FD_INODE 支持定位。
  * @param offset 相对 whence 基准的有符号字节偏移。
  * @param whence kernel/fcntl.h 定义的 SEEK_SET、SEEK_CUR 或 SEEK_END。
  * @return 成功返回新的非负偏移；对象不支持定位、结果为负或超过
@@ -139,6 +139,9 @@ fileseek(struct file *f, int64 offset, int whence)
     return -1;
 
   ilock(f->ip);
+  if(f->ip->type != T_FILE)
+    goto invalid;
+
   switch(whence){
   case SEEK_SET:
     base = 0;
@@ -150,8 +153,7 @@ fileseek(struct file *f, int64 offset, int whence)
     base = f->ip->size;
     break;
   default:
-    iunlock(f->ip);
-    return -1;
+    goto invalid;
   }
 
   if(base > MAXFILE_BYTES)
