@@ -70,7 +70,7 @@ kvminithart()
 // The risc-v Sv39 scheme has three levels of page-table
 // pages. A page-table page contains 512 64-bit PTEs.
 // A 64-bit virtual address is split into five fields:
-//   39..63 -- must be zero.
+//   39..63 -- must equal bit 38 (Sv39 sign extension).
 //   30..38 -- 9 bits of level-2 index.
 //   21..29 -- 9 bits of level-1 index.
 //   12..20 -- 9 bits of level-0 index.
@@ -78,7 +78,9 @@ kvminithart()
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
-  if(va >= MAXVA)
+  // MAXVA 与 KUSERBASE 之间是 Sv39 非规范地址。低规范半区承载用户和
+  // 内核 direct map，高规范半区只用于当前进程的 supervisor-only alias。
+  if(va >= MAXVA && va < KUSERBASE)
     panic("walk");
 
   for(int level = 2; level > 0; level--) {
@@ -296,7 +298,7 @@ uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
     return oldsz;
 
   if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
-    int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
+    uint64 npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
     uvmunmap(pagetable, PGROUNDUP(newsz), npages, 1);
   }
 
@@ -461,8 +463,9 @@ kvmmapkern(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm)
     panic("kvmmap");
 }
 
-// 创建进程私有内核页表。L2[0] 保存 MMIO，L2[1] 留给用户别名窗口，
-// 从 KERNBASE 所在根槽开始复用全局内核映射。
+// 创建进程私有内核页表。Sv39 低半区直接复用全局内核页表中的 MMIO、
+// direct map、kernel stack 和 trampoline；高半区保持为空，由当前进程的
+// supervisor-only 用户别名按需分配页表子树。
 pagetable_t
 kvmcreate()
 {
@@ -470,26 +473,14 @@ kvmcreate()
   if(pagetable == 0)
     return 0;
 
-  for(int i = PX(2, KERNBASE); i < 512; i++)
+  for(int i = 0; i < PX(2, KUSERBASE); i++)
     pagetable[i] = kernel_pagetable[i];
-
-  // uart registers
-  kvmmapkern(pagetable, UART0, UART0, PGSIZE, PTE_R | PTE_W);
-
-  // virtio mmio disk interface
-  kvmmapkern(pagetable, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
-
-  // CLINT
-  kvmmapkern(pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
-
-  // PLIC
-  kvmmapkern(pagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
 
   return pagetable;
 }
 
-// 释放进程内核页表私有子树。叶子映射指向 MMIO 或用户物理页，均不归
-// kpagetable 所有；这里只释放为 L2[0..1] 分配的页表页。
+// 释放进程内核页表高半区的私有 alias 子树。alias 叶子只借用用户物理页，
+// 因此这里只释放页表页，不释放 leaf PTE 指向的物理页；低半区共享映射保持不动。
 static void
 kvmfreewalk(pagetable_t pagetable, int level)
 {
@@ -509,7 +500,7 @@ kvmfreewalk(pagetable_t pagetable, int level)
 void
 kvmfree(pagetable_t kpagetable)
 {
-  for(int i = 0; i < PX(2, KERNBASE); i++){
+  for(int i = PX(2, KUSERBASE); i < 512; i++){
     pte_t pte = kpagetable[i];
     if((pte & PTE_V) == 0)
       continue;
