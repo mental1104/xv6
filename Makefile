@@ -136,6 +136,13 @@ $U/_%: $T/%.o $(ULIB)
 	$(OBJDUMP) -S $@ > $T/$*.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/$*.sym
 
+# 2 GiB 配置使用容量无关的 C 适配入口；它复用原 usertests.c 的测试全集，
+# 仅替换固定 OOM 假设和破坏式空闲页计数。
+$U/_usertests: $T/usertests_2g.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $T/usertests.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/usertests.sym
+
 $U/_sh: $U/shentry.o $U/sh.o $U/history.o $U/shellinput.o $U/memvizlib.o $(ULIB)
 	$(LD) $(LDFLAGS) -N -e sh_entry -Ttext 0 -o $@ $^
 	$(OBJDUMP) -S $@ > $U/sh.asm
@@ -236,6 +243,7 @@ UPROGS=\
 	$U/_vaprobe\
 	$U/_memviztest\
 	$U/_vaaccesstest\
+	$U/_addresswindowtest\
 	$U/_wc\
 	$U/_zombie\
 	$U/_pingpong\
@@ -297,7 +305,7 @@ CPUS := 3
 endif
 CFLAGS += -DXV6_CPUS=$(CPUS)
 
-QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
+QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 2G -smp $(CPUS) -nographic
 QEMUOPTS += -drive file=$(FSIMG),if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 QEMUOPTS += $(QEMUEXTRA)
