@@ -110,3 +110,14 @@ jobs:
 
       - name: Run complete usertests
         run: python3 tests/run_usertests.py --cpus 3
+
+      - name: Run reparent cleanup single-core
+        run: |
+          # CPUS 同时参与编译期 schedtrace 元数据和 QEMU -smp，切换到单核前必须
+          # 重新构建，避免使用按三核配置生成的旧目标文件掩盖回收时序问题。
+          make clean
+          make -j2 CPUS=1 SCHED_POLICY=rr
+          python3 tests/run_usertests.py \
+            --cpus 1 \
+            --case reparent2 \
+            --case reparent
