@@ -127,10 +127,24 @@ run_jobctl_test(void)
 }
 
 /**
+ * 为真实串口作业控制测试提供一个可确定同步的长运行 pipeline 成员。
+ *
+ * ready 行经管道传给 `cat` 后证明两端已经 exec 且 foreground PGID 已生效；随后
+ * 进程保持在可停止、继续和终止的睡眠循环中，不依赖随机时序或性能阈值。
+ */
+static void
+run_hold(void)
+{
+  printf("consolelinetest: hold ready\n");
+  for(;;)
+    sleep(1000);
+}
+
+/**
  * 验证外部用户程序启动后 console 已恢复 cooked 行规约。
  *
  * 程序先输出 ready，宿主机再输入 `ab<Backspace>c<Enter>`；内核应完成退格编辑
- * 后一次返回 `ac\n`。传入 `jobctl` 时改为执行无需宿主机输入的作业控制断言。
+ * 后一次返回 `ac\n`。`jobctl` 执行内核接口断言，`hold` 为串口测试提供长运行点。
  *
  * @return 通过 exit status 返回；成功为 0，读取错误或断言失败为 1。
  */
@@ -144,8 +158,12 @@ main(int argc, char *argv[])
     run_jobctl_test();
     exit(1);
   }
+  if(argc == 2 && strcmp(argv[1], "hold") == 0){
+    run_hold();
+    exit(1);
+  }
   if(argc != 1){
-    fprintf(2, "Usage: consolelinetest [jobctl]\n");
+    fprintf(2, "Usage: consolelinetest [jobctl|hold]\n");
     exit(2);
   }
 
