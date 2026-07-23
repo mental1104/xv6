@@ -54,15 +54,27 @@ filedup(struct file *f)
   return f;
 }
 
-/** 释放打开文件引用，并在最后一个引用关闭时释放底层对象。 */
+/**
+ * 释放打开文件引用，并在最后一个引用关闭时释放底层对象。
+ *
+ * @param f 当前进程正在关闭的共享 file 对象；调用者仍持有一个有效引用。
+ *
+ * 只有进程名为 `sh` 的进程可能通过 consolemode() 成为 raw mode owner。
+ * 因此普通进程关闭继承的 console fd 时直接跳过 owner 检查，避免高并发
+ * fork/exit 压力把所有进程串行化到 cons.lock；Shell 路径仍由 PID 与 file
+ * 对象双重校验，异常退出时继续恢复 cooked mode。
+ */
 void
 fileclose(struct file *f)
 {
   struct file ff;
+  struct proc *p = myproc();
 
-  // raw console 所有权同时绑定 PID 与 file 对象；必须在 ftable 失效前回收。
-  if(f->type == FD_DEVICE && f->major == CONSOLE)
-    consolefileclose(f, myproc()->pid);
+  // sys_consolemode() 只允许名为 sh 的进程声明 raw ownership。该守卫既保持
+  // owner 异常退出清理，又避免普通进程退出时无意义地竞争全局 console 锁。
+  if(f->type == FD_DEVICE && f->major == CONSOLE && p != 0 &&
+     strncmp(p->name, "sh", sizeof(p->name)) == 0)
+    consolefileclose(f, p->pid);
 
   acquire(&ftable.lock);
   if(f->ref < 1)

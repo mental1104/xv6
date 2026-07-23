@@ -109,4 +109,4 @@ jobs:
         run: make test-integration CPUS=3 SCHED_POLICY=rr
 
       - name: Run complete usertests
-        run: make test-usertests CPUS=3 SCHED_POLICY=rr
+        run: python3 tests/run_usertests.py --cpus 3
