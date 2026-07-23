@@ -132,9 +132,12 @@ class SuiteCompositionTests(unittest.TestCase):
         self.assertNotIn("largefs-4gib", expanded)
 
     def test_lab8_pr_suite_excludes_slow_usertests(self) -> None:
-        commands = RUNNER.SUITES["lab8-locks"].tests[0].commands
+        commands = [test.commands for test in RUNNER.SUITES["lab8-locks"].tests]
         self.assertEqual(
-            ("xv6test --run lab8-createdelete", "xv6test --run lab8-fourfiles"),
+            [
+                ("xv6test --run lab8-createdelete",),
+                ("xv6test --run lab8-fourfiles",),
+            ],
             commands,
         )
 
