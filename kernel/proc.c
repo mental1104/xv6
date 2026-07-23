@@ -114,7 +114,7 @@ allocproc(void)
   }
   return 0;
 
-found:
+ found:
   p->pid = allocpid();
   p->state = USED;
   p->mask = 0;
@@ -192,7 +192,7 @@ proc_pagetable(struct proc *p)
 {
   pagetable_t pagetable;
 
-  // An empty page table.
+  // An empty user page table.
   pagetable = uvmcreate();
   if(pagetable == 0)
     return 0;
@@ -208,8 +208,8 @@ proc_pagetable(struct proc *p)
   }
 
   // map the trapframe just below TRAMPOLINE, for trampoline.S.
-  if(mappages(pagetable, TRAPFRAME, PGSIZE,
-              (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
+  if(mappages(pagetable, TRAPfRAME, PGSIZE,
+              (uint64)(p->trapframe), PTE_R | PTE_W)< 0){
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
     uvmfree(pagetable, 0);
     return 0;
@@ -224,7 +224,7 @@ void
 proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
-  uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  uvmunmap(pagetable, TRAPfRAME, 1, 0);
   uvmfree(pagetable, sz);
 }
 
@@ -254,7 +254,9 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
-  u2kvmcopy(p->pagetable, p->kpagetable, 0, p->sz);
+  // 启动阶欵尚无可恢复的用户进程；init 的首个用户页必须同时拥旉有内核别名。
+  if(u2kvmcopy(p->pagetable, p->kpagetable, 0, p->sz) < 0)
+    panic("userinit alias");
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -268,32 +270,44 @@ userinit(void)
   release(&p->lock);
 }
 
-// Grow or shrink user memory by n bytes.
+// Grow or shrink user memory by nbytes.
 // Return 0 on success, -1 on failure.
 int
 growproc(int n)
 {
-  uint sz;
   struct proc *p = myproc();
+  uint64 oldsz = p->sz;
+  uint64 newsz = oldsz;
 
-  sz = p->sz;
   if(n > 0){
-    if(PGROUNDUP(sz + n) >= PLIC)
+    newsz = oldsz + (uint64)n;
+    if(newsz < oldsz || newsz > USERMAX)
       return -1;
-    if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
+    if((newsz = uvmalloc(p->pagetable, oldsz, newsz)) == 0)
+      return -1;
+    if(u2kvmcopy(p->pagetable, p->kpagetable, oldsz, newsz) < 0){
+      // 只撤销本轮新增长出的整页；oldsz 所在的既有尾页可能被再次同步，
+      // 但它属于调用前状态，不能随失败回滚一起解除别名。
+      uint64 start = PGROUNDUP(oldsz);
+      uint64 end = PGROUNDUP(newsz);
+      if(end > start)
+        u2kvmunmap(p->kpagetable, start, (end - start) / PGSIZE);
+      uvmdealloc(p->pagetable, newsz, oldsz);
       return -1;
     }
-    u2kvmcopy(p->pagetable, p->kpagetable, sz-n, sz);
   } else if(n < 0){
-    uint64 newsz = sz + n;
-    if(PGROUNDUP(newsz) < PGROUNDUP(sz)){
+    uint64 shrink = (uint64)(-(int64)n);
+    if(shrink > oldsz)
+      return -1;
+    newsz = oldsz - shrink;
+    if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
       uint64 start = PGROUNDUP(newsz);
-      uint64 npages = (PGROUNDUP(sz) - start) / PGSIZE;
+      uint64 npages = (PGROUNDUP(oldsz) - start) / PGSIZE;
       u2kvmunmap(p->kpagetable, start, npages);
     }
-    sz = uvmdealloc(p->pagetable, sz, newsz);
+    newsz = uvmdealloc(p->pagetable, oldsz, newsz);
   }
-  p->sz = sz;
+  p->sz = newsz;
   return 0;
 }
 
@@ -317,6 +331,18 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+  // freeproc() 必须知道已复制用户叶子的完整范围，才能在后续失败时回收。
+  np->sz = p->sz;
+
+  // uvmcopy() 已把父子可写页转换为 COW；父进程的既有 alias 路径必须能
+  // 原地刷新权限。子进程 alias 属于新资源，OOM 时可释放整个 np 并返回。
+  if(u2kvmcopy(p->pagetable, p->kpagetable, 0, p->sz) < 0)
+    panic("fork parent alias");
+  if(u2kvmcopy(np->pagetable, np->kpagetable, 0, np->sz) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
 
   for(i = 0; i < NOFILE; i++){
     if(p->vma[i]){
@@ -335,7 +361,6 @@ fork(void)
       np->vma[i] = v;
     }
   }
-  np->sz = p->sz;
 
   np->mask = p->mask;
   // copy saved user registers.
@@ -349,9 +374,6 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
-
-  u2kvmcopy(p->pagetable, p->kpagetable, 0, p->sz);
-  u2kvmcopy(np->pagetable, np->kpagetable, 0, np->sz);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
@@ -519,7 +541,7 @@ scheduler(void)
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
+        // Switch to chosen process. It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
         p->state = RUNNING;
@@ -530,8 +552,12 @@ scheduler(void)
 
         swtch(&c->context, &p->context);
 
+        // 在释放 p->lock 前切回全局内核页表。另一 CPU 的 wait() 随后可能
+        // 回收 zombie 的 p->kpagetable，scheduler 不得继续引用该页表。
+        kvminithart();
+
         // Process is done running for now.
-        // It should have changed its p->state before coming back.
+        // It should have changed p->state before coming back.
         c->proc = 0;
 
         found = 1;
@@ -749,10 +775,4 @@ free_proc(void){
     release(&p->lock);
   }
   return n;
-}
-
-int lazy_grow_proc(int n){
-  struct proc *p = myproc();
-  p->sz = p->sz + n;
-  return 0;
 }

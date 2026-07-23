@@ -1,5 +1,6 @@
 #include "kernel/types.h"
 #include "kernel/param.h"
+#include "kernel/memlayout.h"
 #include "kernel/riscv.h"
 #include "kernel/memviz.h"
 #include "user/user.h"
@@ -21,6 +22,27 @@ fail(char *message)
 }
 
 /**
+ * cell_page_count 返回按 memviz 等比例压缩规则落入指定 cell 的页数。
+ *
+ * @param total_pages kalloc 管理的物理页总数。
+ * @param cell 目标 cell 下标，范围为 [0, MEMVIZ_CELLS)。
+ * @return 该 cell 覆盖的连续物理页数量。
+ *
+ * 使用两个向上取整边界直接计算区间长度，避免在 2 GiB 配置下让每个
+ * cell 再遍历全部物理页。该公式与内核中的 floor(page*cells/total) 分桶
+ * 完全等价，但复杂度从 O(total_pages*cells) 降为 O(cells)。
+ */
+static uint64
+cell_page_count(uint64 total_pages, int cell)
+{
+  uint64 first = ((uint64)cell * total_pages + MEMVIZ_CELLS - 1) /
+                 MEMVIZ_CELLS;
+  uint64 end = ((uint64)(cell + 1) * total_pages + MEMVIZ_CELLS - 1) /
+               MEMVIZ_CELLS;
+  return end - first;
+}
+
+/**
  * test_user_snapshot 验证用户栈、动态边界和物理计数的基本不变量。
  */
 static void
@@ -30,6 +52,8 @@ test_user_snapshot(void)
     fail("invalid view accepted");
   if(memsnapshot(MEMVIZ_VIEW_USER, &before) < 0)
     fail("user snapshot syscall");
+  if(before.user_limit != USERMAX)
+    fail("user limit mismatch");
   if(!before.user_stack_valid)
     fail("user stack invalid");
   if(before.stack_used + before.stack_free != PGSIZE)
@@ -40,6 +64,8 @@ test_user_snapshot(void)
     fail("dynamic start mismatch");
   if(before.process_size < before.dynamic_start)
     fail("process size below dynamic start");
+  if(before.process_size > before.user_limit)
+    fail("process size above user limit");
   if(before.process_size == before.dynamic_start){
     uint64 dynamic_pages = 0;
     if(dynamic_pages != 0)
@@ -119,11 +145,7 @@ test_physical_snapshot(void)
 
   uint64 covered = 0;
   for(int cell = 0; cell < MEMVIZ_CELLS; cell++){
-    uint64 expected = 0;
-    for(uint64 page = 0; page < before.total_pages; page++){
-      if((page * MEMVIZ_CELLS) / before.total_pages == (uint64)cell)
-        expected++;
-    }
+    uint64 expected = cell_page_count(before.total_pages, cell);
     if(before.physical[cell].total_pages != expected)
       fail("cell coverage mismatch");
     covered += expected;
@@ -166,7 +188,7 @@ test_allocate_and_release(void)
 }
 
 /**
- * test_kernel_snapshot 验证当前内核栈和固定映射边界可观察。
+ * test_kernel_snapshot 验证当前内核栈、MMIO 和用户别名窗口可观察。
  */
 static void
 test_kernel_snapshot(void)
@@ -181,14 +203,18 @@ test_kernel_snapshot(void)
     fail("kernel text range");
   if(before.kalloc_start >= before.kalloc_end)
     fail("kalloc range");
-  if(before.user_mirror_end != before.process_size)
-    fail("user mirror range");
+  if(before.user_mirror_start != KUSERBASE)
+    fail("user alias start");
+  if(before.user_mirror_end != KUSERADDR(before.process_size))
+    fail("user alias end");
+  if(before.user_mirror_end > KUSEREND)
+    fail("user alias exceeds window");
 
   printf("memviztest: kernel invariants OK\n");
 }
 
 /**
- * test_pagetable_snapshot 验证页表观察条目能连接 VA、PA 和 kalloc 池。
+ * test_pagetable_snapshot 验证页表观察条目能连接用户 VA、别名 VA、PA 和 kalloc 池。
  */
 static void
 test_pagetable_snapshot(void)
@@ -209,6 +235,8 @@ test_pagetable_snapshot(void)
   int user_mirror = 0;
   int kernel_stack = 0;
   int kalloc_backed = 0;
+  uint64 user_first_pa = 0;
+  uint64 alias_first_pa = 0;
 
   for(int i = 0; i < (int)before.pagetable_entry_count; i++){
     struct memviz_pte_entry *entry = &before.pagetable_entries[i];
@@ -230,6 +258,8 @@ test_pagetable_snapshot(void)
     if(entry->present && !entry->levels[2].present)
       fail("leaf mapping without L0");
 
+    if(entry->role == MEMVIZ_PTE_ROLE_ELF_FIRST && entry->present)
+      user_first_pa = entry->pa;
     if(entry->role == MEMVIZ_PTE_ROLE_USER_STACK && entry->present)
       user_stack = 1;
     if(entry->role == MEMVIZ_PTE_ROLE_GUARD){
@@ -238,8 +268,11 @@ test_pagetable_snapshot(void)
       guard_inaccessible = 1;
     }
     if(entry->role == MEMVIZ_PTE_ROLE_USER_MIRROR && entry->present){
+      if(entry->va != KUSERBASE)
+        fail("user alias pte VA");
       if(entry->flags & PTE_U)
-        fail("user mirror keeps PTE_U");
+        fail("user alias keeps PTE_U");
+      alias_first_pa = entry->pa;
       user_mirror = 1;
     }
     if(entry->role == MEMVIZ_PTE_ROLE_KERNEL_STACK && entry->present)
@@ -254,7 +287,9 @@ test_pagetable_snapshot(void)
   if(!guard_inaccessible)
     fail("guard inaccessible pte missing");
   if(!user_mirror)
-    fail("user mirror pte missing");
+    fail("user alias pte missing");
+  if(user_first_pa == 0 || alias_first_pa != user_first_pa)
+    fail("user and alias PA mismatch");
   if(!kernel_stack)
     fail("kernel stack pte missing");
   if(!kalloc_backed)

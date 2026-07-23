@@ -40,6 +40,7 @@ GUEST_SOURCE_NAMES = (
     "tracesmoke.c",
     "uthreadtest.c",
     "vaaccesstest.c",
+    "addresswindowtest.c",
     "testlib.c",
     "xv6test.c",
 )
@@ -55,7 +56,6 @@ class OutputMatchingTests(unittest.TestCase):
             expected=(r"^done$",),
             counted=(RUNNER.CountExpectation(r"^item \d+$", 2),),
         )
-
         RUNNER._assert_output(test, "item 1\nitem 2\ndone\n")
 
     def test_missing_expected_pattern_fails(self) -> None:
@@ -64,13 +64,11 @@ class OutputMatchingTests(unittest.TestCase):
             commands=("sample",),
             expected=(r"^done$",),
         )
-
         with self.assertRaisesRegex(RUNNER.TestFailure, "missing expected pattern"):
             RUNNER._assert_output(test, "not done\n")
 
     def test_rejected_kernel_failure_fails(self) -> None:
         test = RUNNER.TestCase(name="sample", commands=("sample",))
-
         with self.assertRaisesRegex(RUNNER.TestFailure, "matched rejected pattern"):
             RUNNER._assert_output(test, "panic: broken invariant\n")
 
@@ -80,7 +78,6 @@ class OutputMatchingTests(unittest.TestCase):
             commands=("sample",),
             counted=(RUNNER.CountExpectation(r"^frame$", 3),),
         )
-
         with self.assertRaisesRegex(RUNNER.TestFailure, "expected at least 3"):
             RUNNER._assert_output(test, "frame\nframe\n")
 
@@ -90,7 +87,6 @@ class OutputMatchingTests(unittest.TestCase):
             commands=("xv6test --group lab3",),
             expected=RUNNER.GUEST_SUCCESS,
         )
-
         RUNNER._assert_output(
             test,
             "XV6TEST summary selected=4 passed=4 failed=0\n"
@@ -142,7 +138,7 @@ class SuiteCompositionTests(unittest.TestCase):
             self.assertEqual(
                 len(names),
                 len(set(names)),
-                f"suite {suite.name} contains duplicate test names",
+                f"{suite.name} contains duplicate test names",
             )
 
     def test_all_qemu_lab_commands_enter_through_xv6test(self) -> None:
@@ -157,7 +153,6 @@ class SuiteCompositionTests(unittest.TestCase):
             "usertests-core",
             "usertests-full",
         )
-
         for suite_name in lab_suites:
             for test in RUNNER.SUITES[suite_name].tests:
                 if test.host:
@@ -180,7 +175,6 @@ class SuiteCompositionTests(unittest.TestCase):
             test for test in RUNNER.SUITES["lab-vm"].tests
             if test.name == "lab4-guest-tests"
         )
-
         self.assertIn(r"syscall read ->", lab2.expected)
         self.assertEqual((RUNNER.CountExpectation(r"^0x[0-9a-f]+$", 3),), lab4.counted)
 
@@ -212,7 +206,6 @@ class RepositoryLayoutTests(unittest.TestCase):
 
     def test_makefile_builds_tests_from_canonical_directories(self) -> None:
         makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
-
         self.assertIn("T=tests/guest", makefile)
         self.assertIn("H=tests/host", makefile)
         self.assertIn("$U/_%: $T/%.o $(ULIB)", makefile)
@@ -226,7 +219,6 @@ class HelperTests(unittest.TestCase):
 
     def test_safe_name_removes_path_and_shell_characters(self) -> None:
         safe = RUNNER._safe_name("lab 1/$(rm -rf)")
-
         self.assertIsNotNone(re.fullmatch(r"[A-Za-z0-9_.-]+", safe))
         self.assertNotIn("/", safe)
         self.assertNotIn("$", safe)

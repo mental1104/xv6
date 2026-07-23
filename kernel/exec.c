@@ -24,6 +24,7 @@ exec(char *path, char **argv)
   struct inode *ip;
   struct proghdr ph;
   pagetable_t pagetable = 0, oldpagetable;
+  pagetable_t kpagetable = 0, oldkpagetable;
   struct proc *p = myproc();
 
   begin_op();
@@ -51,7 +52,7 @@ exec(char *path, char **argv)
       continue;
     if(ph.memsz < ph.filesz)
       goto bad;
-    if(ph.vaddr + ph.memsz < ph.vaddr)
+    if(ph.vaddr + ph.memsz < ph.vaddr || ph.vaddr + ph.memsz > USERMAX)
       goto bad;
     uint64 sz1;
     if((sz1 = uvmalloc(pagetable, sz, ph.vaddr + ph.memsz)) == 0)
@@ -73,6 +74,8 @@ exec(char *path, char **argv)
   // Use the second as the user stack.
   sz = PGROUNDUP(sz);
   uint64 sz1;
+  if(sz > USERMAX - 2*PGSIZE)
+    goto bad;
   if((sz1 = uvmalloc(pagetable, sz, sz + 2*PGSIZE)) == 0)
     goto bad;
   sz = sz1;
@@ -80,7 +83,6 @@ exec(char *path, char **argv)
   sp = sz;
   stackbase = sp - PGSIZE;
 
-  u2kvmcopy(pagetable, p->kpagetable, 0, sz);
   // Push argument strings, prepare rest of stack in ustack.
   for(argc = 0; argv[argc]; argc++) {
     if(argc >= MAXARG)
@@ -103,6 +105,13 @@ exec(char *path, char **argv)
   if(copyout(pagetable, sp, (char *)ustack, (argc+1)*sizeof(uint64)) < 0)
     goto bad;
 
+  // 为新用户镜像构造独立的进程内核页表。失败路径尚未替换 p 的任何状态，
+  // 因而可以直接释放临时页表，不会留下指向已释放用户页的别名。
+  if((kpagetable = kvmcreate()) == 0)
+    goto bad;
+  if(u2kvmcopy(pagetable, kpagetable, 0, sz) < 0)
+    goto bad;
+
   // arguments to user main(argc, argv)
   // argc is returned via the system call return
   // value, which goes in a0.
@@ -113,18 +122,27 @@ exec(char *path, char **argv)
     if(*s == '/')
       last = s+1;
   safestrcpy(p->name, last, sizeof(p->name));
-    
-  // Commit to the user image.
+
+  // Commit to the user image. 先释放旧 VMA 的文件引用和写回状态，再切换到
+  // 新页表；切换 satp 后才能安全释放当前正在使用的旧 kpagetable。
+  vma_unmap_all(p);
   oldpagetable = p->pagetable;
+  oldkpagetable = p->kpagetable;
   p->pagetable = pagetable;
+  p->kpagetable = kpagetable;
   p->sz = sz;
   p->trapframe->epc = elf.entry;  // initial program counter = main
   p->trapframe->sp = sp; // initial stack pointer
+  w_satp(MAKE_SATP(p->kpagetable));
+  sfence_vma();
   proc_freepagetable(oldpagetable, oldsz);
+  kvmfree(oldkpagetable);
 
   return argc; // this ends up in a0, the first argument to main(argc, argv)
 
  bad:
+  if(kpagetable)
+    kvmfree(kpagetable);
   if(pagetable)
     proc_freepagetable(pagetable, sz);
   if(ip){
@@ -158,6 +176,6 @@ loadseg(pagetable_t pagetable, uint64 va, struct inode *ip, uint offset, uint sz
     if(readi(ip, 0, (uint64)pa, offset+i, n) != n)
       return -1;
   }
-  
+
   return 0;
 }
