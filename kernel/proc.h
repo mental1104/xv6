@@ -1,3 +1,5 @@
+#include "user_context.h"
+
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -80,12 +82,19 @@ struct trapframe {
   /* 280 */ uint64 t6;
 };
 
-// A snapshot of the user-visible execution state.
-// gpr[] stores x1 (ra) through x31 (t6) in trapframe order.
-struct user_context {
-  uint64 epc;
-  uint64 gpr[31];
-};
+// user_context.gpr[] 直接复制 trapframe 的 ra..t6；编译期阻止两侧 ABI 漂移。
+_Static_assert((__builtin_offsetof(struct trapframe, t6) -
+                __builtin_offsetof(struct trapframe, ra)) / sizeof(uint64) + 1 ==
+               USER_CONTEXT_GPR_COUNT,
+               "user_context must cover trapframe ra through t6");
+_Static_assert((__builtin_offsetof(struct trapframe, sp) -
+                __builtin_offsetof(struct trapframe, ra)) / sizeof(uint64) ==
+               USER_CONTEXT_SP_INDEX,
+               "user_context sp index must match trapframe");
+_Static_assert((__builtin_offsetof(struct trapframe, a0) -
+                __builtin_offsetof(struct trapframe, ra)) / sizeof(uint64) ==
+               USER_CONTEXT_A0_INDEX,
+               "user_context a0 index must match trapframe");
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
