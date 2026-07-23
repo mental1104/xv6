@@ -93,7 +93,12 @@ mmap_fault(struct proc *p, struct VMA *v, uint64 va)
     kfree(mem);
     return -1;
   }
-  u2kvmcopy(p->pagetable, p->kpagetable, va0, va0 + PGSIZE);
+  if(u2kvmcopy(p->pagetable, p->kpagetable, va0, va0 + PGSIZE) < 0){
+    // 文件页已进入用户页表，但 alias 的中间页表也可能在 OOM 时失败。
+    // 撤销用户叶子并释放物理页，让缺页处理按普通分配失败终止进程。
+    uvmunmap(p->pagetable, va0, 1, 1);
+    return -1;
+  }
   return 0;
 }
 
@@ -191,7 +196,7 @@ usertrapret(void)
   p->trapframe->kernel_trap = (uint64)usertrap;
   p->trapframe->kernel_hartid = r_tp();         // hartid for cpuid()
 
-  // set up the registers that trampoline.S's sret will use
+  // set up the registers that the trampoline.S's sret will use
   // to get to user space.
 
   // set S Previous Privilege mode to User.
@@ -279,8 +284,7 @@ devintr()
     }
 
     // the PLIC allows each device to raise at most one
-    // interrupt at a time; tell the PLIC the device is
-    // now allowed to interrupt again.
+    // interrupt at a time; tell the device is now allowed to interrupt again.
     if(irq)
       plic_complete(irq);
 
