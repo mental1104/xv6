@@ -148,13 +148,14 @@ set_console_mode(struct proc *p, struct file *file, int mode)
 }
 
 /**
- * 在 owner 关闭其 console 文件对象时回收 raw mode。
+ * 在 owner 关闭其 console 文件对象时回收 raw mode 和控制台 Shell 所有权。
  *
  * @param file 正在由 fileclose() 释放引用的文件对象。
  * @param pid 执行关闭操作的当前进程 PID。
  *
  * fileclose() 在进程正常 exit、kill 后退出及用户 trap 异常退出时都会经过此路径。
- * 非 owner、不同 file 或 cooked mode 均为无操作。该函数不持有 ftable.lock，也不睡眠。
+ * 交互式 Shell 自成以自身 PID 为 PGID 的进程组，因此 owner 退出时可通过 PID
+ * 清空 shell_pgid/fg_pgid，让 init 随后启动的新 Shell 重新声明控制台。
  */
 void
 consolefileclose(struct file *file, int pid)
@@ -162,6 +163,13 @@ consolefileclose(struct file *file, int pid)
   acquire(&cons.lock);
   if(cons.raw && cons.raw_owner == pid && cons.raw_file == file)
     clear_raw_locked();
+  if(cons.shell_pgid == pid){
+    cons.shell_pgid = 0;
+    cons.fg_pgid = 0;
+    cons.control_pgid = 0;
+    cons.control_action = 0;
+    wakeup(&cons.r);
+  }
   release(&cons.lock);
 }
 
