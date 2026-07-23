@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""不启动 QEMU，验证逐项 usertests runner 的 completion 协议和失败留档。"""
+"""不启动 QEMU，验证逐项 usertests runner 的命令选择、协议和失败留档。"""
 
 from __future__ import annotations
 
@@ -17,6 +17,28 @@ if SPEC is None or SPEC.loader is None:
 RUNNER = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = RUNNER
 SPEC.loader.exec_module(RUNNER)
+
+
+class CommandSelectionTests(unittest.TestCase):
+    """验证完整压力顺序和定向回归不会互相污染。"""
+
+    def test_selected_cases_preserve_order_without_stress_prefix(self) -> None:
+        """显式选择用例时应只生成对应命令，并保持调用者给出的顺序。"""
+
+        self.assertEqual(
+            (
+                "xv6test --usertest reparent2",
+                "xv6test --usertest reparent",
+            ),
+            RUNNER._commands(("reparent2", "reparent")),
+        )
+
+    def test_default_commands_keep_stress_prefix(self) -> None:
+        """未指定用例时应继续保留历史压力前序和完整测试列表。"""
+
+        commands = RUNNER._commands()
+        self.assertEqual("xv6test --usertest reparent2", commands[0])
+        self.assertGreater(len(commands), len(RUNNER.USERTEST_CASES))
 
 
 class CommandOutputTests(unittest.TestCase):
