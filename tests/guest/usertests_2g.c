@@ -1,6 +1,7 @@
 #include "kernel/types.h"
 #include "kernel/param.h"
 #include "kernel/memviz.h"
+#include "kernel/sysinfo.h"
 
 // 复用原始 usertests 的全部测试函数，但把依赖固定物理容量的入口重命名，
 // 再在本文件提供适配 2 GiB 教学机配置的确定性版本。原始源码保持可直接
@@ -23,6 +24,7 @@
 #define MEM_ALLOCATIONS 2048
 #define SBRK_ABORT_BYTES (64 * 1024 * 1024)
 #define SBRK_ABORT_STRIDE (1024 * 1024)
+#define DESCENDANT_REAP_WAIT_TICKS 100
 
 static struct memviz_snapshot adapter_before;
 static struct memviz_snapshot adapter_during;
@@ -64,6 +66,53 @@ adapter_free_pages(void)
     exit(1);
   }
   return adapter_before.free_pages;
+}
+
+/**
+ * adapter_process_count 返回当前尚未进入 UNUSED 的进程数量。
+ *
+ * @return init、Shell、测试调度进程及其全部活跃后代的总数。
+ */
+static uint64
+adapter_process_count(void)
+{
+  struct sysinfo info;
+
+  if(sysinfo(&info) < 0){
+    printf("usertests: sysinfo failed\n");
+    exit(1);
+  }
+  return info.nproc;
+}
+
+/**
+ * adapter_wait_for_process_baseline 等待由 init 异步回收的测试后代全部释放。
+ *
+ * @param test_name 当前测试名称，用于输出可定位的超时错误。
+ * @param baseline 启动测试 worker 前的进程总数。
+ * @return 进程数在有界时间内恢复到 baseline 或更低时返回 0，否则返回 -1。
+ *
+ * reparent 和 reparent2 会故意制造由 init 接管的孙进程。父测试进程 wait() 只
+ * 保证直接 worker 已回收，不能证明这些后代已经经过 freeproc()。物理页快照
+ * 必须在进程数收敛后采集，否则会把合法的异步回收窗口误判成内存泄漏。
+ */
+static int
+adapter_wait_for_process_baseline(char *test_name, uint64 baseline)
+{
+  uint64 current = adapter_process_count();
+
+  for(int waited = 0;
+      current > baseline && waited < DESCENDANT_REAP_WAIT_TICKS;
+      waited++){
+    sleep(1);
+    current = adapter_process_count();
+  }
+  if(current <= baseline)
+    return 0;
+
+  printf("\n%s: descendant cleanup timed out nproc=%d baseline=%d\n",
+         test_name, (int)current, (int)baseline);
+  return -1;
 }
 
 /**
@@ -326,13 +375,18 @@ sbrkfail(char *s)
 }
 
 /**
- * run 在独立子进程中执行一个测试并根据退出状态报告结果。
+ * run 在独立子进程中执行一个测试，并等待其交给 init 的后代完成回收。
+ *
+ * @param f 被执行的测试函数。
+ * @param s 当前测试名称，用于输出结果和回收超时诊断。
+ * @return 测试成功且后代进程数恢复到启动前基线时返回 1，否则返回 0。
  */
 int
 run(void f(char *), char *s)
 {
   int pid;
   int xstatus;
+  uint64 process_baseline = adapter_process_count();
 
   printf("test %s: ", s);
   if((pid = fork()) < 0){
@@ -345,11 +399,12 @@ run(void f(char *), char *s)
   }
 
   wait(&xstatus);
-  if(xstatus != 0)
+  int cleanup_status = adapter_wait_for_process_baseline(s, process_baseline);
+  if(xstatus != 0 || cleanup_status < 0)
     printf("FAILED\n");
   else
     printf("OK\n");
-  return xstatus == 0;
+  return xstatus == 0 && cleanup_status == 0;
 }
 
 /**
