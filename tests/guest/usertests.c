@@ -1663,17 +1663,27 @@ subdir(char *s)
 void
 bigwrite(char *s)
 {
-  int fd, sz;
+  int fd, sz, i;
+  int max = ((MAXOPBLOCKS - 1 - 1 - 2) / 2) * BSIZE;
+  int sizes[] = {
+    BSIZE - 1,
+    max - 1,
+    max,
+    max + 1,
+    2 * max + 1,
+  };
 
   unlink("bigwrite");
-  for(sz = 499; sz < (MAXOPBLOCKS+2)*BSIZE; sz += 471){
+  for(i = 0; i < sizeof(sizes)/sizeof(sizes[0]); i++){
+    sz = sizes[i];
+    printf("%s: testing size %d\n", s, sz);
     fd = open("bigwrite", O_CREATE | O_RDWR);
     if(fd < 0){
       printf("%s: cannot create bigwrite\n", s);
       exit(1);
     }
-    int i;
-    for(i = 0; i < 2; i++){
+    int j;
+    for(j = 0; j < 2; j++){
       int cc = write(fd, buf, sz);
       if(cc != sz){
         printf("%s: write(%d) ret %d\n", s, sz, cc);
