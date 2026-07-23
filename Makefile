@@ -107,7 +107,7 @@ $U/_%: $T/%.o $(ULIB)
 	$(OBJDUMP) -S $@ > $T/$*.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/$*.sym
 
-$U/_sh: $U/shentry.o $U/sh.o $U/memvizlib.o $(ULIB)
+$U/_sh: $U/shentry.o $U/sh.o $U/history.o $U/shellinput.o $U/memvizlib.o $(ULIB)
 	$(LD) $(LDFLAGS) -N -e sh_entry -Ttext 0 -o $@ $^
 	$(OBJDUMP) -S $@ > $U/sh.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/sh.sym
@@ -146,6 +146,11 @@ $U/_vaaccesstest: $T/vaaccesstest.o $T/testlib.o $(ULIB)
 	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
 	$(OBJDUMP) -S $@ > $T/vaaccesstest.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/vaaccesstest.sym
+
+$U/_historytest: $T/historytest.o $U/history.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $T/historytest.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/historytest.sym
 
 $U/usys.S: $U/usys.pl
 	perl $U/usys.pl > $U/usys.S
@@ -227,6 +232,8 @@ UPROGS=\
 	$U/_lab1test\
 	$U/_tracesmoke\
 	$U/_uthreadtest\
+	$U/_historytest\
+	$U/_consolelinetest\
 	$U/_xv6test
 
 UEXTRA = $U/xargstest.sh
@@ -291,6 +298,7 @@ test-grader: test-unit
 # Integration/system tests: boot a fresh QEMU snapshot for every atomic suite
 # and validate xv6 through its user-visible behavior.
 test-integration: $K/kernel fs.img
+	$(PYTHON) tests/shell_history_interactive.py --cpus $(CPUS)
 	$(PYTHON) tests/run.py --suite pr --cpus $(CPUS)
 
 test-labs: test-integration
