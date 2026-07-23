@@ -32,3 +32,7 @@
 #define SYS_vaquery    31
 #define SYS_waitpid    32
 #define SYS_consolemode 33
+#define SYS_sched_set_hint   34
+#define SYS_sched_set_weight 35
+#define SYS_sched_get_stats  36
+#define SYS_schedtrace       37

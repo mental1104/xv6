@@ -117,6 +117,10 @@ extern uint64 sys_memsnapshot(void);
 extern uint64 sys_vaquery(void);
 extern uint64 sys_waitpid(void);
 extern uint64 sys_consolemode(void);
+extern uint64 sys_sched_set_hint(void);
+extern uint64 sys_sched_set_weight(void);
+extern uint64 sys_sched_get_stats(void);
+extern uint64 sys_schedtrace(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -152,6 +156,10 @@ static uint64 (*syscalls[])(void) = {
 [SYS_vaquery] sys_vaquery,
 [SYS_waitpid] sys_waitpid,
 [SYS_consolemode] sys_consolemode,
+[SYS_sched_set_hint]   sys_sched_set_hint,
+[SYS_sched_set_weight] sys_sched_set_weight,
+[SYS_sched_get_stats]  sys_sched_get_stats,
+[SYS_schedtrace]       sys_schedtrace,
 };
 
 void
