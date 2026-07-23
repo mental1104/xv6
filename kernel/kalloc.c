@@ -59,8 +59,11 @@ cow_install_writable_page(pagetable_t pagetable, uint64 va,
   *pte = PA2PTE(pa) | flags;
 
   struct proc *p = myproc();
-  if(p && p->pagetable == pagetable)
-    u2kvmcopy(p->pagetable, p->kpagetable, va, va + PGSIZE);
+  if(p && p->pagetable == pagetable &&
+     u2kvmcopy(p->pagetable, p->kpagetable, va, va + PGSIZE) < 0)
+    // 每个当前用户叶子在进入 COW 前都必须已有 alias 路径；这里失败说明
+    // 生命周期不变量被破坏，而不是一个可由当前写故障安全回滚的普通 OOM。
+    panic("cow alias");
 
   sfence_vma();
 }
