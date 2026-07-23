@@ -117,6 +117,7 @@ extern uint64 sys_memsnapshot(void);
 extern uint64 sys_vaquery(void);
 extern uint64 sys_waitpid(void);
 extern uint64 sys_consolemode(void);
+extern uint64 sys_ucontext_switch(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -152,6 +153,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_vaquery] sys_vaquery,
 [SYS_waitpid] sys_waitpid,
 [SYS_consolemode] sys_consolemode,
+[SYS_ucontext_switch] sys_ucontext_switch,
 };
 
 void
