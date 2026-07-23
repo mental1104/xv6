@@ -19,6 +19,7 @@ sys.modules[SPEC.name] = RUNNER
 SPEC.loader.exec_module(RUNNER)
 
 WATCHDOG_SECONDS = 300
+FAILURE_EXCERPT_LINES = 80
 JOBCTL_STRESS_RUNS = 8
 FORK_STRESS_RUNS = 8
 
@@ -97,6 +98,31 @@ def _assert_command_output(command: str, output: str) -> None:
             raise RUNNER.TestFailure(f"{command}: matched rejected pattern: {pattern}")
 
 
+def _format_failure_output(command: str, output: str) -> str:
+    """把当前失败命令的 guest 输出整理为适合 CI 终端展示的有界片段。
+
+    Args:
+        command: 产生失败输出的 xv6 Shell 命令。
+        output: 从该命令回显后到 Shell prompt 或失败点之前捕获的原始输出。
+
+    Returns:
+        带开始、结束标记的文本片段。最多保留最后 FAILURE_EXCERPT_LINES 行；
+        完整输出仍由调用者写入 test-results 日志，避免完整回归失败时淹没 CI 页面。
+    """
+
+    normalized = RUNNER._normalize_output(output).rstrip("\n")
+    lines = normalized.splitlines() if normalized else []
+    omitted = max(0, len(lines) - FAILURE_EXCERPT_LINES)
+    visible = lines[-FAILURE_EXCERPT_LINES:]
+
+    excerpt = [f"--- failing guest output: {command} ---"]
+    if omitted:
+        excerpt.append(f"... {omitted} earlier lines omitted ...")
+    excerpt.extend(visible or ["<no guest output captured>"])
+    excerpt.append("--- end failing guest output ---")
+    return "\n".join(excerpt)
+
+
 def run(cpus: int, selected_cases: tuple[str, ...] = ()) -> None:
     """在同一 QEMU snapshot 中逐项运行并立即保存失败现场。
 
@@ -106,7 +132,8 @@ def run(cpus: int, selected_cases: tuple[str, ...] = ()) -> None:
 
     Raises:
         RUNNER.TestFailure: QEMU、guest completion 协议或输出约束失败时抛出；
-            所有路径都会先把当前累计输出写入 usertests-full 日志。
+            所有路径都会先把当前累计输出写入 usertests-full 日志，并把当前失败
+            命令的有界输出附在异常中供 CI 直接展示。
     """
 
     child = RUNNER._start_qemu(cpus)
@@ -120,14 +147,20 @@ def run(cpus: int, selected_cases: tuple[str, ...] = ()) -> None:
             output = "\n".join(chunks)
             if result.failure is not None:
                 log_path = RUNNER._write_log("usertests-full", "usertests-full", output)
-                raise RUNNER.TestFailure(f"{result.failure}; log: {log_path}")
+                excerpt = _format_failure_output(command, result.output)
+                raise RUNNER.TestFailure(
+                    f"{result.failure}\n{excerpt}\nfull log: {log_path}"
+                )
             try:
                 _assert_command_output(command, result.output)
             except RUNNER.TestFailure as exc:
                 # 输出断言失败同样属于需要保留的 guest 现场，不能只在 panic/timeout
                 # 路径写日志，否则真正的 status=1 和业务失败文本会被调用者丢失。
                 log_path = RUNNER._write_log("usertests-full", "usertests-full", output)
-                raise RUNNER.TestFailure(f"{exc}; log: {log_path}") from exc
+                excerpt = _format_failure_output(command, result.output)
+                raise RUNNER.TestFailure(
+                    f"{exc}\n{excerpt}\nfull log: {log_path}"
+                ) from exc
 
         output = "\n".join(chunks)
         log_path = RUNNER._write_log("usertests-full", "usertests-full", output)
@@ -160,6 +193,7 @@ def main() -> int:
     try:
         run(args.cpus, tuple(args.cases or ()))
     except RUNNER.TestFailure as exc:
+        # 失败信息写 stderr；GitHub Actions 会与 stdout 一同显示在当前 step 日志中。
         print(f"FAIL usertests-full: {exc}", file=sys.stderr)
         return 1
     return 0
