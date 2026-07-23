@@ -5,6 +5,8 @@
 // 复用原始 usertests 的全部测试函数，但把依赖固定物理容量的入口重命名，
 // 再在本文件提供适配 2 GiB 教学机配置的确定性版本。原始源码保持可直接
 // 与上游对照，适配逻辑集中在单独的 C 翻译单元中。
+#define execout execout_capacity_dependent
+#define mem mem_capacity_dependent
 #define sbrkbasic sbrkbasic_capacity_dependent
 #define sbrkfail sbrkfail_capacity_dependent
 #define run usertests_original_run
@@ -14,7 +16,11 @@
 #undef run
 #undef sbrkfail
 #undef sbrkbasic
+#undef mem
+#undef execout
 
+#define EXECOUT_WORKING_SET (8 * 1024 * 1024)
+#define MEM_ALLOCATIONS 2048
 #define SBRK_ABORT_BYTES (64 * 1024 * 1024)
 #define SBRK_ABORT_STRIDE (1024 * 1024)
 
@@ -39,6 +45,111 @@ adapter_free_pages(void)
     exit(1);
   }
   return adapter_before.free_pages;
+}
+
+/**
+ * execout 验证 exec 在构造新地址空间后失败时会回滚所有临时页面。
+ *
+ * @param s 当前 usertests 名称，用于稳定错误输出。
+ *
+ * 原测试通过反复写满全部物理内存制造 OOM；2 GiB 配置下会产生几十 GiB
+ * 的无效内存写入。这里让子进程先触碰固定工作集，再以超过 MAXARG 的 argv
+ * 迫使 exec 在新页表和用户栈构造阶段失败。若 exec 错误地成功，sleep 会因
+ * 参数数量错误而返回非零；若按预期失败，子进程从 exec 返回并以 0 退出。
+ */
+void
+execout(char *s)
+{
+  uint64 free0 = adapter_free_pages();
+
+  for(int avail = 0; avail < 15; avail++){
+    int pid = fork();
+    if(pid < 0){
+      printf("%s: execout fork failed\n", s);
+      exit(1);
+    }
+    if(pid == 0){
+      int bytes = EXECOUT_WORKING_SET + 15 * PGSIZE;
+      char *base = sbrk(bytes);
+      if(base == (char*)0xffffffffffffffffL)
+        exit(2);
+      for(int offset = 0; offset < bytes; offset += PGSIZE)
+        base[offset] = (char)(offset / PGSIZE);
+      if(avail > 0 && sbrk(-avail * PGSIZE) == (char*)0xffffffffffffffffL)
+        exit(3);
+
+      char *args[MAXARG + 2];
+      for(int i = 0; i <= MAXARG; i++)
+        args[i] = "x";
+      args[MAXARG + 1] = 0;
+      exec("sleep", args);
+      exit(0);
+    }
+
+    int status = -1;
+    wait(&status);
+    if(status != 0){
+      printf("%s: bounded exec rollback failed status=%d\n", s, status);
+      exit(1);
+    }
+    if(adapter_free_pages() != free0){
+      printf("%s: failed exec leaked pages\n", s);
+      exit(1);
+    }
+  }
+}
+
+/**
+ * mem 验证 malloc 页面可写、链式释放和再次分配，不再依赖耗尽整机内存。
+ *
+ * @param s 当前 usertests 名称，用于稳定错误输出。
+ */
+void
+mem(char *s)
+{
+  uint64 free0 = adapter_free_pages();
+  int pid = fork();
+  if(pid < 0){
+    printf("%s: mem fork failed\n", s);
+    exit(1);
+  }
+  if(pid == 0){
+    void *head = 0;
+    for(int i = 0; i < MEM_ALLOCATIONS; i++){
+      void *block = malloc(10001);
+      if(block == 0){
+        printf("%s: bounded malloc failed at %d\n", s, i);
+        exit(1);
+      }
+      *(void**)block = head;
+      ((char*)block)[10000] = (char)i;
+      head = block;
+    }
+
+    while(head){
+      void *next = *(void**)head;
+      free(head);
+      head = next;
+    }
+
+    void *again = malloc(1024 * 20);
+    if(again == 0){
+      printf("%s: allocator did not reuse released pages\n", s);
+      exit(1);
+    }
+    memset(again, 0x5a, 1024 * 20);
+    free(again);
+    exit(0);
+  }
+
+  int status = -1;
+  wait(&status);
+  if(status != 0)
+    exit(status);
+  if(adapter_free_pages() != free0){
+    printf("%s: bounded malloc worker leaked pages\n", s);
+    exit(1);
+  }
 }
 
 /**
