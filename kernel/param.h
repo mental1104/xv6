@@ -6,9 +6,11 @@
 #define NDEV         10  // maximum major device number
 #define ROOTDEV       1  // device number of file system root disk
 #define MAXARG       32  // max exec arguments
-#define MAXOPBLOCKS  10  // max # of blocks any FS op writes
-#define LOGSIZE      (MAXOPBLOCKS*3)  // max data blocks in on-disk log
-#define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
-// 文件系统镜像需要容纳 MAXFILE 数据块、间接索引块和仓库内置用户程序。
-#define FSSIZE       200000  // size of file system in blocks
-#define MAXPATH      128   // maximum file path name
+#define MAXOPBLOCKS 540  // 4 GiB unlink may dirty every bitmap block in one transaction
+#define LOGSIZE     600  // total on-disk log region; includes header blocks
+#define NBUF        (LOGSIZE + MAXOPBLOCKS) // pinned log blocks plus active I/O
+#ifndef FSSIZE
+#define FSSIZE   200000  // default file-system image size in blocks
+#endif
+#define MAXPATH     128  // maximum file path name
+#define USERSTACK     1  // user stack pages

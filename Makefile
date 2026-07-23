@@ -3,6 +3,9 @@ U=user
 T=tests/guest
 H=tests/host
 
+FSIMG ?= fs.img
+LARGE_FSSIZE ?= 4250000
+
 OBJS = \
   $K/entry.o \
   $K/start.o \
@@ -213,6 +216,9 @@ $U/xargstest.sh: $T/xargstest.sh
 mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
 	gcc -Werror -Wall -I. -o mkfs/mkfs mkfs/mkfs.c
 
+mkfs/mkfs-large: mkfs/mkfs_large.c $K/fs.h $K/param.h
+	gcc -Werror -Wall -I. -DFSSIZE=$(LARGE_FSSIZE) -o $@ $<
+
 .PRECIOUS: %.o
 
 UPROGS=\
@@ -254,6 +260,7 @@ UPROGS=\
 	$U/_lazytests\
 	$U/_cowtest\
 	$U/_bigfile\
+	$U/_largefile\
 	$U/_symlinktest\
 	$U/_mmaptest\
 	$U/_lab1test\
@@ -270,14 +277,17 @@ UEXTRA = $U/xargstest.sh
 fs.img: mkfs/mkfs README $(UEXTRA) $(UPROGS)
 	mkfs/mkfs fs.img README $(UEXTRA) $(UPROGS)
 
+fs-large.img: mkfs/mkfs-large README $(UEXTRA) $(UPROGS)
+	mkfs/mkfs-large $@ README $(UEXTRA) $(UPROGS)
+
 -include kernel/*.d user/*.d tests/guest/*.d
 
 clean:
 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
 		*/*.o */*.d */*.asm */*.sym \
 		$T/*.o $T/*.d $T/*.asm $T/*.sym \
-		$U/initcode $U/initcode.out $K/kernel fs.img \
-		mkfs/mkfs .gdbinit $U/usys.S $(UPROGS) $(UEXTRA) ph barrier rbtree_test scheduler_visualizer
+		$U/initcode $U/initcode.out $K/kernel fs.img fs-large.img \
+		mkfs/mkfs mkfs/mkfs-large .gdbinit $U/usys.S $(UPROGS) $(UEXTRA) ph barrier rbtree_test scheduler_visualizer
 	$(CLEAN_SCHEDVIZ_ARTIFACTS)
 
 GDBPORT = $(shell expr `id -u` % 5000 + 25000)
@@ -290,17 +300,17 @@ endif
 CFLAGS += -DXV6_CPUS=$(CPUS)
 
 QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
-QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
+QEMUOPTS += -drive file=$(FSIMG),if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 QEMUOPTS += $(QEMUEXTRA)
 
-qemu: $K/kernel fs.img
+qemu: $K/kernel $(FSIMG)
 	$(QEMU) $(QEMUOPTS)
 
 .gdbinit: .gdbinit.tmpl-riscv
 	sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 
-qemu-gdb: $K/kernel .gdbinit fs.img
+qemu-gdb: $K/kernel .gdbinit $(FSIMG)
 	@echo "*** Now run 'gdb' in another window." 1>&2
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
 
@@ -360,5 +370,10 @@ schedviz:
 		--svg artifacts/schedviz/$(SCHED_POLICY)-cpu$(CPUS)$(SCHEDVIZ_SUFFIX).svg \
 		--demo-args "$(SCHEDVIZ_ARGS)"
 
+# Explicitly opt into the sparse 4.25-million-block image. This target is kept
+# out of test/pr/full because it performs a real sequential 4-GiB write/read.
+largefiletest: $K/kernel fs-large.img
+	FSIMG=fs-large.img $(PYTHON) tests/run_largefile.py --suite largefs-4gib --cpus $(CPUS)
+
 .PHONY: clean qemu qemu-gdb gdb ph barrier scheduler_visualizer test-rbtree test test-unit test-grader \
-	test-integration test-labs test-usertests test-full test-suite schedviz
+	test-integration test-labs test-usertests test-full test-suite schedviz largefiletest

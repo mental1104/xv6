@@ -7,7 +7,8 @@ tests/
 ├── guest/                 编译并在 xv6 内运行的 C/ASM/脚本测试源码
 ├── host/                  在宿主机 pthread 环境运行的测试源码
 ├── legacy/                保留的课程评分脚本与其支持库
-├── run.py                 宿主机 QEMU 生命周期、超时、日志和 suite 编排
+├── run.py                 日常 QEMU 生命周期、超时、日志和 suite 编排
+├── run_largefile.py       显式 4 GiB 稀疏镜像回归编排
 ├── test_runner.py         不启动 QEMU 的 Python runner 自测
 └── README.md
 ```
@@ -26,7 +27,7 @@ tests/
 测试注册：tests/guest/xv6test.c
 → 按 group/name 注册、fork/exec 隔离、wait 回收、输出 XV6TEST 协议
 
-宿主机基础设施：tests/run.py
+宿主机基础设施：tests/run.py / tests/run_largefile.py
 → 启停 QEMU、设置 timeout、保存日志、隔离磁盘 snapshot、汇总 suite
 ```
 
@@ -116,6 +117,26 @@ XV6TEST done status=0
 
 Lab9 的两个测试虽然都属于 `lab9` group，但默认宿主机 suite 使用两次 `--run` 并分别启动 snapshot。`bigfile` 会显著修改文件系统，不应与 `symlinktest` 共用自动化 snapshot。
 
+## 显式 4 GiB 文件回归
+
+Issue #29 的完整回归不属于日常 `pr`、`full` 或 `make test`。它使用宿主机稀疏文件创建约 4.25M 个 1 KiB 块的镜像，但 guest 仍会真实顺序写入和读回超过 `2^32` 字节的数据。
+
+```bash
+# 默认 3 CPU。
+make largefiletest
+
+# 补充单核观察；单核结果不能替代多核结果。
+make largefiletest CPUS=1
+
+# 只启动大镜像，进入 shell 后手工执行。
+make qemu FSIMG=fs-large.img
+xv6test --run largefs-4gib
+```
+
+`tests/guest/largefile.c` 依次验证：直接/一级/二级/三级索引、跨越 `2^32` 的 `fstat.size`、完整顺序读回、磁盘满返回短写而非 panic、删除大文件、以及重新进入三级索引所需的数据块可再次分配。原始日志写入 `test-results/largefs-4gib/`。
+
+教学边界：为了让一次 `unlink` 原子回收 4 GiB 文件可能触及的约 519 个位图块，本实验把日志区域扩展为 600 块，并将单次文件系统操作的最坏写集预留为 540 块。这会使文件系统操作在日志层基本串行化；它是保证最小完整闭环的 xv6 教学取舍，不代表生产文件系统应通过超大事务删除大文件。
+
 ## 新增测试的最短路径
 
 1. guest 测试放入 `tests/guest/`，host-only 测试放入 `tests/host/`；不要放入 `user/`、`kernel/` 或 `notxv6/`。
@@ -143,7 +164,7 @@ make test CPUS=3
 
 ## 日志与 snapshot
 
-每个原子 QEMU suite 从基础 `fs.img` 以 `-snapshot` 启动，写入在实例结束后丢弃。原始输出保存在：
+每个原子 QEMU suite 从基础镜像以 `-snapshot` 启动，写入在实例结束后丢弃。原始输出保存在：
 
 ```text
 test-results/<suite>/<test>.log
