@@ -1,0 +1,34 @@
+name: PR 89 rebase helper
+
+on:
+  push:
+    branches:
+      - concept/28-preemptive-uthread
+
+permissions:
+  contents: write
+
+jobs:
+  merge-main:
+    if: github.repository == 'mental1104/xv6'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: concept/28-preemptive-uthread
+          fetch-depth: 0
+
+      - name: Merge latest main and remove helper
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-edit origin/main
+          sed -i 's/TRAPfRAME/TRAPFRAME/g' kernel/proc.c
+          test "$(grep -c TRAPfRAME kernel/proc.c || true)" -eq 0
+          git rm .github/workflows/pr89-rebase.yml
+          git add kernel/proc.c
+          git commit --amend --no-edit
+          git push origin HEAD:concept/28-preemptive-uthread
