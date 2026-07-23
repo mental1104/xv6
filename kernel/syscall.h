@@ -37,3 +37,7 @@
 #define SYS_sched_get_stats  36
 #define SYS_schedtrace       37
 #define SYS_ucontext_switch  38
+#define SYS_setpgid          39
+#define SYS_getpgid          40
+#define SYS_procctl          41
+#define SYS_tcsetpgrp        42
