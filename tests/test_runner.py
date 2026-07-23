@@ -127,6 +127,20 @@ class SuiteCompositionTests(unittest.TestCase):
         }
         self.assertEqual(expected, set(expanded))
 
+    def test_pr_suite_excludes_explicit_4gib_largefs(self) -> None:
+        expanded = RUNNER._deduplicate(RUNNER._expand_suite("pr"))
+        self.assertNotIn("largefs-4gib", expanded)
+
+    def test_lab8_pr_suite_excludes_slow_usertests(self) -> None:
+        commands = [test.commands for test in RUNNER.SUITES["lab8-locks"].tests]
+        self.assertEqual(
+            [
+                ("xv6test --run lab8-createdelete",),
+                ("xv6test --run lab8-fourfiles",),
+            ],
+            commands,
+        )
+
     def test_full_suite_uses_complete_usertests(self) -> None:
         expanded = RUNNER._deduplicate(RUNNER._expand_suite("full"))
         self.assertIn("usertests-full", expanded)

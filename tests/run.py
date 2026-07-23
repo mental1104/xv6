@@ -7,6 +7,7 @@ import argparse
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -62,7 +63,7 @@ class Suite:
 
 @dataclass(frozen=True)
 class QemuCommandResult:
-    """记录一次 guest 命令等待 shell prompt 的输出和失败原因。"""
+    """记录一次 guest 命令等待 Shell prompt 的输出和失败原因。"""
 
     output: str
     failure: str | None = None
@@ -144,13 +145,21 @@ SUITES: dict[str, Suite] = {
     ),
     "lab8-locks": Suite(
         name="lab8-locks",
-        description="Lab8 allocator and buffer-cache guest regression",
+        description="Fast Lab8 buffer-cache guest regression",
         tests=(
+            # 两个快速项仍在同一个 QEMU snapshot 中顺序执行。拆开看门狗和日志
+            # 只为精确定位慢路径或阻塞点，不通过重启 guest 隐藏跨测试状态问题。
             TestCase(
-                "lab8-guest-tests",
-                ("xv6test --group lab8",),
+                "lab8-createdelete",
+                ("xv6test --run lab8-createdelete",),
                 expected=GUEST_SUCCESS,
-                timeout=600,
+                timeout=180,
+            ),
+            TestCase(
+                "lab8-fourfiles",
+                ("xv6test --run lab8-fourfiles",),
+                expected=GUEST_SUCCESS,
+                timeout=180,
             ),
         ),
     ),
@@ -162,9 +171,7 @@ SUITES: dict[str, Suite] = {
                 "lab9-bigfile",
                 ("xv6test --run lab9-bigfile",),
                 expected=GUEST_SUCCESS,
-                # 2 GiB 物理内存与高半区 alias 映射增加了共享 CI 主机的页表
-                # 和 TLB 压力；保留 20 分钟预算，仍由有限看门狗识别真正挂死。
-                timeout=1200,
+                timeout=120,
             ),
         ),
     ),
@@ -302,6 +309,7 @@ def _write_log(suite: str, test: str, output: str) -> Path:
 def _run_host_test(suite: str, test: TestCase) -> None:
     """顺序执行一个 host 测试的命令并检查退出状态和输出。"""
 
+    started = time.perf_counter()
     chunks: list[str] = []
     for command in test.commands:
         completed = subprocess.run(
@@ -319,16 +327,18 @@ def _run_host_test(suite: str, test: TestCase) -> None:
             output = "\n".join(chunks)
             log_path = _write_log(suite, test.name, output)
             raise TestFailure(
-                f"host command exited with {completed.returncode}: {command}; log: {log_path}"
+                f"host command exited with {completed.returncode}: {command}; "
+                f"log: {log_path}"
             )
     output = "\n".join(chunks)
     log_path = _write_log(suite, test.name, output)
     _assert_output(test, output)
-    print(f"PASS {test.name} ({log_path.relative_to(REPO_ROOT)})")
+    elapsed = time.perf_counter() - started
+    print(f"PASS {test.name} {elapsed:.2f}s ({log_path.relative_to(REPO_ROOT)})")
 
 
 def _start_qemu(cpus: int) -> pexpect.spawn:
-    """启动使用 snapshot 的 xv6 QEMU，并等待 shell 提示符。"""
+    """启动使用 snapshot 的 xv6 QEMU，并等待 Shell 提示符。"""
 
     command = (
         "make -s --no-print-directory qemu "
@@ -363,15 +373,47 @@ def _stop_qemu(child: pexpect.spawn) -> None:
         child.terminate(force=True)
 
 
-def _wait_for_qemu_command(child: pexpect.spawn) -> QemuCommandResult:
-    """等待 guest 命令返回 shell，并对已知内核致命输出快速失败。
+def _capture_qemu_procdump(child: pexpect.spawn) -> str:
+    """在 guest 命令超时时触发 Ctrl-P，并有界收集进程状态。
 
     Args:
-        child: 已启动并进入 xv6 shell 的 pexpect 子进程；函数会消费本次命令输出。
+        child: 仍在运行的 QEMU pexpect 子进程。函数会向 guest console 发送
+            Ctrl-P，并消费随后到达的诊断输出。
+
+    Returns:
+        带稳定标题的诊断文本。若 guest 未产生输出，也会返回明确占位信息，
+        使日志能够区分“未采集”与“采集后为空”。
+
+    Ctrl-P 是 xv6 保留的 procdump 控制键。这里最多执行 20 次 0.1 秒读取，
+    避免诊断本身无限阻塞原看门狗的失败收敛路径。
+    """
+
+    child.sendcontrol("p")
+    chunks: list[str] = []
+    for _ in range(20):
+        try:
+            chunk = child.read_nonblocking(size=4096, timeout=0.1)
+        except (pexpect.TIMEOUT, pexpect.EOF):
+            break
+        if chunk:
+            chunks.append(chunk)
+
+    diagnostic = "".join(chunks)
+    if not diagnostic:
+        diagnostic = "<Ctrl-P produced no process output>\n"
+    return "\nXV6TEST timeout diagnostics (Ctrl-P procdump):\n" + diagnostic
+
+
+def _wait_for_qemu_command(child: pexpect.spawn) -> QemuCommandResult:
+    """等待 guest 命令返回 Shell，并对已知内核致命输出快速失败。
+
+    Args:
+        child: 已启动并进入 xv6 Shell 的 pexpect 子进程；函数会消费本次命令输出。
 
     Returns:
         返回已捕获输出和可选失败原因。出现 prompt 时 failure 为 None；出现
         panic、kerneltrap、EOF 或 timeout 时返回可直接写入 TestFailure 的原因。
+        timeout 还会附带一次有界 Ctrl-P procdump，供定位阻塞进程和 sleep channel。
     """
 
     expectations = (
@@ -408,6 +450,7 @@ def _wait_for_qemu_command(child: pexpect.spawn) -> QemuCommandResult:
             failure="QEMU exited before returning to the shell",
         )
 
+    output += _capture_qemu_procdump(child)
     return QemuCommandResult(
         output=output,
         failure="QEMU did not return to the shell before timeout",
@@ -415,12 +458,13 @@ def _wait_for_qemu_command(child: pexpect.spawn) -> QemuCommandResult:
 
 
 def _run_qemu_tests(suite: str, tests: Sequence[TestCase], cpus: int) -> None:
-    """在一个原子 suite 的 QEMU snapshot 内顺序执行其 guest 命令。"""
+    """在一个原子 suite 的同一 QEMU snapshot 内顺序执行全部 guest 命令。"""
 
     child = _start_qemu(cpus)
     boot_output = child.before
     try:
         for test in tests:
+            started = time.perf_counter()
             chunks = [boot_output]
             for command in test.commands:
                 child.timeout = test.timeout
@@ -434,7 +478,8 @@ def _run_qemu_tests(suite: str, tests: Sequence[TestCase], cpus: int) -> None:
             output = "\n".join(chunks)
             log_path = _write_log(suite, test.name, output)
             _assert_output(test, output)
-            print(f"PASS {test.name} ({log_path.relative_to(REPO_ROOT)})")
+            elapsed = time.perf_counter() - started
+            print(f"PASS {test.name} {elapsed:.2f}s ({log_path.relative_to(REPO_ROOT)})")
     finally:
         _stop_qemu(child)
 
