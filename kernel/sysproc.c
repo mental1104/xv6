@@ -81,7 +81,8 @@ job_register_fork_child(int child_pid)
  * 将当前进程或其直接子进程放入指定进程组。
  *
  * pid 为 0 时选择当前进程；pgid 为 0 时创建以目标 PID 为组号的新进程组。
- * 为保持教学接口可审阅，本实现不允许修改任意无亲缘关系进程。
+ * ZOMBIE 直接子进程在 wait() 回收前仍保留 PID/PGID，使快速退出命令不会在
+ * 父子双方 setpgid 的竞态窗口中被误判为作业控制初始化失败。
  */
 int
 setpgid(int pid, int pgid)
@@ -97,7 +98,6 @@ setpgid(int pid, int pgid)
   for(struct proc *target = proc; target < &proc[NPROC]; target++){
     acquire(&target->lock);
     if(target->pid == target_pid && target->state != UNUSED &&
-       target->state != ZOMBIE &&
        (target == caller || target->parent == caller)){
       struct job_proc_state *state = job_state_locked(target);
       state->pgid = pgid == 0 ? target_pid : pgid;
@@ -112,7 +112,7 @@ setpgid(int pid, int pgid)
   return result;
 }
 
-/** 查询当前进程或直接子进程的 PGID。 */
+/** 查询当前进程或直接子进程的 PGID，ZOMBIE 在回收前仍可查询。 */
 int
 getpgid(int pid)
 {
@@ -127,9 +127,39 @@ getpgid(int pid)
   for(struct proc *target = proc; target < &proc[NPROC]; target++){
     acquire(&target->lock);
     if(target->pid == target_pid && target->state != UNUSED &&
-       target->state != ZOMBIE &&
        (target == caller || target->parent == caller)){
       result = job_state_locked(target)->pgid;
+      release(&target->lock);
+      break;
+    }
+    release(&target->lock);
+  }
+  release(&wait_lock);
+  return result;
+}
+
+/**
+ * 保持 kill(pid) 的单进程语义，同时让 STOPPED 进程重新可调度以完成退出。
+ */
+static int
+job_kill(int pid)
+{
+  int result = -1;
+
+  if(pid <= 0)
+    return -1;
+
+  acquire(&wait_lock);
+  for(struct proc *target = proc; target < &proc[NPROC]; target++){
+    acquire(&target->lock);
+    if(target->pid == pid && target->state != UNUSED){
+      struct job_proc_state *state = job_state_locked(target);
+      target->killed = 1;
+      state->stop_requested = 0;
+      target->stop_requested = 0;
+      if(target->state == SLEEPING || target->state == STOPPED)
+        target->state = RUNNABLE;
+      result = 0;
       release(&target->lock);
       break;
     }
@@ -468,7 +498,7 @@ sys_kill(void)
 
   if(argint(0, &pid) < 0)
     return -1;
-  return kill(pid);
+  return job_kill(pid);
 }
 
 // return how many clock tick interrupts have occurred
