@@ -18,6 +18,7 @@
 #include "defs.h"
 #include "proc.h"
 #include "console.h"
+#include "jobctl.h"
 
 #define BACKSPACE 0x100
 #define C(x)  ((x)-'@')  // Control-x
@@ -39,10 +40,12 @@ consputc(int c)
 }
 
 /**
- * 保存 console 输入环形缓冲区及当前最小行规约状态。
+ * 保存 console 输入环形缓冲区、最小行规约和单控制台前台进程组。
  *
  * raw_owner 和 raw_file 共同标识唯一允许读取、重复设置和释放 raw mode 的 Shell。
- * 所有字段均受 cons.lock 保护；raw mode 只改变输入提交与读取语义，不改变输出路径。
+ * fg_pgid 表示当前可读取终端输入的进程组；Ctrl-C/Ctrl-Z 只在 cons.lock 下记录
+ * pending action，真正的进程表扫描由安全锁边界外的 console_apply_pending_control()
+ * 完成。所有字段均受 cons.lock 保护。
  */
 struct {
   struct spinlock lock;
@@ -56,6 +59,10 @@ struct {
   int raw;
   int raw_owner;
   struct file *raw_file;
+  int shell_pgid;
+  int fg_pgid;
+  int control_pgid;
+  int control_action;
 } cons;
 
 /**
@@ -113,7 +120,10 @@ set_console_mode(struct proc *p, struct file *file, int mode)
 
   acquire(&cons.lock);
   if(mode == CONSOLE_MODE_RAW){
-    if(cons.raw){
+    // 只有当前前台 Shell 可以接管逐字节输入；后台进程不能借 raw mode 绕过隔离。
+    if(cons.fg_pgid != 0 && p->pgid != cons.fg_pgid){
+      result = -1;
+    } else if(cons.raw){
       if(cons.raw_owner != p->pid || cons.raw_file != file)
         result = -1;
     } else if(cons.r != cons.w || cons.w != cons.e){
@@ -171,13 +181,73 @@ sys_consolemode(void)
   struct file *file;
   int fd;
   int mode;
+  int pgid;
 
   if(argint(0, &fd) < 0 || argint(1, &mode) < 0)
     return -1;
   if((file = console_file(p, fd)) == 0 ||
      strncmp(p->name, "sh", sizeof(p->name)) != 0)
     return -1;
+  if((pgid = getpgid(0)) < 0)
+    return -1;
+  p->pgid = pgid;
   return set_console_mode(p, file, mode);
+}
+
+/**
+ * 将单控制台的前台输入所有权交给一个进程组。
+ *
+ * 只有最初声明控制台所有权的交互式 sh 进程组可以切换。目标必须是 Shell 自身
+ * 或其直接子进程领导的现有进程组；本接口不实现 session、多个 TTY 或 tcgetpgrp。
+ */
+uint64
+sys_tcsetpgrp(void)
+{
+  struct proc *p = myproc();
+  int pgid;
+  int caller_pgid;
+
+  if(argint(0, &pgid) < 0 || pgid <= 0 ||
+     strncmp(p->name, "sh", sizeof(p->name)) != 0)
+    return -1;
+  if((caller_pgid = getpgid(0)) < 0)
+    return -1;
+  if(pgid != caller_pgid && getpgid(pgid) != pgid)
+    return -1;
+
+  acquire(&cons.lock);
+  if(cons.shell_pgid == 0)
+    cons.shell_pgid = caller_pgid;
+  if(cons.shell_pgid != caller_pgid || cons.raw){
+    release(&cons.lock);
+    return -1;
+  }
+  cons.fg_pgid = pgid;
+  release(&cons.lock);
+  return 0;
+}
+
+/**
+ * 在 console 锁之外应用 Ctrl-C/Ctrl-Z 记录的进程组动作。
+ *
+ * 任意 CPU 的 trap 路径都可以调用本函数。调用者只会竞争很短的 cons.lock，取走
+ * pending action 后再扫描 proc 表，从而保持 `cons.lock -> p->lock` 不形成锁序。
+ */
+void
+console_apply_pending_control(void)
+{
+  int pgid;
+  int action;
+
+  acquire(&cons.lock);
+  pgid = cons.control_pgid;
+  action = cons.control_action;
+  cons.control_pgid = 0;
+  cons.control_action = 0;
+  release(&cons.lock);
+
+  if(pgid > 0 && action != 0)
+    proc_group_control(pgid, action);
 }
 
 //
@@ -206,7 +276,8 @@ consolewrite(int user_src, uint64 src, int n)
  * @param user_dst 非零表示 dst 是用户地址，零表示内核地址。
  * @param dst 输出地址。
  * @param n 最大读取字节数。
- * @return 已复制字节数；进程被杀死、copyout 失败或 raw mode 非 owner 读取返回 -1。
+ * @return 已复制字节数；进程被杀死、copyout 失败、后台进程组或 raw 非 owner
+ *         读取返回 -1。
  *
  * cooked mode 保留原 xv6 Ctrl-D 和换行返回语义。raw mode 只允许 owner 读取，并
  * 立即返回当前可用字节；Shell 每次请求一个字节，从而在用户态维护 Escape 状态机。
@@ -217,10 +288,19 @@ consoleread(int user_dst, uint64 dst, int n)
   uint target;
   int c;
   char cbuf;
-  int pid = myproc()->pid;
+  struct proc *p = myproc();
+  int pid = p->pid;
+  int pgid = getpgid(0);
+
+  if(pgid < 0)
+    return -1;
 
   target = n;
   acquire(&cons.lock);
+  if(cons.fg_pgid != 0 && cons.fg_pgid != pgid){
+    release(&cons.lock);
+    return -1;
+  }
   if(cons.raw && cons.raw_owner != pid){
     release(&cons.lock);
     return -1;
@@ -229,7 +309,11 @@ consoleread(int user_dst, uint64 dst, int n)
   while(n > 0){
     // wait until interrupt handler has put some input into cons.buffer.
     while(cons.r == cons.w){
-      if(myproc()->killed){
+      if(p->killed){
+        release(&cons.lock);
+        return -1;
+      }
+      if(cons.fg_pgid != 0 && cons.fg_pgid != pgid){
         release(&cons.lock);
         return -1;
       }
@@ -280,9 +364,9 @@ consoleread(int user_dst, uint64 dst, int n)
  *
  * @param c UART 提供的输入字节。
  *
- * Ctrl-P 始终保留为内核 procdump 控制键。raw mode 不回显、不转换 CR，也不解释
- * Backspace、Ctrl-U 或 Ctrl-D，并在每个字节到达时唤醒 owner。cooked mode 保持
- * 原 xv6 的逐行提交与内核编辑行为。
+ * Ctrl-P 始终保留为内核 procdump 控制键。当前前台不是 Shell 时，Ctrl-C/Ctrl-Z
+ * 分别记录 TERM/STOP；扫描进程组留给 trap 安全点。raw mode 不回显、不转换 CR，
+ * 也不解释 Backspace、Ctrl-U 或 Ctrl-D，并在每个字节到达时唤醒 owner。
  */
 void
 consoleintr(int c)
@@ -291,6 +375,18 @@ consoleintr(int c)
 
   if(c == C('P')){
     procdump();
+    release(&cons.lock);
+    return;
+  }
+
+  if((c == C('C') || c == C('Z')) && cons.fg_pgid > 0 &&
+     cons.fg_pgid != cons.shell_pgid){
+    int action = c == C('C') ? JOBCTL_TERM : JOBCTL_STOP;
+    // TERM 优先级高于尚未执行的 STOP，避免快速 Ctrl-Z/Ctrl-C 留下永久停止作业。
+    if(cons.control_action == 0 || action == JOBCTL_TERM){
+      cons.control_pgid = cons.fg_pgid;
+      cons.control_action = action;
+    }
     release(&cons.lock);
     return;
   }
