@@ -116,7 +116,7 @@ $U/_usertests: $T/usertests_2g.o $(ULIB)
 
 $U/_sh: $U/shentry.o $U/sh.o $U/memvizlib.o $(ULIB)
 	$(LD) $(LDFLAGS) -N -e sh_entry -Ttext 0 -o $@ $^
-	$(OBJDUMP) -S $U/sh.asm
+	$(OBJDUMP) -S $@ > $U/sh.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/sh.sym
 
 $U/_memviz: $U/memviz.o $U/memvizlib.o $(ULIB)
