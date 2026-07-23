@@ -22,6 +22,17 @@ int open(const char*, int);
 int mknod(const char*, short, short);
 int unlink(const char*);
 int fstat(int fd, struct stat*);
+
+/**
+ * 重新定位普通文件描述符的共享 64 位偏移。
+ *
+ * @param fd 已打开的普通文件描述符；pipe 和 device 不支持定位。
+ * @param offset 相对 whence 基准的有符号字节偏移。
+ * @param whence SEEK_SET、SEEK_CUR 或 SEEK_END。
+ * @return 成功返回新的非负偏移；参数非法或结果越界时返回 -1。
+ */
+int64 lseek(int fd, int64 offset, int whence);
+
 int link(const char*, const char*);
 int mkdir(const char*);
 int chdir(const char*);

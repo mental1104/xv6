@@ -41,3 +41,4 @@
 #define SYS_getpgid          40
 #define SYS_procctl          41
 #define SYS_tcsetpgrp        42
+#define SYS_lseek            43

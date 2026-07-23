@@ -62,6 +62,20 @@ argint(int n, int *ip)
   return 0;
 }
 
+/**
+ * 读取第 n 个保留完整寄存器宽度的有符号系统调用参数。
+ *
+ * @param n 参数下标，范围为 0 到 5。
+ * @param ip 接收符号扩展语义后的 64 位值；调用者持有该存储。
+ * @return 参数寄存器存在时返回 0；非法下标由 argraw() 触发 panic。
+ */
+int
+argint64(int n, int64 *ip)
+{
+  *ip = (int64)argraw(n);
+  return 0;
+}
+
 // Retrieve an argument as a pointer.
 // Doesn't check for legality, since
 // copyin/copyout will do that.
@@ -94,6 +108,7 @@ extern uint64 sys_fstat(void);
 extern uint64 sys_getpid(void);
 extern uint64 sys_kill(void);
 extern uint64 sys_link(void);
+extern uint64 sys_lseek(void);
 extern uint64 sys_mkdir(void);
 extern uint64 sys_mknod(void);
 extern uint64 sys_open(void);
@@ -170,6 +185,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_getpgid]          sys_getpgid,
 [SYS_procctl]          sys_procctl,
 [SYS_tcsetpgrp]        sys_tcsetpgrp,
+[SYS_lseek]            sys_lseek,
 };
 
 void
