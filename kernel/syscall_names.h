@@ -37,6 +37,7 @@ static const char *const syscall_names[] = {
 [SYS_memsnapshot] = "memsnapshot",
 [SYS_vaquery]    = "vaquery",
 [SYS_waitpid]    = "waitpid",
+[SYS_consolemode] = "consolemode",
 };
 
 // 名称表中可访问的元素数量（包含下标 0），用于限制遍历和查找范围。

@@ -37,6 +37,7 @@ int munmap(void *addr, int length);
 int backtrace(void);
 int memsnapshot(int view, struct memviz_snapshot *snapshot);
 int vaquery(uint64 va, struct memviz_va_query *query);
+int consolemode(int fd, int mode);
 
 // ulib.c
 int stat(const char*, struct stat*);
