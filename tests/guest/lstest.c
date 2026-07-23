@@ -5,7 +5,7 @@
 
 #define OUTPUT_SIZE 1024
 
-// 捕获缓冲区放在 BSS，避免占满 xv6 的单页用户栈。
+// 1024 字节足以覆盖专项输出；放在 BSS 避免占满 xv6 的单页用户栈。
 static char output[OUTPUT_SIZE];
 
 /**
