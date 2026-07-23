@@ -14,14 +14,15 @@
 
 #define TIMEOUT_SECONDS 180
 #define READ_CHUNK_SIZE 4096
-#define MAX_EVENTS 512
-#define MAX_SEGMENTS 256
+#define MAX_EVENTS 2048
+#define MAX_SEGMENTS 2048
 #define MAX_CPUS 64
 
 struct options {
   const char *policy;
   const char *trace_path;
   const char *svg_path;
+  const char *demo_args;
   int cpus;
 };
 
@@ -70,7 +71,7 @@ static void
 usage(const char *program)
 {
   fprintf(stderr,
-          "usage: %s --policy <rr|fifo|sjf|stcf|mlfq|cfs> --cpus <n> --trace <path> --svg <path>\n",
+          "usage: %s --policy <rr|fifo|sjf|stcf|mlfq|cfs> --cpus <n> --trace <path> --svg <path> [--demo-args <args>]\n",
           program);
 }
 
@@ -100,6 +101,8 @@ parse_options(int argc, char **argv, struct options *options)
       options->trace_path = argv[++i];
     } else if(strcmp(argv[i], "--svg") == 0 && i + 1 < argc){
       options->svg_path = argv[++i];
+    } else if(strcmp(argv[i], "--demo-args") == 0 && i + 1 < argc){
+      options->demo_args = argv[++i];
     } else {
       return -1;
     }
@@ -433,8 +436,8 @@ write_svg(const char *path, const struct trace_data *trace)
 static int
 run_session(const struct options *options)
 {
-  static const char command[] = "schedviz demo --plain\nschedviz dump\n";
   static const char quit[] = {1, 'x'};
+  char command[256];
   struct output_buffer output = {0};
   int input_fd = -1;
   int output_fd = -1;
@@ -445,6 +448,14 @@ run_session(const struct options *options)
   time_t started = monotonic_seconds();
   if(pid < 0)
     return 1;
+  // QEMU shell 命令必须一次写入，过长参数直接失败，避免执行被截断的实验。
+  if(options->demo_args && options->demo_args[0]){
+    if(snprintf(command, sizeof(command), "schedviz demo %s\nschedviz dump\n",
+                options->demo_args) >= (int)sizeof(command))
+      return 1;
+  } else {
+    snprintf(command, sizeof(command), "schedviz demo --plain\nschedviz dump\n");
+  }
   for(;;){
     time_t now = monotonic_seconds();
     if(now == (time_t)-1 || started == (time_t)-1 ||

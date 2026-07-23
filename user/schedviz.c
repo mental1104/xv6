@@ -5,8 +5,20 @@
 #include "kernel/schedtrace_abi.h"
 #include "user/user.h"
 
-#define MAX_WORKERS 4
+#define MAX_WORKERS SCHEDTRACE_MAX_FILTERS
 #define CHART_WIDTH 64
+// 长场景把用户指定的 seconds 映射为总 CPU tick，保证实验能稳定结束。
+#define TICKS_PER_SECOND 1
+
+#ifndef XV6_CPUS
+#define XV6_CPUS NCPU
+#endif
+
+struct demo_options {
+  int plain;
+  int seconds;
+  int workers;
+};
 
 struct worker_spec {
   int id;
@@ -33,6 +45,7 @@ struct run_segment {
 };
 
 static struct schedtrace_snapshot snapshot;
+static struct run_segment chart_segments[SCHEDTRACE_MAX_EVENTS / 2];
 
 /**
  * usage 输出 schedviz 支持的稳定命令接口。
@@ -40,7 +53,66 @@ static struct schedtrace_snapshot snapshot;
 static void
 usage(void)
 {
-  fprintf(2, "usage: schedviz demo [--plain] | schedviz dump\n");
+  fprintf(2, "usage: schedviz demo [--plain] [--seconds n] [--workers n] | schedviz dump\n");
+}
+
+/**
+ * parse_positive_int 解析正整数命令行参数。
+ *
+ * @param text 参数文本，只接受十进制数字。
+ * @param value 输出解析后的正整数。
+ * @return 参数合法返回 0；为空、包含非数字或小于 1 时返回 -1。
+ */
+static int
+parse_positive_int(char *text, int *value)
+{
+  int result = 0;
+
+  if(text == 0 || text[0] == 0)
+    return -1;
+  for(int i = 0; text[i]; i++){
+    if(text[i] < '0' || text[i] > '9')
+      return -1;
+    result = result * 10 + text[i] - '0';
+  }
+  if(result < 1)
+    return -1;
+  *value = result;
+  return 0;
+}
+
+/**
+ * parse_demo_options 解析 demo 子命令的可选实验参数。
+ *
+ * @param argc main 收到的参数数量。
+ * @param argv main 收到的参数数组。
+ * @param options 输出 demo 配置；seconds/workers 为 0 表示使用短默认场景。
+ * @return 参数合法返回 0；未知参数或越界返回 -1。
+ */
+static int
+parse_demo_options(int argc, char **argv, struct demo_options *options)
+{
+  memset(options, 0, sizeof(*options));
+  for(int i = 2; i < argc; i++){
+    if(strcmp(argv[i], "--plain") == 0){
+      options->plain = 1;
+    } else if(strcmp(argv[i], "--seconds") == 0 && i + 1 < argc){
+      if(parse_positive_int(argv[++i], &options->seconds) < 0)
+        return -1;
+    } else if(strcmp(argv[i], "--workers") == 0 && i + 1 < argc){
+      if(parse_positive_int(argv[++i], &options->workers) < 0)
+        return -1;
+    } else {
+      return -1;
+    }
+  }
+  if(options->workers > MAX_WORKERS)
+    return -1;
+  if(options->seconds > 0 && options->workers == 0)
+    options->workers = 8;
+  if(options->workers > 0 && options->seconds == 0)
+    options->seconds = 30;
+  return 0;
 }
 
 /**
@@ -208,8 +280,10 @@ worker_main(struct worker_spec spec, int readyfd, int startfd)
     exit(1);
   if(write_exact(readyfd, &token, 1) < 0)
     exit(1);
+  close(readyfd);
   if(read_exact(startfd, &token, 1) < 0)
     exit(1);
+  close(startfd);
 
   if(spec.wall_ticks > 0){
     deadline = uptime() + spec.wall_ticks;
@@ -261,14 +335,11 @@ run_standard_workers(struct worker_spec specs[], int count,
                      struct worker_info workers[])
 {
   int ready[2];
-  int start[MAX_WORKERS][2];
+  int start[2];
   char token;
 
-  if(pipe(ready) < 0)
+  if(pipe(ready) < 0 || pipe(start) < 0)
     return -1;
-  for(int i = 0; i < count; i++)
-    if(pipe(start[i]) < 0)
-      return -1;
 
   for(int i = 0; i < count; i++){
     int pid = fork();
@@ -276,8 +347,8 @@ run_standard_workers(struct worker_spec specs[], int count,
       return -1;
     if(pid == 0){
       close(ready[0]);
-      close(start[i][1]);
-      worker_main(specs[i], ready[1], start[i][0]);
+      close(start[1]);
+      worker_main(specs[i], ready[1], start[0]);
     }
     workers[i].id = specs[i].id;
     workers[i].pid = pid;
@@ -287,8 +358,7 @@ run_standard_workers(struct worker_spec specs[], int count,
   }
 
   close(ready[1]);
-  for(int i = 0; i < count; i++)
-    close(start[i][0]);
+  close(start[0]);
   for(int i = 0; i < count; i++)
     if(read_exact(ready[0], &token, 1) < 0)
       return -1;
@@ -298,15 +368,14 @@ run_standard_workers(struct worker_spec specs[], int count,
     return -1;
   schedtrace(SCHEDTRACE_OP_START, 0, 0);
   for(int i = 0; i < count; i++)
-    if(write_exact(start[i][1], "s", 1) < 0)
+    if(write_exact(start[1], "s", 1) < 0)
       return -1;
+  close(start[1]);
 
   for(int i = 0; i < count; i++)
     wait(0);
   schedtrace(SCHEDTRACE_OP_STOP, 0, 0);
   close(ready[0]);
-  for(int i = 0; i < count; i++)
-    close(start[i][1]);
   return current_snapshot();
 }
 
@@ -366,6 +435,140 @@ run_stcf_workers(struct worker_info workers[])
   close(ready[0]);
   close(start[0][1]);
   close(start[1][1]);
+  return current_snapshot();
+}
+
+/**
+ * fill_scaled_burst_specs 生成总运行量接近目标窗口的有限 CPU burst。
+ *
+ * @param specs 输出 worker 场景数组。
+ * @param count worker 数量。
+ * @param total_ticks 目标总 CPU tick，通常为 seconds * CPUS。
+ */
+static void
+fill_scaled_burst_specs(struct worker_spec specs[], int count, int total_ticks)
+{
+  int pattern[] = {2, 5, 8, 13, 21, 3, 7, 11};
+  int pattern_count = sizeof(pattern) / sizeof(pattern[0]);
+  int sum = 0;
+
+  for(int i = 0; i < count; i++)
+    sum += pattern[i % pattern_count];
+  if(total_ticks < count)
+    total_ticks = count;
+  for(int i = 0; i < count; i++){
+    int ticks = pattern[i % pattern_count] * total_ticks / sum;
+    if(ticks < 1)
+      ticks = 1;
+    specs[i].id = i;
+    specs[i].hint = ticks;
+    specs[i].weight = 1024;
+    specs[i].runtime_ticks = ticks;
+    specs[i].wall_ticks = 0;
+  }
+}
+
+/**
+ * apply_cfs_weight_pattern 为 CFS 长场景设置一组可观察的权重梯度。
+ *
+ * @param specs 输出 worker 场景数组。
+ * @param count worker 数量。
+ */
+static void
+apply_cfs_weight_pattern(struct worker_spec specs[], int count)
+{
+  int weights[] = {2048, 1024, 512, 1536, 768, 256, 3072, 1280};
+  int weight_count = sizeof(weights) / sizeof(weights[0]);
+
+  for(int i = 0; i < count; i++)
+    specs[i].weight = weights[i % weight_count];
+}
+
+/**
+ * run_scaled_stcf_workers 运行长任务先到、多个短任务延迟到达的 STCF 长场景。
+ *
+ * @param count worker 数量，至少 2。
+ * @param seconds 目标观察秒数。
+ * @param workers 输出 worker PID 与 legend 信息。
+ * @return workload 完成且采样成功返回 0，否则返回 -1。
+ */
+static int
+run_scaled_stcf_workers(int count, int seconds, struct worker_info workers[])
+{
+  struct worker_spec specs[MAX_WORKERS];
+  int ready[2];
+  int long_start[2];
+  int short_start[2];
+  char token;
+  int total_ticks = seconds * TICKS_PER_SECOND;
+
+  if(count < 2)
+    count = 2;
+  specs[0].id = 0;
+  specs[0].hint = total_ticks;
+  specs[0].weight = 1024;
+  specs[0].runtime_ticks = total_ticks;
+  specs[0].wall_ticks = 0;
+  for(int i = 1; i < count; i++){
+    specs[i].id = i;
+    specs[i].hint = 2 + (i % 3);
+    specs[i].weight = 1024;
+    specs[i].runtime_ticks = specs[i].hint;
+    specs[i].wall_ticks = 0;
+  }
+
+  if(pipe(ready) < 0 || pipe(long_start) < 0 || pipe(short_start) < 0)
+    return -1;
+
+  for(int i = 0; i < count; i++){
+    int pid = fork();
+    if(pid < 0)
+      return -1;
+    if(pid == 0){
+      close(ready[0]);
+      close(long_start[1]);
+      close(short_start[1]);
+      if(i == 0){
+        close(short_start[0]);
+        worker_main(specs[i], ready[1], long_start[0]);
+      } else {
+        close(long_start[0]);
+        worker_main(specs[i], ready[1], short_start[0]);
+      }
+    }
+    workers[i].id = i;
+    workers[i].pid = pid;
+    workers[i].hint = specs[i].hint;
+    workers[i].weight = specs[i].weight;
+    workers[i].glyph = 'A' + i;
+  }
+
+  close(ready[1]);
+  close(long_start[0]);
+  close(short_start[0]);
+  for(int i = 0; i < count; i++)
+    if(read_exact(ready[0], &token, 1) < 0)
+      return -1;
+
+  schedtrace(SCHEDTRACE_OP_RESET, 0, 0);
+  if(register_workers(workers, count) < 0)
+    return -1;
+  if(sched_set_hint(1) < 0)
+    return -1;
+  schedtrace(SCHEDTRACE_OP_START, 0, 0);
+  if(write_exact(long_start[1], "l", 1) < 0)
+    return -1;
+  close(long_start[1]);
+  sleep(2);
+  for(int i = 1; i < count; i++)
+    if(write_exact(short_start[1], "s", 1) < 0)
+      return -1;
+  close(short_start[1]);
+
+  for(int i = 0; i < count; i++)
+    wait(0);
+  schedtrace(SCHEDTRACE_OP_STOP, 0, 0);
+  close(ready[0]);
   return current_snapshot();
 }
 
@@ -454,7 +657,7 @@ print_axis(unsigned long min_tick, unsigned long max_tick)
 static void
 print_chart(struct worker_info workers[], int count)
 {
-  struct run_segment segments[SCHEDTRACE_MAX_EVENTS / 2];
+  struct run_segment *segments = chart_segments;
   char lanes[NCPU][CHART_WIDTH + 1];
   unsigned long min_tick = 0;
   unsigned long max_tick = 1;
@@ -548,11 +751,13 @@ print_events(void)
  * @return 成功返回 0；worker、trace 或读取失败返回 -1。
  */
 static int
-run_demo(void)
+run_demo(struct demo_options *options)
 {
   struct sched_stats stats;
   struct worker_info workers[MAX_WORKERS];
   int count = 3;
+  int long_mode = options->seconds > 0;
+  int total_ticks;
   struct worker_spec specs[MAX_WORKERS] = {
     {0, 8, 1024, 8, 0},
     {1, 8, 1024, 8, 0},
@@ -562,7 +767,28 @@ run_demo(void)
   if(sched_get_stats(&stats) < 0)
     return -1;
 
-  if(stats.policy == SCHED_POLICY_FIFO ||
+  if(long_mode){
+    count = options->workers;
+    total_ticks = options->seconds * TICKS_PER_SECOND * XV6_CPUS;
+    if(stats.policy == SCHED_POLICY_FIFO ||
+       stats.policy == SCHED_POLICY_SJF){
+      fill_scaled_burst_specs(specs, count, total_ticks);
+    } else if(stats.policy == SCHED_POLICY_STCF){
+      if(run_scaled_stcf_workers(count, options->seconds, workers) < 0)
+        return -1;
+      print_chart(workers, count);
+      print_legend(workers, count);
+      printf("  long demo: seconds=%d workers=%d\n", options->seconds, count);
+      printf("  hint 是实验输入，不表示内核能预测未来 CPU burst。\n");
+      print_events();
+      printf("schedviz: OK policy=%s\n", policy_name(snapshot.policy));
+      return 0;
+    } else {
+      fill_scaled_burst_specs(specs, count, total_ticks);
+      if(stats.policy == SCHED_POLICY_CFS)
+        apply_cfs_weight_pattern(specs, count);
+    }
+  } else if(stats.policy == SCHED_POLICY_FIFO ||
      stats.policy == SCHED_POLICY_SJF){
     specs[0].hint = specs[0].runtime_ticks = 8;
     specs[1].hint = specs[1].runtime_ticks = 2;
@@ -595,6 +821,8 @@ run_demo(void)
     return -1;
   print_chart(workers, count);
   print_legend(workers, count);
+  if(long_mode)
+    printf("  long demo: seconds=%d workers=%d\n", options->seconds, count);
   if(stats.policy == SCHED_POLICY_SJF)
     printf("  hint 是实验输入，不表示内核能预测未来 CPU burst。\n");
   if(stats.policy == SCHED_POLICY_CFS)
@@ -643,16 +871,18 @@ dump_trace(void)
 int
 main(int argc, char **argv)
 {
-  if(argc < 2 || argc > 3){
+  struct demo_options options;
+
+  if(argc < 2){
     usage();
     exit(2);
   }
   if(strcmp(argv[1], "demo") == 0){
-    if(argc == 3 && strcmp(argv[2], "--plain") != 0){
+    if(parse_demo_options(argc, argv, &options) < 0){
       usage();
       exit(2);
     }
-    exit(run_demo() == 0 ? 0 : 1);
+    exit(run_demo(&options) == 0 ? 0 : 1);
   }
   if(strcmp(argv[1], "dump") == 0){
     if(argc != 2){

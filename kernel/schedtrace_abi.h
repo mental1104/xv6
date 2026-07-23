@@ -2,8 +2,8 @@
 #define XV6_SCHEDTRACE_ABI_H
 
 #define SCHEDTRACE_VERSION 1
-#define SCHEDTRACE_MAX_EVENTS 512
-#define SCHEDTRACE_MAX_FILTERS 8
+#define SCHEDTRACE_MAX_EVENTS 2048
+#define SCHEDTRACE_MAX_FILTERS 16
 #define SCHEDTRACE_NAME_LEN 16
 
 // schedtrace() 支持的控制操作；用户态通过同一个 syscall 显式启停采样。

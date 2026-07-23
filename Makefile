@@ -348,8 +348,9 @@ schedviz:
 	$(MAKE) $K/kernel fs.img scheduler_visualizer SCHED_POLICY=$(SCHED_POLICY) CPUS=$(CPUS)
 	mkdir -p artifacts/schedviz
 	./scheduler_visualizer --policy $(SCHED_POLICY) --cpus $(CPUS) \
-		--trace artifacts/schedviz/$(SCHED_POLICY)-cpu$(CPUS).trace \
-		--svg artifacts/schedviz/$(SCHED_POLICY)-cpu$(CPUS).svg
+		--trace artifacts/schedviz/$(SCHED_POLICY)-cpu$(CPUS)$(SCHEDVIZ_SUFFIX).trace \
+		--svg artifacts/schedviz/$(SCHED_POLICY)-cpu$(CPUS)$(SCHEDVIZ_SUFFIX).svg \
+		--demo-args "$(SCHEDVIZ_ARGS)"
 
 .PHONY: clean qemu qemu-gdb gdb ph barrier scheduler_visualizer test-rbtree test test-unit test-grader \
 	test-integration test-labs test-usertests test-full test-suite schedviz
