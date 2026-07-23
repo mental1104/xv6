@@ -3,6 +3,7 @@ struct rtcdate;
 struct sysinfo;
 struct memviz_snapshot;
 struct memviz_va_query;
+struct user_context;
 
 // system calls
 int fork(void);
@@ -38,6 +39,18 @@ int backtrace(void);
 int memsnapshot(int view, struct memviz_snapshot *snapshot);
 int vaquery(uint64 va, struct memviz_va_query *query);
 int consolemode(int fd, int mode);
+
+/**
+ * 保存当前用户现场，并可在同一次系统调用中恢复另一份完整用户现场。
+ *
+ * @param save 接收当前 epc 和通用寄存器的用户缓冲区；为空时跳过保存。
+ * @param restore 要恢复的用户现场；为空时只保存当前现场。
+ * @param guard 可选调度临界区标志；内核在恢复目标现场前将其清零。
+ * @return 仅保存时返回 0；切换恢复后返回保存现场规定的 a0；地址非法返回 -1。
+ */
+int ucontext_switch(struct user_context *save,
+                    const struct user_context *restore,
+                    volatile int *guard);
 
 // ulib.c
 int stat(const char*, struct stat*);
