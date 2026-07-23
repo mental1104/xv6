@@ -36,3 +36,4 @@
 #define SYS_sched_set_weight 35
 #define SYS_sched_get_stats  36
 #define SYS_schedtrace       37
+#define SYS_ucontext_switch  38

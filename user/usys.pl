@@ -52,3 +52,4 @@ entry("sched_set_hint");
 entry("sched_set_weight");
 entry("sched_get_stats");
 entry("schedtrace");
+entry("ucontext_switch");

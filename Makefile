@@ -208,11 +208,8 @@ $U/_uthreadtest: $T/uthreadtest.o $T/testlib.o $(ULIB)
 	$(OBJDUMP) -S $@ > $T/uthreadtest.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/uthreadtest.sym
 
-$U/uthread_switch.o: $U/uthread_switch.S
-	$(CC) $(CFLAGS) -c -o $U/uthread_switch.o $U/uthread_switch.S
-
-$U/_uthread: $U/uthread.o $U/uthread_switch.o $(ULIB)
-	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $U/uthread.o $U/uthread_switch.o $(ULIB)
+$U/_uthread: $U/uthread.o $U/uthreadlib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
 	$(OBJDUMP) -S $U/_uthread > $U/uthread.asm
 
 # xargstest.sh 是测试输入脚本，源文件放在 tests/guest；构建时复制到 user/
