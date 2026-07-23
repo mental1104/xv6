@@ -268,6 +268,7 @@ UPROGS=\
 	$U/_uthreadtest\
 	$U/_historytest\
 	$U/_consolelinetest\
+	$U/_lstest\
 	$U/_xv6test\
 	$U/_schedtest\
 	$U/_schedtracetest
