@@ -3,6 +3,10 @@ name: xv6 CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    # 新加坡时间 02:30 执行完整慢速回归，避免占用白天的 PR 反馈窗口。
+    - cron: "30 18 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,13 +17,16 @@ concurrency:
 
 jobs:
   regression:
-    if: github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     timeout-minutes: 50
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # PR 事件需要同时读取 base/head commit，才能可靠计算 changed files。
+          fetch-depth: 0
 
       - name: Install toolchain
         run: |
@@ -32,7 +39,11 @@ jobs:
 
       - name: Unit-test regression grader
         run: |
-          python3 -m py_compile tests/run.py tests/test_runner.py
+          python3 -m py_compile \
+            tests/run.py \
+            tests/test_runner.py \
+            tests/ci_plan.py \
+            tests/test_ci_plan.py
           make test-unit
           python3 tests/run.py --list
 
@@ -41,14 +52,52 @@ jobs:
           make clean
           make -j2
 
-      - name: Run Lab1-10 QEMU regression
-        run: make test-integration CPUS=3
+      - name: Select PR regression suites
+        if: github.event_name == 'pull_request'
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > /tmp/changed-files.txt
+          echo "Changed files:"
+          cat /tmp/changed-files.txt
+          python3 tests/ci_plan.py < /tmp/changed-files.txt | tee -a "$GITHUB_OUTPUT"
+
+      - name: Run shell history interaction regression
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.plan.outputs.shell_history == 'true'
+        run: python3 tests/shell_history_interactive.py --cpus 3
+
+      - name: Run selected PR QEMU regression
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.plan.outputs.suites != ''
+        env:
+          SELECTED_SUITES: ${{ steps.plan.outputs.suites }}
+        run: |
+          IFS=',' read -r -a suites <<< "$SELECTED_SUITES"
+          args=()
+          for suite in "${suites[@]}"; do
+            if [[ -n "$suite" ]]; then
+              args+=(--suite "$suite")
+            fi
+          done
+          printf 'Selected PR suites: %s\n' "${suites[*]}"
+          python3 tests/run.py "${args[@]}" --cpus 3
 
       - name: Run VM regression single-core
+        if: >-
+          github.event_name == 'pull_request' &&
+          contains(steps.plan.outputs.suites, 'lab-vm')
         run: make test-suite SUITE=lab-vm CPUS=1
 
-      - name: Run complete usertests
-        run: make test-usertests CPUS=3
+      - name: Run scheduled or manual full regression
+        if: github.event_name != 'pull_request'
+        run: |
+          python3 tests/shell_history_interactive.py --cpus 3
+          make test-full CPUS=3
 
       # _start_qemu() can fail before the Python runner creates its first log.
       # Capture one bounded serial boot attempt so startup panics are preserved.
