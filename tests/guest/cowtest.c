@@ -6,14 +6,31 @@
 #include "kernel/memlayout.h"
 #include "user/user.h"
 
-// allocate more than half of physical memory,
-// then fork. this will fail in the default
-// kernel, which does not support copy-on-write.
+// 物理内存提升到 2 GiB 后，测试若继续按 PHYSTOP 线性放大会在 QEMU 中
+// 触碰 GiB 级页面。这里保留足以覆盖 COW 共享、写时复制和回收的工作集，
+// 将测试耗时与教学机配置解耦。
+#define COWTEST_MAX_WORKING_SET (64 * 1024 * 1024)
+
+/**
+ * cowtest_working_set 返回本轮 COW 压力测试使用的最大字节数。
+ *
+ * @return 不超过实际 RAM，也不超过 COWTEST_MAX_WORKING_SET 的容量。
+ */
+static uint64
+cowtest_working_set(void)
+{
+  uint64 physical = PHYSTOP - KERNBASE;
+  if(physical > COWTEST_MAX_WORKING_SET)
+    return COWTEST_MAX_WORKING_SET;
+  return physical;
+}
+
+// allocate a substantial working set, then fork. The parent and child must
+// share pages instead of copying the whole region eagerly.
 void
 simpletest()
 {
-  uint64 phys_size = PHYSTOP - KERNBASE;
-  int sz = (phys_size / 3) * 2;
+  int sz = (cowtest_working_set() / 3) * 2;
 
   printf("simple: ");
 
@@ -46,15 +63,12 @@ simpletest()
   printf("ok\n");
 }
 
-// three processes all write COW memory.
-// this causes more than half of physical memory
-// to be allocated, so it also checks whether
-// copied pages are freed.
+// three processes all write COW memory. This checks page isolation and that
+// copied pages return to kalloc without scaling the test to the full 2 GiB RAM.
 void
 threetest()
 {
-  uint64 phys_size = PHYSTOP - KERNBASE;
-  int sz = phys_size / 4;
+  int sz = cowtest_working_set() / 4;
   int pid1, pid2;
 
   printf("three: ");
