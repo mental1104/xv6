@@ -42,6 +42,7 @@ jobs:
           python3 -m py_compile \
             tests/run.py \
             tests/run_usertests.py \
+            tests/shell_history_interactive.py \
             tests/test_runner.py \
             tests/ci_plan.py \
             tests/test_ci_plan.py
@@ -69,12 +70,23 @@ jobs:
           else
             echo 'full_usertests=false' >> "$GITHUB_OUTPUT"
           fi
+          if grep -Eq '^(kernel/(console\.c|jobctl\.h|proc\.h|sysproc\.c|trap\.c|wait\.h)|user/sh\.c|tests/guest/consolelinetest\.c|tests/shell_history_interactive\.py)$' /tmp/changed-files.txt; then
+            echo 'job_control=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'job_control=false' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run shell history interaction regression
         if: >-
           github.event_name == 'pull_request' &&
           steps.plan.outputs.shell_history == 'true'
         run: python3 tests/shell_history_interactive.py --cpus 3
+
+      - name: Run job-control regression single-core
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.plan.outputs.job_control == 'true'
+        run: python3 tests/run.py --suite usertests-core --cpus 1
 
       - name: Run selected PR QEMU regression
         if: >-
