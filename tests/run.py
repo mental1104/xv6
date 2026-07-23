@@ -7,6 +7,7 @@ import argparse
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -303,6 +304,7 @@ def _write_log(suite: str, test: str, output: str) -> Path:
 def _run_host_test(suite: str, test: TestCase) -> None:
     """顺序执行一个 host 测试的命令并检查退出状态和输出。"""
 
+    started = time.perf_counter()
     chunks: list[str] = []
     for command in test.commands:
         completed = subprocess.run(
@@ -325,7 +327,8 @@ def _run_host_test(suite: str, test: TestCase) -> None:
     output = "\n".join(chunks)
     log_path = _write_log(suite, test.name, output)
     _assert_output(test, output)
-    print(f"PASS {test.name} ({log_path.relative_to(REPO_ROOT)})")
+    elapsed = time.perf_counter() - started
+    print(f"PASS {test.name} {elapsed:.2f}s ({log_path.relative_to(REPO_ROOT)})")
 
 
 def _start_qemu(cpus: int) -> pexpect.spawn:
@@ -422,6 +425,7 @@ def _run_qemu_tests(suite: str, tests: Sequence[TestCase], cpus: int) -> None:
     boot_output = child.before
     try:
         for test in tests:
+            started = time.perf_counter()
             chunks = [boot_output]
             for command in test.commands:
                 child.timeout = test.timeout
@@ -435,7 +439,8 @@ def _run_qemu_tests(suite: str, tests: Sequence[TestCase], cpus: int) -> None:
             output = "\n".join(chunks)
             log_path = _write_log(suite, test.name, output)
             _assert_output(test, output)
-            print(f"PASS {test.name} ({log_path.relative_to(REPO_ROOT)})")
+            elapsed = time.perf_counter() - started
+            print(f"PASS {test.name} {elapsed:.2f}s ({log_path.relative_to(REPO_ROOT)})")
     finally:
         _stop_qemu(child)
 
