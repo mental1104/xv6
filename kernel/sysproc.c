@@ -179,6 +179,66 @@ sys_sigreturn(void)
 }
 
 /**
+ * 保存当前用户现场，并可在同一次系统调用中恢复另一个完整用户现场。
+ *
+ * alarm handler 调用时，保存源取自 p->alarm_context，确保得到真正被 timer
+ * 中断的 epc 和全部通用寄存器，而不是 handler 自身的系统调用现场。普通用户
+ * 代码调用时，保存源取自 trapframe，并把保存的 a0 规范为 0，使该线程未来
+ * 恢复后把 ucontext_switch() 视为成功返回。
+ *
+ * @return 仅保存时返回 0；切换时返回目标上下文原有的 a0；用户地址无效时
+ *         返回 -1，且不会恢复目标上下文。
+ */
+uint64
+sys_ucontext_switch(void)
+{
+  uint64 save_addr;
+  uint64 restore_addr;
+  uint64 guard_addr;
+  struct proc *p = myproc();
+  struct user_context current_context;
+  struct user_context next_context;
+  int zero = 0;
+
+  if(argaddr(0, &save_addr) < 0 ||
+     argaddr(1, &restore_addr) < 0 ||
+     argaddr(2, &guard_addr) < 0)
+    return -1;
+
+  // 先把目标上下文复制到内核栈，允许 save 与 restore 指向同一用户缓冲区。
+  if(restore_addr != 0 &&
+     copyin(p->pagetable, (char *)&next_context, restore_addr,
+            sizeof(next_context)) < 0)
+    return -1;
+
+  if(p->in_handler){
+    memmove(&current_context, &p->alarm_context, sizeof(current_context));
+  } else {
+    save_user_context(&current_context, p->trapframe);
+    current_context.gpr[USER_CONTEXT_A0_INDEX] = 0;
+  }
+
+  if(save_addr != 0 &&
+     copyout(p->pagetable, save_addr, (char *)&current_context,
+             sizeof(current_context)) < 0)
+    return -1;
+
+  // 用户调度器在修改线程状态前把 guard 置一；内核在返回目标上下文前清零，
+  // 使“状态提交 + 上下文恢复”之间不存在可被 alarm 再次抢占的用户态窗口。
+  if(guard_addr != 0 &&
+     copyout(p->pagetable, guard_addr, (char *)&zero, sizeof(zero)) < 0)
+    return -1;
+
+  if(restore_addr == 0)
+    return 0;
+
+  restore_user_context(p->trapframe, &next_context);
+  if(p->in_handler)
+    p->in_handler = 0;
+  return p->trapframe->a0;
+}
+
+/**
  * 显式打印当前系统调用路径的内核栈回溯。
  *
  * 该入口只用于教学和调试，不接受用户地址，也不修改进程状态。将回溯从
