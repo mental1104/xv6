@@ -41,6 +41,7 @@ jobs:
         run: |
           python3 -m py_compile \
             tests/run.py \
+            tests/run_usertests.py \
             tests/test_runner.py \
             tests/ci_plan.py \
             tests/test_ci_plan.py
@@ -63,7 +64,7 @@ jobs:
           echo "Changed files:"
           cat /tmp/changed-files.txt
           python3 tests/ci_plan.py < /tmp/changed-files.txt | tee -a "$GITHUB_OUTPUT"
-          if grep -qx 'tests/guest/usertests_2g.c' /tmp/changed-files.txt; then
+          if grep -Eq '^(tests/guest/usertests_2g\.c|kernel/file\.c|tests/guest/xv6test\.c|tests/run_usertests\.py)$' /tmp/changed-files.txt; then
             echo 'full_usertests=true' >> "$GITHUB_OUTPUT"
           else
             echo 'full_usertests=false' >> "$GITHUB_OUTPUT"
@@ -98,11 +99,16 @@ jobs:
           contains(steps.plan.outputs.suites, 'lab-vm')
         run: make test-suite SUITE=lab-vm CPUS=1
 
-      - name: Run complete usertests for adapter changes
+      - name: Run complete usertests for lifecycle-sensitive changes
         if: >-
           github.event_name == 'pull_request' &&
           steps.plan.outputs.full_usertests == 'true'
-        run: make test-usertests CPUS=3
+        run: |
+          if grep -qx 'tests/guest/usertests_2g.c' /tmp/changed-files.txt; then
+            make test-usertests CPUS=3
+          else
+            python3 tests/run_usertests.py --cpus 3
+          fi
 
       - name: Run scheduled or manual full regression
         if: github.event_name != 'pull_request'
