@@ -10,6 +10,7 @@
 #include "file.h"
 #include "vma.h"
 #include "fcntl.h"
+#include "wait.h"
 
 struct cpu cpus[NCPU];
 
@@ -430,28 +431,38 @@ exit(int status)
   panic("zombie exit");
 }
 
-// Wait for a child process to exit and return its pid.
-// Return -1 if this process has no children.
+// 等待任意直接子进程退出，并返回被回收子进程的 PID。
 int
 wait(uint64 addr)
 {
+  return waitpid(-1, addr, 0);
+}
+
+// 等待指定直接子进程退出；target_pid == -1 表示任意直接子进程。
+// WNOHANG 在匹配子进程仍运行时返回 0，不进入睡眠。
+int
+waitpid(int target_pid, uint64 addr, int options)
+{
   struct proc *np;
-  int havekids, pid;
+  int havekids, child_pid;
   struct proc *p = myproc();
 
+  if(target_pid == 0 || target_pid < -1 || (options & ~WNOHANG) != 0)
+    return -1;
+
+  // wait_lock 串行化 parent、ZOMBIE 发布与扫描，避免退出通知丢失。
   acquire(&wait_lock);
 
   for(;;){
-    // Scan through table looking for exited children.
     havekids = 0;
     for(np = proc; np < &proc[NPROC]; np++){
-      if(np->parent == p){
-        // Make sure the child isn't still in exit() or swtch().
+      if(np->parent == p &&
+         (target_pid == -1 || np->pid == target_pid)){
+        // wait_lock 固定父子关系；np->lock 保护状态与回收路径。
         acquire(&np->lock);
         havekids = 1;
         if(np->state == ZOMBIE){
-          // Found one.
-          pid = np->pid;
+          child_pid = np->pid;
           if(addr != 0 && copyout(p->pagetable, addr, (char *)&np->xstate,
                                   sizeof(np->xstate)) < 0) {
             release(&np->lock);
@@ -461,7 +472,7 @@ wait(uint64 addr)
           freeproc(np);
           release(&np->lock);
           release(&wait_lock);
-          return pid;
+          return child_pid;
         }
         release(&np->lock);
       }
@@ -471,14 +482,17 @@ wait(uint64 addr)
     int killed = p->killed;
     release(&p->lock);
 
-    // No point waiting if we don't have any children.
     if(!havekids || killed){
       release(&wait_lock);
       return -1;
     }
 
-    // Wait for a child to exit. sleep() atomically releases wait_lock and
-    // reacquires it after wakeup, preventing lost child-exit notifications.
+    if(options & WNOHANG){
+      release(&wait_lock);
+      return 0;
+    }
+
+    // sleep 原子释放并重新获取 wait_lock，保持主线的无丢失唤醒协议。
     sleep(p, &wait_lock);  //DOC: wait-sleep
   }
 }

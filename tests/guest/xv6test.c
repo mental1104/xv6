@@ -52,6 +52,7 @@ static char *core_forkforkfork_argv[] = {"usertests", "forkforkfork", 0};
 static char *core_linkunlink_argv[] = {"usertests", "linkunlink", 0};
 static char *core_openiput_argv[] = {"usertests", "openiput", 0};
 static char *core_schedtrace_argv[] = {"schedtracetest", 0};
+static char *core_history_argv[] = {"historytest", 0};
 
 static char *legacy_forktest_argv[] = {"forktest", 0};
 static char *legacy_stressfs_argv[] = {"stressfs", 0};
@@ -100,6 +101,7 @@ static struct xv6_test_case tests[] = {
   {"core", "core-linkunlink", core_linkunlink_argv},
   {"core", "core-openiput", core_openiput_argv},
   {"core", "core-schedtrace", core_schedtrace_argv},
+  {"core", "core-shell-history", core_history_argv},
 
   {"legacy", "legacy-forktest", legacy_forktest_argv},
   {"legacy", "legacy-stressfs", legacy_stressfs_argv},

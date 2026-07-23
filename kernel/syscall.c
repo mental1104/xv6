@@ -115,6 +115,8 @@ extern uint64 sys_munmap(void);
 extern uint64 sys_backtrace(void);
 extern uint64 sys_memsnapshot(void);
 extern uint64 sys_vaquery(void);
+extern uint64 sys_waitpid(void);
+extern uint64 sys_consolemode(void);
 extern uint64 sys_sched_set_hint(void);
 extern uint64 sys_sched_set_weight(void);
 extern uint64 sys_sched_get_stats(void);
@@ -152,6 +154,8 @@ static uint64 (*syscalls[])(void) = {
 [SYS_backtrace] sys_backtrace,
 [SYS_memsnapshot] sys_memsnapshot,
 [SYS_vaquery] sys_vaquery,
+[SYS_waitpid] sys_waitpid,
+[SYS_consolemode] sys_consolemode,
 [SYS_sched_set_hint]   sys_sched_set_hint,
 [SYS_sched_set_weight] sys_sched_set_weight,
 [SYS_sched_get_stats]  sys_sched_get_stats,

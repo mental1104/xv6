@@ -18,6 +18,7 @@ sub entry {
 entry("fork");
 entry("exit");
 entry("wait");
+entry("waitpid");
 entry("pipe");
 entry("read");
 entry("write");
@@ -46,6 +47,7 @@ entry("munmap");
 entry("backtrace");
 entry("memsnapshot");
 entry("vaquery");
+entry("consolemode");
 entry("sched_set_hint");
 entry("sched_set_weight");
 entry("sched_get_stats");
