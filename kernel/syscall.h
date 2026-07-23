@@ -32,3 +32,4 @@
 #define SYS_vaquery    31
 #define SYS_waitpid    32
 #define SYS_consolemode 33
+#define SYS_ucontext_switch 34
