@@ -23,6 +23,8 @@ fail(char *message)
 
 /**
  * free_pages 返回当前 kalloc 可立即分配页数。
+ *
+ * @return 所有 CPU freelist 中的空闲物理页总数。
  */
 static uint64
 free_pages(void)
@@ -42,6 +44,30 @@ require_present(uint64 va)
 {
   if(vaquery(va, &query) < 0 || !query.present)
     fail("expected user mapping missing");
+}
+
+/**
+ * grow_to 使用多个 int 范围内的 sbrk 调用推进 p->sz。
+ *
+ * @param target 目标 break，必须小于等于 USERMAX。
+ *
+ * 单次 sbrk 仍保留 xv6 的 32 位 ABI；循环推进用于验证跨越 2 GiB direct-map
+ * 数值时，用户页仍通过 Sv39 高半区 alias 被内核访问。
+ */
+static void
+grow_to(uint64 target)
+{
+  uint64 current = (uint64)sbrk(0);
+  if(target > USERMAX || current > target)
+    fail("invalid grow target");
+
+  while(current < target){
+    uint64 remaining = target - current;
+    int step = remaining > 0x7ffff000ULL ? 0x7ffff000 : (int)remaining;
+    if((uint64)sbrk(step) != current)
+      fail("sbrk chunk failed");
+    current += (uint64)step;
+  }
 }
 
 /**
@@ -156,6 +182,42 @@ test_exec(void)
 }
 
 /**
+ * test_direct_map_crossing 验证用户 VA 可以越过 KERNBASE 数值。
+ *
+ * 该页在用户页表中位于 2 GiB 附近，但进程内核页表的同一低地址仍是物理
+ * direct map；copyin/copyout 必须通过高规范半区 alias 才能访问用户物理页。
+ */
+static void
+test_direct_map_crossing(void)
+{
+  grow_to(KERNBASE + 3 * PGSIZE);
+
+  char *source = (char *)KERNBASE;
+  *source = 'D';
+  require_present(KERNBASE);
+
+  int fds[2];
+  char received = 0;
+  if(pipe(fds) < 0)
+    fail("direct-map pipe failed");
+  if(write(fds[1], source, 1) != 1)
+    fail("copyin above KERNBASE failed");
+  if(read(fds[0], &received, 1) != 1 || received != 'D')
+    fail("direct-map pipe payload mismatch");
+  close(fds[0]);
+  close(fds[1]);
+
+  int fd = open("README", O_RDONLY);
+  if(fd < 0)
+    fail("direct-map copyout source failed");
+  char *target = (char *)(KERNBASE + PGSIZE);
+  if(read(fd, target, 4) != 4)
+    fail("copyout above KERNBASE failed");
+  close(fd);
+  require_present(KERNBASE + PGSIZE);
+}
+
+/**
  * run_worker 在一个短生命周期进程中完成地址窗口功能验证。
  */
 static void
@@ -165,10 +227,7 @@ run_worker(void)
   uint64 target = VIRTIO0 + 3 * PGSIZE;
   if(oldbrk >= target)
     fail("unexpected initial break");
-
-  uint64 growth = target - oldbrk;
-  if(growth > 0x7fffffff || sbrk((int)growth) != (char *)oldbrk)
-    fail("unable to reserve MMIO-crossing range");
+  grow_to(target);
 
   uint64 boundaries[] = {CLINT, PLIC, UART0, VIRTIO0};
   int boundary_count = sizeof(boundaries) / sizeof(boundaries[0]);
@@ -183,21 +242,20 @@ run_worker(void)
   test_copy_paths();
   test_cow();
   test_mmap();
+  test_exec();
+  test_direct_map_crossing();
 
   if(memsnapshot(MEMVIZ_VIEW_KERNEL, &snapshot) < 0)
     fail("kernel snapshot failed");
-  if(snapshot.user_limit != USERMAX || snapshot.user_mirror_start != KUSERBASE ||
-     snapshot.user_mirror_end != KUSERADDR(snapshot.process_size))
-    fail("memviz alias layout mismatch");
+  if(snapshot.user_limit != TRAPFRAME || snapshot.user_limit != USERMAX ||
+     snapshot.user_mirror_start != KUSERBASE ||
+     snapshot.user_mirror_end != KUSERADDR(snapshot.process_size) ||
+     KUSERBASE != 0xffffffc000000000ULL || KUSEREND != KUSERADDR(USERMAX))
+    fail("Sv39 alias layout mismatch");
 
-  uint64 current = (uint64)sbrk(0);
-  uint64 excessive = USERMAX - current + 1;
-  if(excessive > 0x7fffffff)
-    fail("boundary delta exceeds sbrk ABI");
-  if(sbrk((int)excessive) != (char *)-1)
-    fail("sbrk crossed USERMAX");
+  if(vaquery(USERMAX, &query) != -1)
+    fail("USERMAX boundary accepted");
 
-  test_exec();
   printf("addresswindowtest: worker OK\n");
 }
 
