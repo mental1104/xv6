@@ -1,3 +1,5 @@
+#include "kernel/types.h"
+#include "kernel/param.h"
 #include "kernel/memviz.h"
 
 // 复用原始 usertests 的全部测试函数，但把依赖固定物理容量的入口重命名，
