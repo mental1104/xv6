@@ -100,6 +100,9 @@ jobs:
             qemu-system-misc \
             python3-pexpect
 
+      - name: Run runner unit tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+
       - name: Build default RR policy
         run: |
           make clean
