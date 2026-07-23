@@ -8,14 +8,23 @@
 
 void mmap_test();
 void fork_test();
+void vma_limit_test();
 char buf[BSIZE];
 
 #define MAP_FAILED ((char *) -1)
 
+/**
+ * 依次运行 mmap 基础行为、VMA 配额和 fork 继承回归。
+ *
+ * @param argc 用户程序参数数量，本测试不使用。
+ * @param argv 用户程序参数数组，本测试不使用。
+ * @return 测试全部通过时以状态 0 退出；任一断言失败时由 err() 以状态 1 退出。
+ */
 int
 main(int argc, char *argv[])
 {
   mmap_test();
+  vma_limit_test();
   fork_test();
   printf("mmaptest: all tests succeeded\n");
   exit(0);
@@ -293,4 +302,137 @@ fork_test(void)
   _v1(p2);
 
   printf("fork_test OK\n");
+}
+
+/**
+ * 使用同一个文件填满当前进程的全部 VMA 槽位。
+ *
+ * @param fd 已打开且可读的文件描述符；函数不会关闭它。
+ * @param mappings 输出数组，成功后每一项保存一个单页映射地址。
+ */
+static void
+map_all_vma_slots(int fd, char **mappings)
+{
+  for(int i = 0; i < NOFILE; i++){
+    mappings[i] = mmap(0, PGSIZE, PROT_READ, MAP_PRIVATE, fd, 0);
+    if(mappings[i] == MAP_FAILED)
+      err("mmap before reaching NOFILE");
+  }
+}
+
+/**
+ * 解除 map_all_vma_slots() 创建的全部映射并归还 VMA 描述符。
+ *
+ * @param mappings 包含 NOFILE 个有效单页映射地址的数组。
+ */
+static void
+unmap_all_vma_slots(char **mappings)
+{
+  for(int i = 0; i < NOFILE; i++){
+    if(munmap(mappings[i], PGSIZE) < 0)
+      err("munmap VMA slot");
+  }
+}
+
+/**
+ * 验证 VMA 配额属于单个进程，并检查 fork 继承与描述符回收。
+ *
+ * 测试先让父进程占满 NOFILE 个槽位，同时让一个未继承这些映射的子进程
+ * 成功 mmap，证明单进程达到上限不会耗尽全局池。随后在满配额状态下 fork，
+ * 验证子进程继承全部 VMA、不能继续 mmap、释放一个槽位后可以重新分配，且
+ * 子进程的释放不影响父进程。最后再次 mmap，确认退出和 munmap 已归还资源。
+ */
+void
+vma_limit_test(void)
+{
+  const char * const f = "mmap.limit";
+  char *mappings[NOFILE];
+  int fd;
+  int pid;
+  int status;
+
+  printf("vma_limit_test starting\n");
+  testname = "vma_limit_test";
+  makefile(f);
+  if((fd = open(f, O_RDONLY)) < 0)
+    err("open quota file");
+
+  // 子进程在父进程填满配额前创建，因此它自己的 VMA 槽位仍为空。
+  int sync_pipe[2];
+  if(pipe(sync_pipe) < 0)
+    err("pipe");
+  if((pid = fork()) < 0)
+    err("fork isolation child");
+  if(pid == 0){
+    char token;
+    close(sync_pipe[1]);
+    if(read(sync_pipe[0], &token, 1) != 1)
+      err("read isolation signal");
+
+    char *child_mapping = mmap(0, PGSIZE, PROT_READ, MAP_PRIVATE, fd, 0);
+    if(child_mapping == MAP_FAILED)
+      err("other process mmap affected by parent quota");
+    if(child_mapping[0] != 'A')
+      err("other process mapping content");
+    if(munmap(child_mapping, PGSIZE) < 0)
+      err("other process munmap");
+
+    close(sync_pipe[0]);
+    close(fd);
+    exit(0);
+  }
+
+  close(sync_pipe[0]);
+  map_all_vma_slots(fd, mappings);
+  if(mmap(0, PGSIZE, PROT_READ, MAP_PRIVATE, fd, 0) != MAP_FAILED)
+    err("mmap should fail after NOFILE VMAs");
+
+  char token = 'x';
+  if(write(sync_pipe[1], &token, 1) != 1)
+    err("write isolation signal");
+  close(sync_pipe[1]);
+
+  status = -1;
+  if(wait(&status) != pid || status != 0)
+    err("independent process VMA isolation");
+  unmap_all_vma_slots(mappings);
+
+  // 满配额 fork 必须仍能复制父进程的 NOFILE 个 VMA；全局池为每个进程
+  // 预留等量容量，因此正常状态下不会在复制中途耗尽。
+  map_all_vma_slots(fd, mappings);
+  if((pid = fork()) < 0)
+    err("fork with full VMA quota");
+  if(pid == 0){
+    if(mappings[0][0] != 'A' || mappings[NOFILE - 1][0] != 'A')
+      err("fork inherited VMA content");
+    if(mmap(0, PGSIZE, PROT_READ, MAP_PRIVATE, fd, 0) != MAP_FAILED)
+      err("child should inherit full VMA quota");
+
+    if(munmap(mappings[0], PGSIZE) < 0)
+      err("child release inherited VMA");
+    char *replacement = mmap(0, PGSIZE, PROT_READ, MAP_PRIVATE, fd, 0);
+    if(replacement == MAP_FAILED || replacement[0] != 'A')
+      err("child reuse released VMA slot");
+    if(munmap(replacement, PGSIZE) < 0)
+      err("child release replacement VMA");
+    close(fd);
+    exit(0);
+  }
+
+  status = -1;
+  if(wait(&status) != pid || status != 0)
+    err("forked VMA quota child");
+  if(mappings[0][0] != 'A' || mappings[NOFILE - 1][0] != 'A')
+    err("child VMA changes affected parent");
+  unmap_all_vma_slots(mappings);
+
+  char *recycled = mmap(0, PGSIZE, PROT_READ, MAP_PRIVATE, fd, 0);
+  if(recycled == MAP_FAILED || recycled[0] != 'A')
+    err("VMA descriptor was not recycled");
+  if(munmap(recycled, PGSIZE) < 0)
+    err("munmap recycled VMA");
+
+  close(fd);
+  unlink(f);
+  printf("vma_limit_test OK\n");
 }
