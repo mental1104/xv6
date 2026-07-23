@@ -96,7 +96,7 @@ read_zero_hole(int fd, uint64 offset, int count)
 {
   uchar *bytes = (uchar*)buf;
 
-  if(count > sizeof(buf))
+  if(count < 0 || (uint)count > (uint)sizeof(buf))
     fail("hole probe too large");
   memset(buf, 0x7f, sizeof(buf));
   seek_set_exact(fd, offset);
@@ -228,6 +228,13 @@ test_sparse_boundaries(void)
     fail("pipe unexpectedly seekable");
   close(pipefd[0]);
   close(pipefd[1]);
+
+  int dirfd = open(".", O_RDONLY);
+  if(dirfd < 0)
+    fail("directory open failed");
+  if(lseek(dirfd, 0, SEEK_SET) != -1)
+    fail("directory unexpectedly seekable");
+  close(dirfd);
   close(fd);
 
   fd = open("sparse.file", O_RDONLY);
