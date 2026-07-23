@@ -109,7 +109,8 @@ exec(char *path, char **argv)
   // 因而可以直接释放临时页表，不会留下指向已释放用户页的别名。
   if((kpagetable = kvmcreate()) == 0)
     goto bad;
-  u2kvmcopy(pagetable, kpagetable, 0, sz);
+  if(u2kvmcopy(pagetable, kpagetable, 0, sz) < 0)
+    goto bad;
 
   // arguments to user main(argc, argv)
   // argc is returned via the system call return
