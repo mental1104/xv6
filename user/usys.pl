@@ -48,3 +48,4 @@ entry("backtrace");
 entry("memsnapshot");
 entry("vaquery");
 entry("consolemode");
+entry("ucontext_switch");
