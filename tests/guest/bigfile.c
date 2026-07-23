@@ -1,71 +1,59 @@
 #include "kernel/types.h"
+#include "kernel/fs.h"
+#include "kernel/fcntl.h"
 #include "kernel/stat.h"
 #include "user/user.h"
-#include "kernel/fcntl.h"
-#include "kernel/fs.h"
 
-/**
- * 验证 inode 能映射并读回 MAXFILE 个数据块，同时拒绝第 MAXFILE + 1 个块。
- *
- * 测试使用由 fs.h 定义的 MAXFILE 作为唯一边界，避免文件系统配置或寻址布局
- * 变化后继续无限写入，最终以磁盘耗尽或 QEMU 超时结束。
- *
- * @return 成功时调用 exit(0)；任一写入、边界或读回校验失败时调用 exit(-1)。
- */
+// Lab9 remains a focused direct/single/double-indirect regression. The
+// 4-GiB/triple-indirect path is isolated in largefile.c and is not part of the
+// normal PR suite.
+#define LAB9_BLOCKS ((uint64)NDIRECT + NINDIRECT + NDOUBLEINDIRECT)
+
+static uint buf[BSIZE / sizeof(uint)];
+
+/** Fail the guest test with a stable diagnostic and non-zero status. */
+static void
+fail(char *message)
+{
+  printf("bigfile: %s\n", message);
+  unlink("big.file");
+  exit(1);
+}
+
 int
 main(void)
 {
-  char buf[BSIZE] = {0};
-  int fd, i, blocks;
-  const int max_blocks = (int)MAXFILE;
+  unlink("big.file");
+  int fd = open("big.file", O_CREATE | O_RDWR);
+  if(fd < 0)
+    fail("cannot create file");
 
-  fd = open("big.file", O_CREATE | O_WRONLY);
-  if(fd < 0){
-    printf("bigfile: cannot open big.file for writing\n");
-    exit(-1);
+  for(uint64 block = 0; block < LAB9_BLOCKS; block++){
+    buf[0] = block;
+    if(write(fd, buf, sizeof(buf)) != sizeof(buf))
+      fail("short write");
   }
 
-  // 只写入寻址布局明确允许的块数，避免依赖“持续写到失败”终止测试。
-  for(blocks = 0; blocks < max_blocks; blocks++){
-    *(int*)buf = blocks;
-    int cc = write(fd, buf, BSIZE);
-    if(cc != BSIZE){
-      printf("bigfile: write error at block %d\n", blocks);
-      exit(-1);
-    }
-    if((blocks + 1) % 100 == 0)
-      printf(".");
-  }
-
-  // writei 必须在 MAXFILE * BSIZE 边界拒绝写入，且不能推进文件偏移。
-  *(int*)buf = max_blocks;
-  if(write(fd, buf, BSIZE) >= 0){
-    printf("bigfile: accepted block %d beyond MAXFILE\n", max_blocks);
-    exit(-1);
-  }
-
-  printf("\nwrote %d blocks\n", blocks);
+  struct stat st;
+  if(fstat(fd, &st) < 0)
+    fail("fstat failed");
+  if(st.size != LAB9_BLOCKS * BSIZE)
+    fail("wrong stat size");
   close(fd);
 
   fd = open("big.file", O_RDONLY);
-  if(fd < 0){
-    printf("bigfile: cannot re-open big.file for reading\n");
-    exit(-1);
+  if(fd < 0)
+    fail("cannot reopen file");
+  for(uint64 block = 0; block < LAB9_BLOCKS; block++){
+    if(read(fd, buf, sizeof(buf)) != sizeof(buf))
+      fail("short read");
+    if(buf[0] != (uint)block)
+      fail("data mismatch");
   }
-  for(i = 0; i < blocks; i++){
-    int cc = read(fd, buf, BSIZE);
-    if(cc != BSIZE){
-      printf("bigfile: read error at block %d\n", i);
-      exit(-1);
-    }
-    if(*(int*)buf != i){
-      printf("bigfile: read the wrong data (%d) for block %d\n",
-             *(int*)buf, i);
-      exit(-1);
-    }
-  }
-
   close(fd);
-  printf("bigfile done; ok\n");
+
+  if(unlink("big.file") < 0)
+    fail("unlink failed");
+  printf("bigfile: wrote and read %l double-indirect blocks\n", LAB9_BLOCKS);
   exit(0);
 }
