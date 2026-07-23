@@ -46,6 +46,59 @@ group_leader(int report_fd)
 }
 
 /**
+ * 验证父进程在快速退出子进程成为 ZOMBIE 后仍能完成 PGID 初始化。
+ *
+ * Shell 与子进程都会在 exec 前尝试 setpgid；该测试固定覆盖子进程先退出的竞态，
+ * 避免短命令被误报为“无法创建进程组”。
+ */
+static void
+test_fast_exit_pgid(void)
+{
+  int status = -1;
+  int quick = fork();
+
+  if(quick == 0){
+    if(setpgid(0, 0) < 0)
+      exit(1);
+    exit(0);
+  }
+  ASSERT_TRUE(quick > 0);
+
+  // 给子进程足够机会进入 ZOMBIE；正确性不依赖具体 tick 数，而依赖后续状态断言。
+  sleep(3);
+  EXPECT_EQ(0, setpgid(quick, quick));
+  EXPECT_EQ(quick, getpgid(quick));
+  ASSERT_EQ(quick, waitpid(quick, &status, 0));
+  EXPECT_EQ(0, status);
+  EXPECT_EQ(-1, getpgid(quick));
+}
+
+/** 验证传统 kill(pid) 能唤醒并最终回收 STOPPED 进程。 */
+static void
+test_kill_stopped_process(void)
+{
+  int status = 0;
+  int stopped = fork();
+
+  if(stopped == 0){
+    if(setpgid(0, 0) < 0)
+      exit(1);
+    for(;;)
+      sleep(1000);
+  }
+  ASSERT_TRUE(stopped > 0);
+  ASSERT_EQ(0, setpgid(stopped, stopped));
+  ASSERT_EQ(0, procctl(stopped, JOBCTL_STOP));
+  ASSERT_EQ(stopped, waitpid(stopped, &status, WUNTRACED));
+  EXPECT_TRUE(WIFSTOPPED(status));
+
+  ASSERT_EQ(0, kill(stopped));
+  ASSERT_EQ(stopped, waitpid(stopped, &status, 0));
+  EXPECT_EQ(-1, status);
+  EXPECT_EQ(-1, getpgid(stopped));
+}
+
+/**
  * 验证 PGID、停止/继续事件、停止态终止回收和后台控制台读取隔离。
  */
 static void
@@ -56,6 +109,9 @@ run_jobctl_test(void)
   int leader;
   int status = 0;
   struct group_report report;
+
+  test_fast_exit_pgid();
+  test_kill_stopped_process();
 
   ASSERT_EQ(0, pipe(report_pipe));
   leader = fork();
