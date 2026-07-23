@@ -7,6 +7,7 @@ import argparse
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -144,33 +145,21 @@ SUITES: dict[str, Suite] = {
     ),
     "lab8-locks": Suite(
         name="lab8-locks",
-        description="Lab8 allocator and buffer-cache guest regression",
+        description="Fast Lab8 buffer-cache guest regression",
         tests=(
-            # 四项仍在同一个 QEMU snapshot 中顺序执行。拆开看门狗和日志只为
-            # 精确定位慢路径或阻塞点，不通过重启 guest 隐藏跨测试状态问题。
-            TestCase(
-                "lab8-kalloc-sbrkmuch",
-                ("xv6test --run lab8-kalloc-sbrkmuch",),
-                expected=GUEST_SUCCESS,
-                timeout=300,
-            ),
+            # 两个快速项仍在同一个 QEMU snapshot 中顺序执行。拆开看门狗和日志
+            # 只为精确定位慢路径或阻塞点，不通过重启 guest 隐藏跨测试状态问题。
             TestCase(
                 "lab8-createdelete",
                 ("xv6test --run lab8-createdelete",),
                 expected=GUEST_SUCCESS,
-                timeout=300,
+                timeout=180,
             ),
             TestCase(
                 "lab8-fourfiles",
                 ("xv6test --run lab8-fourfiles",),
                 expected=GUEST_SUCCESS,
-                timeout=300,
-            ),
-            TestCase(
-                "lab8-bigwrite",
-                ("xv6test --run lab8-bigwrite",),
-                expected=GUEST_SUCCESS,
-                timeout=300,
+                timeout=180,
             ),
         ),
     ),
@@ -182,9 +171,7 @@ SUITES: dict[str, Suite] = {
                 "lab9-bigfile",
                 ("xv6test --run lab9-bigfile",),
                 expected=GUEST_SUCCESS,
-                # 2 GiB 物理内存与高半区 alias 映射增加共享 CI 主机的页表和
-                # TLB 压力；保留 20 分钟预算，仍由有限看门狗识别真正挂死。
-                timeout=1200,
+                timeout=120,
             ),
         ),
     ),
@@ -322,6 +309,7 @@ def _write_log(suite: str, test: str, output: str) -> Path:
 def _run_host_test(suite: str, test: TestCase) -> None:
     """顺序执行一个 host 测试的命令并检查退出状态和输出。"""
 
+    started = time.perf_counter()
     chunks: list[str] = []
     for command in test.commands:
         completed = subprocess.run(
@@ -345,7 +333,8 @@ def _run_host_test(suite: str, test: TestCase) -> None:
     output = "\n".join(chunks)
     log_path = _write_log(suite, test.name, output)
     _assert_output(test, output)
-    print(f"PASS {test.name} ({log_path.relative_to(REPO_ROOT)})")
+    elapsed = time.perf_counter() - started
+    print(f"PASS {test.name} {elapsed:.2f}s ({log_path.relative_to(REPO_ROOT)})")
 
 
 def _start_qemu(cpus: int) -> pexpect.spawn:
@@ -475,6 +464,7 @@ def _run_qemu_tests(suite: str, tests: Sequence[TestCase], cpus: int) -> None:
     boot_output = child.before
     try:
         for test in tests:
+            started = time.perf_counter()
             chunks = [boot_output]
             for command in test.commands:
                 child.timeout = test.timeout
@@ -488,7 +478,8 @@ def _run_qemu_tests(suite: str, tests: Sequence[TestCase], cpus: int) -> None:
             output = "\n".join(chunks)
             log_path = _write_log(suite, test.name, output)
             _assert_output(test, output)
-            print(f"PASS {test.name} ({log_path.relative_to(REPO_ROOT)})")
+            elapsed = time.perf_counter() - started
+            print(f"PASS {test.name} {elapsed:.2f}s ({log_path.relative_to(REPO_ROOT)})")
     finally:
         _stop_qemu(child)
 

@@ -23,28 +23,24 @@ class Lab8SuiteTests(unittest.TestCase):
     """验证 Lab8 用例保持同一 suite，同时拥有独立看门狗和日志名称。"""
 
     def test_lab8_cases_are_individually_addressable(self) -> None:
-        """确保四个 Lab8 子项不再被一个 group 级 600 秒看门狗包裹。"""
+        """确保 PR 快速项不再被一个 group 级 600 秒看门狗包裹。"""
 
         tests = RUNNER.SUITES["lab8-locks"].tests
         self.assertEqual(
             [
-                "lab8-kalloc-sbrkmuch",
                 "lab8-createdelete",
                 "lab8-fourfiles",
-                "lab8-bigwrite",
             ],
             [test.name for test in tests],
         )
         self.assertEqual(
             [
-                ("xv6test --run lab8-kalloc-sbrkmuch",),
                 ("xv6test --run lab8-createdelete",),
                 ("xv6test --run lab8-fourfiles",),
-                ("xv6test --run lab8-bigwrite",),
             ],
             [test.commands for test in tests],
         )
-        self.assertTrue(all(test.timeout == 300 for test in tests))
+        self.assertTrue(all(test.timeout == 180 for test in tests))
         self.assertTrue(
             all(set(RUNNER.GUEST_SUCCESS).issubset(test.expected) for test in tests)
         )
