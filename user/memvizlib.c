@@ -531,15 +531,27 @@ print_phys_view(struct memviz_snapshot *state, int plain)
 }
 
 /**
- * 输出当前进程内核页表的主要映射，明确区分低地址 MMIO 与高地址用户别名窗。
+ * 输出当前进程内核页表的主要映射，按 Sv39 高规范半区、非规范空洞和低规范
+ * 半区的真实顺序展示用户 alias、trampoline、内核 direct map 与 MMIO。
  */
 static void
 print_kernel_view(struct memviz_snapshot *state, int plain)
 {
+  uint64 alias_limit = state->user_mirror_start + state->user_limit;
+  uint64 lower_canonical_limit = state->trampoline + PGSIZE;
+
   printf("\n%s=== CURRENT PROCESS KERNEL ADDRESS SPACE ===%s\n",
          plain ? "" : ANSI_CYAN, plain ? "" : ANSI_RESET);
   printf("\n       HIGH ADDRESS\n");
-  print_line(state->trampoline + PGSIZE, "+------------------------------------+");
+  print_line(alias_limit, "+------------ KUSEREND --------------+");
+  print_box_text("unused alias capacity");
+  print_line(state->user_mirror_end, "+------- current alias extent -------+");
+  print_box_text("USER ALIAS WINDOW / supervisor-only");
+  print_box_text("alias VA -> same user physical page");
+  print_line(state->user_mirror_start, "+---------- KUSERBASE ---------------+");
+  print_box_text("SV39 NON-CANONICAL ADDRESS GAP");
+  print_box_text("walk() rejects this entire interval");
+  print_line(lower_canonical_limit, "+-------------- MAXVA ---------------+");
   print_box_text("TRAMPOLINE / RX");
   print_line(state->trampoline, "+------------------------------------+");
 
@@ -559,19 +571,18 @@ print_kernel_view(struct memviz_snapshot *state, int plain)
   print_line(state->kernel_data_start, "+------------------------------------+");
   print_box_text("KERNEL TEXT / RX");
   print_line(state->kernel_text_start, "+---------- KERNBASE ----------------+");
-  print_box_text("USER ALIAS WINDOW / supervisor-only");
-  print_box_text("alias VA -> same user physical page");
-  print_line(state->user_mirror_end, "+------- current alias extent -------+");
-  print_box_text("unused alias capacity");
-  print_line(state->user_mirror_start, "+---------- KUSERBASE ---------------+");
   print_box_text("PLIC / CLINT / UART / VIRTIO");
   print_box_text("low-address MMIO fixed mappings");
   printf("       LOW ADDRESS\n");
 
   printf("\nsummary:\n");
   printf("  p->kpagetable: %p\n", state->kernel_pagetable);
-  printf("  user alias: %p - %p\n",
+  printf("  user alias window: %p - %p\n",
+         state->user_mirror_start, alias_limit);
+  printf("  current alias extent: %p - %p\n",
          state->user_mirror_start, state->user_mirror_end);
+  printf("  non-canonical gap: %p - %p\n",
+         lower_canonical_limit, state->user_mirror_start);
   printf("  RAM direct map: %p - %p\n",
          state->kernel_data_start, state->kernel_data_end);
   printf("  MMIO: uart=%p virtio=%p clint=%p plic=%p\n",
