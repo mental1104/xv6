@@ -14,7 +14,7 @@ char buf[BSIZE];
 #define MAP_FAILED ((char *) -1)
 
 /**
- * 依次运行 mmap 基础行为、fork 继承和 VMA 配额回归。
+ * 依次运行 mmap 基础行为、VMA 配额和 fork 继承回归。
  *
  * @param argc 用户程序参数数量，本测试不使用。
  * @param argv 用户程序参数数组，本测试不使用。
@@ -24,8 +24,8 @@ int
 main(int argc, char *argv[])
 {
   mmap_test();
-  fork_test();
   vma_limit_test();
+  fork_test();
   printf("mmaptest: all tests succeeded\n");
   exit(0);
 }
