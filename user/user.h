@@ -5,6 +5,7 @@ struct memviz_snapshot;
 struct memviz_va_query;
 struct sched_stats;
 struct schedtrace_snapshot;
+struct user_context;
 
 // system calls
 int fork(void);
@@ -44,6 +45,18 @@ int sched_set_hint(int ticks);
 int sched_set_weight(int weight);
 int sched_get_stats(struct sched_stats *stats);
 int schedtrace(int op, struct schedtrace_snapshot *snapshot, int arg);
+
+/**
+ * 保存当前用户现场，并可在同一次系统调用中恢复另一份完整用户现场。
+ *
+ * @param save 接收当前 epc 和通用寄存器的用户缓冲区；为空时跳过保存。
+ * @param restore 要恢复的用户现场；为空时只保存当前现场。
+ * @param guard 可选调度临界区标志；内核在恢复目标现场前将其清零。
+ * @return 仅保存时返回 0；切换恢复后返回保存现场规定的 a0；地址非法返回 -1。
+ */
+int ucontext_switch(struct user_context *save,
+                    const struct user_context *restore,
+                    volatile int *guard);
 
 // ulib.c
 int stat(const char*, struct stat*);
