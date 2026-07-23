@@ -47,6 +47,40 @@ int sched_get_stats(struct sched_stats *stats);
 int schedtrace(int op, struct schedtrace_snapshot *snapshot, int arg);
 
 /**
+ * 将当前进程或直接子进程放入指定进程组。
+ *
+ * @param pid 目标 PID；0 表示当前进程。
+ * @param pgid 目标 PGID；0 表示使用目标 PID 创建新进程组。
+ * @return 成功返回 0；目标不可见、已退出或参数非法时返回 -1。
+ */
+int setpgid(int pid, int pgid);
+
+/**
+ * 查询当前进程或直接子进程的进程组。
+ *
+ * @param pid 目标 PID；0 表示当前进程。
+ * @return 成功返回正 PGID；目标不可见或已退出时返回 -1。
+ */
+int getpgid(int pid);
+
+/**
+ * 对整个进程组执行 JOBCTL_STOP、JOBCTL_CONT 或 JOBCTL_TERM。
+ *
+ * @param pgid 目标进程组 ID，必须为正数。
+ * @param action kernel/jobctl.h 中定义的动作。
+ * @return 至少命中一个活跃成员时返回 0，否则返回 -1。
+ */
+int procctl(int pgid, int action);
+
+/**
+ * 将单控制台的前台所有权交给指定进程组。
+ *
+ * @param pgid 目标进程组 ID；仅交互式 sh 可以调用。
+ * @return 成功返回 0；调用者或状态不满足约束时返回 -1。
+ */
+int tcsetpgrp(int pgid);
+
+/**
  * 保存当前用户现场，并可在同一次系统调用中恢复另一份完整用户现场。
  *
  * @param save 接收当前 epc 和通用寄存器的用户缓冲区；为空时跳过保存。

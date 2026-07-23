@@ -153,6 +153,16 @@ usertrap(void)
     p->killed = 1;
   }
 
+  // consoleintr() 只记录 Ctrl-C/Ctrl-Z；在不持有 cons.lock 时应用到整个 PGID。
+  console_apply_pending_control();
+
+  if(p->killed)
+    exit(-1);
+
+  // 远端 CPU 对 RUNNING 成员只能设置 stop_requested；当前进程在这里安全停下。
+  proc_stop_if_requested();
+
+  // STOPPED 作业可能由 TERM 唤醒；恢复后必须在返回用户态前完成退出。
   if(p->killed)
     exit(-1);
 
@@ -238,6 +248,9 @@ kerneltrap()
     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
     panic("kerneltrap");
   }
+
+  // 前台作业可能正在 sleep()，因此 UART 控制事件也必须能由内核态 trap 代为执行。
+  console_apply_pending_control();
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)

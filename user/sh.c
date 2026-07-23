@@ -6,6 +6,7 @@
 #include "user/shellinput.h"
 #include "kernel/fcntl.h"
 #include "kernel/wait.h"
+#include "kernel/jobctl.h"
 
 // Parsed command representation
 #define EXEC  1
@@ -18,17 +19,21 @@
 #define MAXJOBS 16
 #define MAXCMD  100
 
-enum jobstate { JOB_UNUSED, JOB_RUNNING };
+/** Shell 只跟踪顶层 supervisor；其 pipeline 后代通过 PGID 统一受控。 */
+enum jobstate { JOB_UNUSED, JOB_RUNNING, JOB_STOPPED };
 
+/** 保存一个由当前 Shell 直接创建并负责回收的作业。 */
 struct job {
   int jid;
   int pid;
+  int pgid;
   enum jobstate state;
   char command[MAXCMD];
 };
 
 static struct job jobs[MAXJOBS];
 static int nextjid = 1;
+static int shell_pgid;
 static struct shell_history command_history;
 
 struct cmd {
@@ -73,6 +78,7 @@ struct cmd *parsecmd(char*);
 void runline(struct cmd*);
 void runcmd(struct cmd*) __attribute__((noreturn));
 
+/** 将字符串复制到固定容量缓冲区并保证 NUL 结尾。 */
 static void
 copytext(char *dst, char *src, int size)
 {
@@ -83,6 +89,7 @@ copytext(char *dst, char *src, int size)
   dst[i] = 0;
 }
 
+/** 向格式化命令缓冲区追加文本，超出容量时保留已写部分。 */
 static void
 appendtext(char *dst, int *length, int size, char *text)
 {
@@ -91,6 +98,7 @@ appendtext(char *dst, int *length, int size, char *text)
   dst[*length] = 0;
 }
 
+/** 将命令树压缩成 jobs 可显示的单行文本。 */
 static void
 formatcmd(struct cmd *cmd, char *dst, int *length, int size)
 {
@@ -139,42 +147,26 @@ formatcmd(struct cmd *cmd, char *dst, int *length, int size)
   }
 }
 
+/** 清空作业槽位；JID 不复用，避免旧引用命中新作业。 */
 static void
 clearjob(struct job *job)
 {
   memset(job, 0, sizeof(*job));
 }
 
+/** 根据 JID 查找仍被当前 Shell 跟踪的运行或停止作业。 */
 static struct job*
 findjob(int jid)
 {
   struct job *job;
 
   for(job = jobs; job < &jobs[MAXJOBS]; job++)
-    if(job->state == JOB_RUNNING && job->jid == jid)
+    if(job->state != JOB_UNUSED && job->jid == jid)
       return job;
   return 0;
 }
 
-static void
-reapjobs(void)
-{
-  struct job *job;
-  int status;
-
-  for(job = jobs; job < &jobs[MAXJOBS]; job++){
-    if(job->state != JOB_RUNNING)
-      continue;
-    int pid = waitpid(job->pid, &status, WNOHANG);
-    if(pid == job->pid){
-      printf("[%d] Done %s\n", job->jid, job->command);
-      clearjob(job);
-    } else if(pid < 0){
-      clearjob(job);
-    }
-  }
-}
-
+/** 返回空闲作业槽位；找不到时返回 0。 */
 static struct job*
 emptyjob(void)
 {
@@ -186,29 +178,111 @@ emptyjob(void)
   return 0;
 }
 
+/** 将 supervisor PID/PGID 登记为一个可由 jobs、fg、bg 操作的作业。 */
+static struct job*
+recordjob(int pid, int pgid, enum jobstate state, char *command)
+{
+  struct job *job = emptyjob();
+
+  if(job == 0){
+    fprintf(2, "sh: too many jobs\n");
+    return 0;
+  }
+  job->jid = nextjid++;
+  job->pid = pid;
+  job->pgid = pgid;
+  job->state = state;
+  copytext(job->command, command, sizeof(job->command));
+  return job;
+}
+
+/** 返回作业状态的人类可读名称。 */
+static char*
+jobstatename(enum jobstate state)
+{
+  return state == JOB_STOPPED ? "Stopped" : "Running";
+}
+
+/**
+ * 非阻塞消费后台作业的 EXITED、STOPPED 和 CONTINUED 事件。
+ *
+ * 每个事件由内核只返回一次；退出时清理作业槽，停止/继续只更新状态。快速退出和
+ * 多个后台作业交错完成不会让 Shell 阻塞在提示符安全点。
+ */
+static void
+reapjobs(void)
+{
+  struct job *job;
+
+  for(job = jobs; job < &jobs[MAXJOBS]; job++){
+    if(job->state == JOB_UNUSED)
+      continue;
+
+    for(;;){
+      int status = 0;
+      int pid = waitpid(job->pid, &status,
+                        WNOHANG | WUNTRACED | WCONTINUED);
+      if(pid == 0)
+        break;
+      if(pid < 0){
+        clearjob(job);
+        break;
+      }
+      if(WIFSTOPPED(status)){
+        if(job->state != JOB_STOPPED)
+          printf("[%d] Stopped %s\n", job->jid, job->command);
+        job->state = JOB_STOPPED;
+        continue;
+      }
+      if(WIFCONTINUED(status)){
+        job->state = JOB_RUNNING;
+        continue;
+      }
+      printf("[%d] Done %s\n", job->jid, job->command);
+      clearjob(job);
+      break;
+    }
+  }
+}
+
+/**
+ * 创建后台 supervisor 并让父子双方尝试设置 PGID，缩小 fork/exec 启动竞态。
+ */
 static void
 startjob(struct cmd *cmd, char *command)
 {
-  struct job *job;
   int pid;
+  struct job *job;
 
   reapjobs();
-  if((job = emptyjob()) == 0){
+  if(emptyjob() == 0){
     fprintf(2, "sh: too many background jobs\n");
     return;
   }
 
   pid = fork1();
-  if(pid == 0)
+  if(pid == 0){
+    if(setpgid(0, 0) < 0)
+      exit(1);
     runcmd(cmd);
+  }
 
-  job->jid = nextjid++;
-  job->pid = pid;
-  job->state = JOB_RUNNING;
-  copytext(job->command, command, sizeof(job->command));
-  printf("[%d] %d\n", job->jid, job->pid);
+  if(setpgid(pid, pid) < 0){
+    kill(pid);
+    waitpid(pid, 0, 0);
+    fprintf(2, "sh: cannot create process group\n");
+    return;
+  }
+  job = recordjob(pid, pid, JOB_RUNNING, command);
+  if(job == 0){
+    procctl(pid, JOBCTL_TERM);
+    waitpid(pid, 0, 0);
+    return;
+  }
+  printf("[%d] %d\n", job->jid, job->pgid);
 }
 
+/** 输出当前运行和停止作业；展示值以 PGID 为统一控制标识。 */
 static void
 showjobs(void)
 {
@@ -216,24 +290,68 @@ showjobs(void)
 
   reapjobs();
   for(job = jobs; job < &jobs[MAXJOBS]; job++)
-    if(job->state == JOB_RUNNING)
-      printf("[%d] %d Running %s\n", job->jid, job->pid, job->command);
+    if(job->state != JOB_UNUSED)
+      printf("[%d] %d %s %s\n", job->jid, job->pgid,
+             jobstatename(job->state), job->command);
 }
 
 /**
- * 按从旧到新的顺序输出当前 Shell 进程拥有的会话历史。
+ * 将作业交给控制台前台并等待 supervisor 停止或退出。
  *
- * history 命令在进入内置命令分派前已写入 command_history，因此输出包含自身。
+ * @param job 已登记后台作业；新前台命令传 0。
+ * @param pid Shell 直接子进程 supervisor PID。
+ * @param pgid pipeline 全体成员共享的进程组 ID。
+ * @param command 用于前台命令被停止后创建 jobs 条目的文本。
  */
 static void
-showhistory(void)
+waitforeground(struct job *job, int pid, int pgid, char *command)
 {
-  for(int i = 0; i < shell_history_count(&command_history); i++){
-    const struct shell_history_entry *entry = shell_history_at(&command_history, i);
-    printf("%d %s\n", entry->number, entry->command);
+  int status = 0;
+
+  if(tcsetpgrp(pgid) < 0){
+    fprintf(2, "sh: cannot give console to pgid %d\n", pgid);
+    return;
   }
+
+  if(job != 0 && job->state == JOB_STOPPED){
+    if(procctl(pgid, JOBCTL_CONT) < 0){
+      fprintf(2, "fg: cannot continue job %d\n", job->jid);
+      tcsetpgrp(shell_pgid);
+      return;
+    }
+    job->state = JOB_RUNNING;
+  }
+
+  for(;;){
+    int waited = waitpid(pid, &status, WUNTRACED | WCONTINUED);
+    if(waited < 0){
+      fprintf(2, "sh: wait failed for pgid %d\n", pgid);
+      break;
+    }
+    if(WIFCONTINUED(status)){
+      if(job != 0)
+        job->state = JOB_RUNNING;
+      continue;
+    }
+    if(WIFSTOPPED(status)){
+      if(job == 0)
+        job = recordjob(pid, pgid, JOB_STOPPED, command);
+      else
+        job->state = JOB_STOPPED;
+      if(job != 0)
+        printf("[%d] Stopped %s\n", job->jid, job->command);
+      break;
+    }
+    if(job != 0)
+      clearjob(job);
+    break;
+  }
+
+  if(tcsetpgrp(shell_pgid) < 0)
+    fprintf(2, "sh: cannot reclaim console\n");
 }
 
+/** 解析 `%jid` 或纯数字 JID；非法输入返回 -1。 */
 static int
 parsejid(char *s)
 {
@@ -256,23 +374,54 @@ parsejid(char *s)
   return jid;
 }
 
+/** 将停止或运行的后台作业切换到前台并等待下一次状态边界。 */
 static void
 foreground(char *arg)
 {
-  int jid, status;
+  int jid;
   struct job *job;
 
   if((jid = parsejid(arg)) < 0 || (job = findjob(jid)) == 0){
     fprintf(2, "fg: no such job\n");
     return;
   }
-  if(waitpid(job->pid, &status, 0) < 0){
-    fprintf(2, "fg: wait failed for job %d\n", jid);
-    return;
-  }
-  clearjob(job);
+  waitforeground(job, job->pid, job->pgid, job->command);
 }
 
+/** 恢复停止作业到后台并立即返回提示符。 */
+static void
+background(char *arg)
+{
+  int jid;
+  struct job *job;
+
+  if((jid = parsejid(arg)) < 0 || (job = findjob(jid)) == 0){
+    fprintf(2, "bg: no such job\n");
+    return;
+  }
+  if(job->state != JOB_STOPPED){
+    fprintf(2, "bg: job %d is already running\n", jid);
+    return;
+  }
+  if(procctl(job->pgid, JOBCTL_CONT) < 0){
+    fprintf(2, "bg: cannot continue job %d\n", jid);
+    return;
+  }
+  job->state = JOB_RUNNING;
+  printf("[%d] %d Running %s\n", job->jid, job->pgid, job->command);
+}
+
+/** 按从旧到新的顺序输出当前 Shell 进程拥有的会话历史。 */
+static void
+showhistory(void)
+{
+  for(int i = 0; i < shell_history_count(&command_history); i++){
+    const struct shell_history_entry *entry = shell_history_at(&command_history, i);
+    printf("%d %s\n", entry->number, entry->command);
+  }
+}
+
+/** 判断字符串是否以前缀开头。 */
 static int
 startswith(char *s, char *prefix)
 {
@@ -302,6 +451,10 @@ runbuiltin(char *buf)
   }
   if(startswith(buf, "fg ")){
     foreground(buf + 3);
+    return 1;
+  }
+  if(startswith(buf, "bg ")){
+    background(buf + 3);
     return 1;
   }
   if(startswith(buf, "cd ")){
@@ -421,6 +574,13 @@ main(void)
     }
   }
 
+  // Shell 自成进程组，并成为单控制台初始前台 owner。
+  if(setpgid(0, 0) < 0 || (shell_pgid = getpgid(0)) < 0 ||
+     tcsetpgrp(shell_pgid) < 0){
+    fprintf(2, "sh: cannot initialize job control\n");
+    exit(1);
+  }
+
   // Read and run input commands.
   for(;;){
     reapjobs();
@@ -440,8 +600,9 @@ main(void)
   exit(0);
 }
 
-// Run lists in the shell so every top-level background command remains
-// a direct child that can be tracked and reaped by this shell.
+/**
+ * 在父 Shell 中展开顶层列表，并为每个前台或后台命令创建独立进程组。
+ */
 void
 runline(struct cmd *cmd)
 {
@@ -455,6 +616,7 @@ runline(struct cmd *cmd)
     runline(lcmd->right);
     return;
   }
+
   if(cmd->type == BACK){
     formatcmd(((struct backcmd*)cmd)->cmd, command,
               &command_length, sizeof(command));
@@ -463,11 +625,20 @@ runline(struct cmd *cmd)
     return;
   }
 
+  formatcmd(cmd, command, &command_length, sizeof(command));
   pid = fork1();
-  if(pid == 0)
+  if(pid == 0){
+    if(setpgid(0, 0) < 0)
+      exit(1);
     runcmd(cmd);
-  if(waitpid(pid, 0, 0) < 0)
-    fprintf(2, "sh: wait failed\n");
+  }
+  if(setpgid(pid, pid) < 0){
+    kill(pid);
+    waitpid(pid, 0, 0);
+    fprintf(2, "sh: cannot create foreground process group\n");
+    return;
+  }
+  waitforeground(0, pid, pid, command);
 }
 
 void

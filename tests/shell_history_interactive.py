@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""通过真实 QEMU 串口输入验证 xv6 Shell 行编辑与会话历史。"""
+"""通过真实 QEMU 串口输入验证 xv6 Shell 行编辑、历史与作业控制。"""
 
 from __future__ import annotations
 
 import argparse
 import re
+import time
 from pathlib import Path
 from typing import TextIO
 
@@ -94,8 +95,94 @@ def require(pattern: str, output: str, message: str) -> None:
         raise ShellHistoryFailure(f"{message}; pattern={pattern!r}; output={output!r}")
 
 
+def reject(pattern: str, output: str, message: str) -> None:
+    """要求正则模式不出现在输出中。
+
+    Args:
+        pattern: 不允许出现的正则表达式。
+        output: 待检查的终端输出。
+        message: 失败时说明被破坏的行为。
+    """
+
+    if re.search(pattern, output, re.MULTILINE | re.DOTALL) is not None:
+        raise ShellHistoryFailure(f"{message}; pattern={pattern!r}; output={output!r}")
+
+
+def run_job_control_checks(child: pexpect.spawn) -> None:
+    """通过真实控制字符验证前台 pipeline 的停止、继续和终止闭环。
+
+    `consolelinetest hold | cat` 的 ready 行只有在 pipeline 两端均完成 exec 后才会
+    到达串口，因此 Ctrl-Z 不依赖固定启动延迟。随后依次验证 jobs、bg、重复 bg、
+    fg、Ctrl-C、非法 JID，以及后台 `cat` 不能窃取 Shell 的下一条输入。
+
+    Args:
+        child: 已处于 Shell 提示符的 QEMU 子进程。
+    """
+
+    child.timeout = 30
+    child.send("consolelinetest hold | cat")
+    child.send("\r")
+    child.expect_exact("consolelinetest: hold ready")
+    child.sendcontrol("z")
+    child.expect_exact(PROMPT)
+    require(
+        r"\[1\]\s+Stopped\s+consolelinetest hold \| cat",
+        child.before or "",
+        "Ctrl-Z 未停止整个前台 pipeline",
+    )
+
+    output = submit(child, "jobs")
+    require(
+        r"\[1\]\s+\d+\s+Stopped\s+consolelinetest hold \| cat",
+        output,
+        "jobs 未显示停止态 pipeline",
+    )
+
+    output = submit(child, "bg %1")
+    require(
+        r"\[1\]\s+\d+\s+Running\s+consolelinetest hold \| cat",
+        output,
+        "bg 未恢复停止作业",
+    )
+    output = submit(child, "bg %1")
+    require(r"bg: job 1 is already running", output, "重复 bg 没有确定错误")
+
+    output = submit(child, "jobs")
+    require(
+        r"\[1\]\s+\d+\s+Running\s+consolelinetest hold \| cat",
+        output,
+        "后台恢复后 jobs 状态错误",
+    )
+
+    child.send("fg %1")
+    child.send("\r")
+    child.expect_exact("fg %1")
+    # 等待父 Shell 完成 tcsetpgrp 与 CONT；这不是行为判定阈值，只避免控制字节仍落在
+    # Shell raw 输入缓冲区。真正完成条件由随后出现的提示符与作业表断言决定。
+    time.sleep(0.2)
+    child.sendcontrol("c")
+    child.expect_exact(PROMPT, timeout=30)
+
+    output = submit(child, "jobs")
+    reject(r"\[1\].*(Running|Stopped)", output, "Ctrl-C 后作业仍留在 jobs 中")
+    output = submit(child, "echo shell-alive")
+    require(r"\bshell-alive\b", output, "Ctrl-C 误终止了 Shell")
+
+    output = submit(child, "fg %999")
+    require(r"fg: no such job", output, "非法 fg JID 没有确定错误")
+    output = submit(child, "bg %999")
+    require(r"bg: no such job", output, "非法 bg JID 没有确定错误")
+
+    output = submit(child, "cat &")
+    require(r"\[2\]\s+\d+", output, "后台读取作业未登记")
+    output = submit(child, "echo shell-input-safe")
+    require(r"\bshell-input-safe\b", output, "后台 cat 窃取了 Shell 输入")
+    output = submit(child, "jobs")
+    reject(r"Running\s+cat &", output, "后台 console read 失败后作业未退出")
+
+
 def run_checks(child: pexpect.spawn) -> None:
-    """执行历史、方向键、编辑边界及兼容性验收。
+    """执行历史、方向键、编辑边界、作业控制及兼容性验收。
 
     Args:
         child: 已进入全新登录 Shell 的 QEMU 子进程。
@@ -155,6 +242,8 @@ def run_checks(child: pexpect.spawn) -> None:
     # PR #49 的 jobctl 用 pipe 驱动子 Shell，同时覆盖非 console stdin fallback。
     output = submit(child, "usertests jobctl", timeout=120)
     require(r"ALL TESTS PASSED", output, "PR #49 pipe-driven jobctl 回归失败")
+
+    run_job_control_checks(child)
 
     child.send("echo ctrl-d")
     child.sendcontrol("d")

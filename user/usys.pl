@@ -53,3 +53,7 @@ entry("sched_set_weight");
 entry("sched_get_stats");
 entry("schedtrace");
 entry("ucontext_switch");
+entry("setpgid");
+entry("getpgid");
+entry("procctl");
+entry("tcsetpgrp");

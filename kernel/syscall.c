@@ -122,6 +122,10 @@ extern uint64 sys_sched_set_weight(void);
 extern uint64 sys_sched_get_stats(void);
 extern uint64 sys_schedtrace(void);
 extern uint64 sys_ucontext_switch(void);
+extern uint64 sys_setpgid(void);
+extern uint64 sys_getpgid(void);
+extern uint64 sys_procctl(void);
+extern uint64 sys_tcsetpgrp(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -162,6 +166,10 @@ static uint64 (*syscalls[])(void) = {
 [SYS_sched_get_stats]  sys_sched_get_stats,
 [SYS_schedtrace]       sys_schedtrace,
 [SYS_ucontext_switch]  sys_ucontext_switch,
+[SYS_setpgid]          sys_setpgid,
+[SYS_getpgid]          sys_getpgid,
+[SYS_procctl]          sys_procctl,
+[SYS_tcsetpgrp]        sys_tcsetpgrp,
 };
 
 void

@@ -40,8 +40,8 @@ extern struct cpu cpus[NCPU];
 // uservec in trampoline.S saves user registers in the trapframe,
 // then initializes registers from the trapframe's
 // kernel_sp, kernel_hartid, kernel_satp, and jumps to kernel_trap.
-// usertrapret() and userret in trampoline.S set up
-// the trapframe's kernel_*, restore user registers from the
+// usertrapret() and userret in trampoline.S set up the
+// trapframe's kernel_*, restore user registers from the
 // trapframe, switch to the user page table, and enter user space.
 // the trapframe includes callee-saved user registers like s0-s11 because the
 // return-to-user path via usertrapret() doesn't return through
@@ -99,7 +99,16 @@ _Static_assert((__builtin_offsetof(struct trapframe, a0) -
                USER_CONTEXT_A0_INDEX,
                "user_context a0 index must match trapframe");
 
-enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+/**
+ * STOPPED 表示进程保留全部资源与用户现场，但不会被 scheduler() 选中。
+ * 继续事件只把该状态恢复为 RUNNABLE，不模拟完整 POSIX signal pending queue。
+ */
+enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, STOPPED, ZOMBIE };
+
+/** 等待父进程一次性消费的停止事件。 */
+#define PROC_EVENT_STOPPED 1
+/** 等待父进程一次性消费的继续事件。 */
+#define PROC_EVENT_CONTINUED 2
 
 // 调度实体内嵌于 proc，调度器和中断路径无需动态分配队列节点。
 struct sched_entity {
@@ -138,6 +147,9 @@ struct proc {
   int killed;                  // If non-zero, have been killed
   int xstate;                  // Exit status to be returned to parent's wait
   int pid;                     // Process ID
+  int pgid;                    // Process-group ID; fork() inherits the parent's value.
+  int stop_requested;          // RUNNING process should enter STOPPED before user return.
+  int wait_events;             // PROC_EVENT_* bits; wait_lock protects consumption.
   struct sched_entity sched;   // Policy-owned scheduling state.
 
   // these are private to the process, so p->lock need not be held.

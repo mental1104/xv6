@@ -43,6 +43,10 @@ static const char *const syscall_names[] = {
 [SYS_sched_get_stats]  = "sched_get_stats",
 [SYS_schedtrace]       = "schedtrace",
 [SYS_ucontext_switch]  = "ucontext_switch",
+[SYS_setpgid]          = "setpgid",
+[SYS_getpgid]          = "getpgid",
+[SYS_procctl]          = "procctl",
+[SYS_tcsetpgrp]        = "tcsetpgrp",
 };
 
 // 名称表中可访问的元素数量（包含下标 0），用于限制遍历和查找范围。
