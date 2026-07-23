@@ -7,6 +7,9 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "sysinfo.h"
+#include "sched.h"
+#include "schedstat.h"
+#include "schedtrace.h"
 
 uint64
 sys_exit(void)
@@ -88,6 +91,7 @@ sys_sleep(void)
 {
   int n;
   uint ticks0;
+
   if(argint(0, &n) < 0)
     return -1;
   acquire(&tickslock);
@@ -107,6 +111,7 @@ uint64
 sys_kill(void)
 {
   int pid;
+
   if(argint(0, &pid) < 0)
     return -1;
   return kill(pid);
@@ -150,32 +155,153 @@ sys_sysinfo(void)
   info.nproc = free_proc();
 
   if(copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
-    return -1;
+      return -1;
   return 0;
 }
 
 uint64
 sys_sigalarm(void)
 {
-  struct proc* p = myproc();
-  int n;
-  uint64 handler;
-  if(argint(0,&n) < 0)
-    return -1;
-  if(argaddr(1, &handler) < 0)
-    return -1;
-  p->handler = (void (*)())handler;
-  p->alarm_interval = n;
-  return 0;
+    struct proc* p = myproc();
+    int n;
+    uint64 handler;
+    if(argint(0,&n) < 0)
+        return -1;
+    if(argaddr(1, &handler) < 0)
+        return -1;
+    p->handler = (void (*)())handler;
+    p->alarm_interval = n;
+    return 0;
 }
 
 uint64
 sys_sigreturn(void)
 {
-  struct proc* p = myproc();
-  restore_user_context(p->trapframe, &p->alarm_context);
-  p->in_handler = 0;
-  return p->trapframe->a0;
+    struct proc* p = myproc();
+    restore_user_context(p->trapframe, &p->alarm_context);
+    p->in_handler = 0;
+    return p->trapframe->a0;
+}
+
+/**
+ * 设置当前进程供 SJF/STCF 教学策略使用的 CPU burst hint。
+ *
+ * @return 参数合法时返回 0，否则返回 -1。
+ */
+uint64
+sys_sched_set_hint(void)
+{
+  int ticks_hint;
+  if(argint(0, &ticks_hint) < 0)
+    return -1;
+  return sched_set_hint(ticks_hint);
+}
+
+/**
+ * 设置当前进程供 Minimal CFS 使用的整数权重。
+ *
+ * @return 参数合法时返回 0，否则返回 -1。
+ */
+uint64
+sys_sched_set_weight(void)
+{
+  int weight;
+  if(argint(0, &weight) < 0)
+    return -1;
+  return sched_set_weight(weight);
+}
+
+/**
+ * 将当前进程的调度统计复制到用户地址。
+ *
+ * @return 复制成功时返回 0，地址或状态无效时返回 -1。
+ */
+uint64
+sys_sched_get_stats(void)
+{
+  uint64 addr;
+  struct sched_stats stats;
+  struct proc *p = myproc();
+
+  if(argaddr(0, &addr) < 0)
+    return -1;
+  if(sched_get_stats(&stats) < 0)
+    return -1;
+  if(copyout(p->pagetable, addr, (char *)&stats, sizeof(stats)) < 0)
+    return -1;
+  return 0;
+}
+
+static struct spinlock schedtrace_sys_lock;
+static int schedtrace_sys_lock_ready;
+static struct schedtrace_snapshot schedtrace_sys_snapshot;
+
+/**
+ * ensure_schedtrace_sys_lock 初始化 schedtrace read 使用的静态快照锁。
+ *
+ * schedtrace_snapshot 大于一页，不能放在 xv6 较小的内核栈上；该锁只保护
+ * sys_schedtrace 内部复用缓冲，不参与调度器锁序。
+ */
+static void
+ensure_schedtrace_sys_lock(void)
+{
+  if(!schedtrace_sys_lock_ready){
+    initlock(&schedtrace_sys_lock, "schedtracesys");
+    schedtrace_sys_lock_ready = 1;
+  }
+}
+
+/**
+ * sys_schedtrace 控制和读取固定容量调度轨迹。
+ *
+ * 参数 0 是 SCHEDTRACE_OP_*；READ 时参数 1 为用户态
+ * struct schedtrace_snapshot 地址、参数 2 为调用者事件容量。WATCH_PID 时参数
+ * 2 是要加入过滤器的 PID。RESET/START/STOP 忽略后两个参数。
+ *
+ * @return 成功返回 0；未知操作、容量越界、PID 无效或 copyout 失败时返回 -1。
+ */
+uint64
+sys_schedtrace(void)
+{
+  int op;
+  int arg;
+  uint64 address;
+  struct proc *p = myproc();
+
+  if(argint(0, &op) < 0)
+    return -1;
+  if(argaddr(1, &address) < 0)
+    return -1;
+  if(argint(2, &arg) < 0)
+    return -1;
+
+  switch(op){
+  case SCHEDTRACE_OP_RESET:
+    schedtrace_reset();
+    return 0;
+  case SCHEDTRACE_OP_START:
+    return schedtrace_start();
+  case SCHEDTRACE_OP_STOP:
+    return schedtrace_stop();
+  case SCHEDTRACE_OP_WATCH_PID:
+    return schedtrace_watch_pid(arg);
+  case SCHEDTRACE_OP_READ:
+    ensure_schedtrace_sys_lock();
+    acquire(&schedtrace_sys_lock);
+    if(schedtrace_copy_snapshot(&schedtrace_sys_snapshot, arg) < 0){
+      release(&schedtrace_sys_lock);
+      return -1;
+    }
+    if(copyout(p->pagetable, address, (char *)&schedtrace_sys_snapshot,
+               sizeof(schedtrace_sys_snapshot)) < 0){
+      release(&schedtrace_sys_lock);
+      return -1;
+    }
+    release(&schedtrace_sys_lock);
+    return 0;
+  default:
+    return -1;
+  }
 }
 
 /**
