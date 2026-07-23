@@ -197,8 +197,9 @@ sys_consolemode(void)
 /**
  * 将单控制台的前台输入所有权交给一个进程组。
  *
- * 只有最初声明控制台所有权的交互式 sh 进程组可以切换。目标必须是 Shell 自身
- * 或其直接子进程领导的现有进程组；本接口不实现 session、多个 TTY 或 tcgetpgrp。
+ * 只有最初声明控制台所有权的交互式 sh 进程组可以切换。stdin 为 pipe/文件的
+ * 非交互 Shell 返回成功但不修改 console，保持现有 pipe-driven Shell 测试隔离。
+ * 目标必须是 Shell 自身或其直接子进程领导的现有进程组。
  */
 uint64
 sys_tcsetpgrp(void)
@@ -212,6 +213,10 @@ sys_tcsetpgrp(void)
     return -1;
   if((caller_pgid = getpgid(0)) < 0)
     return -1;
+
+  // 非交互 Shell 没有 controlling console；不允许它篡改真实交互 Shell 的 fg_pgid。
+  if(console_file(p, 0) == 0)
+    return 0;
   if(pgid != caller_pgid && getpgid(pgid) != pgid)
     return -1;
 
