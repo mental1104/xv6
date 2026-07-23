@@ -26,6 +26,7 @@ void            consoleinit(void);
 void            consoleintr(int);
 void            consputc(int);
 void            consolefileclose(struct file*, int);
+void            console_apply_pending_control(void);
 
 // exec.c
 int             exec(char*, char**);
@@ -98,6 +99,10 @@ int             growproc(int);
 pagetable_t     proc_pagetable(struct proc *);
 void            proc_freepagetable(pagetable_t, uint64);
 int             kill(int);
+int             setpgid(int, int);
+int             getpgid(int);
+int             proc_group_control(int, int);
+void            proc_stop_if_requested(void);
 struct cpu*     mycpu(void);
 struct cpu*     getmycpu(void);
 struct proc*    myproc();
