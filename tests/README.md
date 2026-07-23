@@ -115,11 +115,28 @@ XV6TEST done status=0
 
 `core-schedtrace` 属于教学调度器的基础观察回归，验证 `schedtrace` 默认关闭、启停/reset/read、PID 过滤、容量丢弃、RUN_START/RUN_STOP 配对和 `schedviz` 参数错误退出；策略图形语义由 `make schedviz SCHED_POLICY=<policy> CPUS=<n>` 的宿主端 visualizer 生成 trace/SVG 后检查。
 
-Lab9 的两个测试虽然都属于 `lab9` group，但默认宿主机 suite 使用两次 `--run` 并分别启动 snapshot。`bigfile` 会显著修改文件系统，不应与 `symlinktest` 共用自动化 snapshot。
+Lab9 的两个测试虽然都属于 `lab9` group，但默认宿主机 suite 使用两次 `--run` 并分别启动 snapshot。`bigfile` 会修改文件系统，不应与 `symlinktest` 共用自动化 snapshot。
+
+### Lab9 PR 快速测试
+
+```bash
+python3 tests/run.py --suite lab9-bigfile --cpus 3
+```
+
+`lab9-bigfile` 是默认 PR 回归的一部分，只顺序写入并读回二级间接第二张叶子索引表的第一个数据块。当前布局下覆盖 `9 + 256 + 256 + 1 = 522` 个 1 KiB 块，并验证：
+
+- 最后一个直接块；
+- 第一个和最后一个一级间接块；
+- 第一个二级间接块；
+- 二级间接第一张叶子表的最后一个数据块；
+- 二级间接第二张叶子表的第一个数据块；
+- 文件大小；
+- 数据读回；
+- 文件释放。
 
 ## 显式 4 GiB 文件回归
 
-Issue #29 的完整回归不属于日常 `pr`、`full` 或 `make test`。它使用宿主机稀疏文件创建约 4.25M 个 1 KiB 块的镜像，但 guest 仍会真实顺序写入和读回超过 `2^32` 字节的数据。
+Issue #29 的完整回归不属于默认 PR 回归，也不属于日常 `pr`、`full` 或 `make test`。它使用宿主机稀疏文件创建约 4.25M 个 1 KiB 块的镜像，但 guest 仍会真实顺序写入和读回超过 `2^32` 字节的数据。
 
 ```bash
 # 默认 3 CPU。
