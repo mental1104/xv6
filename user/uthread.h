@@ -1,6 +1,7 @@
 #ifndef XV6_UTHREAD_H
 #define XV6_UTHREAD_H
 
+/** M:1 运行时可同时持有的工作线程槽位数，不包含主线程槽位 0。 */
 #define UTHREAD_MAX_WORKERS 16
 
 /** 用户线程入口；argument 的生命周期和所有权由调用者负责。 */
