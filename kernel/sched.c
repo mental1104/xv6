@@ -7,6 +7,7 @@
 #include "defs.h"
 #include "sched.h"
 #include "schedstat.h"
+#include "schedtrace.h"
 
 #ifndef SCHED_POLICY
 #define SCHED_POLICY SCHED_POLICY_RR
@@ -183,7 +184,11 @@ never_preempt(struct proc *p)
 static int
 rr_preempt(struct proc *p)
 {
-  return p->sched.slice_ticks >= RR_QUANTUM;
+  if(p->sched.slice_ticks >= RR_QUANTUM){
+    p->sched.pending_stop_reason = SCHEDTRACE_REASON_RR_QUANTUM;
+    return 1;
+  }
+  return 0;
 }
 
 static int
@@ -201,7 +206,11 @@ stcf_preempt(struct proc *p)
       best = q;
   current = remaining_key(p);
   candidate = remaining_key(best);
-  return candidate < current;
+  if(candidate < current){
+    p->sched.pending_stop_reason = SCHEDTRACE_REASON_STCF_SHORTER_TASK;
+    return 1;
+  }
+  return 0;
 }
 
 static void
@@ -259,6 +268,7 @@ mlfq_boost_locked(void)
     }
   }
   runq.last_boost = runq.clock;
+  schedtrace_record_boost(runq.clock, runq.boost_epoch);
 }
 
 static void
@@ -277,6 +287,7 @@ mlfq_tick(struct proc *p)
       p->sched.mlfq_level++;
     p->sched.mlfq_used = 0;
     p->sched.force_preempt = 1;
+    p->sched.pending_stop_reason = SCHEDTRACE_REASON_MLFQ_QUANTUM;
   }
 }
 
@@ -286,8 +297,10 @@ mlfq_preempt(struct proc *p)
   if(p->sched.force_preempt)
     return 1;
   for(int level = 0; level < p->sched.mlfq_level; level++)
-    if(runq.mlfq[level].head)
+    if(runq.mlfq[level].head){
+      p->sched.pending_stop_reason = SCHEDTRACE_REASON_MLFQ_HIGHER_QUEUE;
       return 1;
+    }
   return 0;
 }
 
@@ -394,7 +407,11 @@ cfs_preempt(struct proc *p)
   if(node == 0)
     return 0;
   left = rb_proc(node);
-  return cfs_less(left, p);
+  if(cfs_less(left, p)){
+    p->sched.pending_stop_reason = SCHEDTRACE_REASON_CFS_LOWER_VRUNTIME;
+    return 1;
+  }
+  return 0;
 }
 
 static void
@@ -530,6 +547,7 @@ schedinit(void)
   runq.boost_epoch = 1;
   runq.last_boost = 0;
   runq.min_vruntime = 0;
+  schedtrace_init();
   printf("scheduler: %s\n", (char *)sched_policy_name());
 }
 
@@ -571,12 +589,28 @@ scheduler(void)
 
     p->state = RUNNING;
     p->sched.dispatches++;
+    p->sched.pending_stop_reason = SCHEDTRACE_REASON_NONE;
+    p->sched.last_clock = runq.clock;
     policy_ops()->dispatch(p);
     c->proc = p;
+    schedtrace_record_start(p);
 
     w_satp(MAKE_SATP(p->kpagetable));
     sfence_vma();
     swtch(&c->context, &p->context);
+    int stop_reason = p->sched.pending_stop_reason;
+    if(p->killed)
+      stop_reason = SCHEDTRACE_REASON_KILLED;
+    else if(p->state == SLEEPING)
+      stop_reason = SCHEDTRACE_REASON_SLEEP;
+    else if(p->state == ZOMBIE)
+      stop_reason = SCHEDTRACE_REASON_EXIT;
+    else if(p->state == RUNNABLE && stop_reason == SCHEDTRACE_REASON_NONE)
+      stop_reason = SCHEDTRACE_REASON_VOLUNTARY_YIELD;
+    else if(stop_reason == SCHEDTRACE_REASON_NONE)
+      stop_reason = SCHEDTRACE_REASON_UNKNOWN;
+    schedtrace_record_stop(p, stop_reason);
+    p->sched.pending_stop_reason = SCHEDTRACE_REASON_NONE;
     c->proc = 0;
     release(&p->lock);
   }
@@ -585,6 +619,9 @@ scheduler(void)
 void
 yield(void)
 {
+  struct proc *p = myproc();
+  if(p && p->sched.pending_stop_reason == SCHEDTRACE_REASON_NONE)
+    p->sched.pending_stop_reason = SCHEDTRACE_REASON_VOLUNTARY_YIELD;
   legacy_yield();
 }
 
@@ -604,6 +641,7 @@ sched_timer_yield(void)
 
   acquire(&runq.lock);
   runq.clock++;
+  p->sched.last_clock = runq.clock;
   p->sched.runtime_ticks++;
   p->sched.slice_ticks++;
   if(p->sched.burst_hint && p->sched.remaining_hint)

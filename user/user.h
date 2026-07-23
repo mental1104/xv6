@@ -4,6 +4,7 @@ struct sysinfo;
 struct memviz_snapshot;
 struct memviz_va_query;
 struct sched_stats;
+struct schedtrace_snapshot;
 
 // system calls
 int fork(void);
@@ -40,6 +41,7 @@ int vaquery(uint64 va, struct memviz_va_query *query);
 int sched_set_hint(int ticks);
 int sched_set_weight(int weight);
 int sched_get_stats(struct sched_stats *stats);
+int schedtrace(int op, struct schedtrace_snapshot *snapshot, int arg);
 
 // ulib.c
 int stat(const char*, struct stat*);

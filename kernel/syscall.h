@@ -33,3 +33,4 @@
 #define SYS_sched_set_hint   32
 #define SYS_sched_set_weight 33
 #define SYS_sched_get_stats  34
+#define SYS_schedtrace       35

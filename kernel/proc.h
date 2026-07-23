@@ -104,9 +104,13 @@ struct sched_entity {
   int weight;
   int mlfq_level;
   int force_preempt;
+  // 当前时间片结束时写入 schedtrace 的停止原因，由抢占路径先标记。
+  int pending_stop_reason;
   uint64 mlfq_used;
   uint64 mlfq_epoch;
   uint64 enqueue_seq;
+  // 最近一次进入 CPU 的调度器逻辑时钟，用于计算本次运行片长度。
+  uint64 last_clock;
   uint64 runtime_ticks;
   uint64 dispatches;
   uint64 burst_hint;

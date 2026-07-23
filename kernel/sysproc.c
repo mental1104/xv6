@@ -9,6 +9,7 @@
 #include "sysinfo.h"
 #include "sched.h"
 #include "schedstat.h"
+#include "schedtrace.h"
 
 uint64
 sys_exit(void)
@@ -214,6 +215,78 @@ sys_sched_get_stats(void)
   if(copyout(p->pagetable, addr, (char *)&stats, sizeof(stats)) < 0)
     return -1;
   return 0;
+}
+
+static struct spinlock schedtrace_sys_lock;
+static int schedtrace_sys_lock_ready;
+static struct schedtrace_snapshot schedtrace_sys_snapshot;
+
+/**
+ * ensure_schedtrace_sys_lock 初始化 schedtrace read 使用的静态快照锁。
+ *
+ * schedtrace_snapshot 大于一页，不能放在 xv6 较小的内核栈上；该锁只保护
+ * sys_schedtrace 内部复用缓冲，不参与调度器锁序。
+ */
+static void
+ensure_schedtrace_sys_lock(void)
+{
+  if(!schedtrace_sys_lock_ready){
+    initlock(&schedtrace_sys_lock, "schedtracesys");
+    schedtrace_sys_lock_ready = 1;
+  }
+}
+
+/**
+ * sys_schedtrace 控制和读取固定容量调度轨迹。
+ *
+ * 参数 0 是 SCHEDTRACE_OP_*；READ 时参数 1 为用户态
+ * struct schedtrace_snapshot 地址、参数 2 为调用者事件容量。WATCH_PID 时参数
+ * 2 是要加入过滤器的 PID。RESET/START/STOP 忽略后两个参数。
+ *
+ * @return 成功返回 0；未知操作、容量越界、PID 无效或 copyout 失败时返回 -1。
+ */
+uint64
+sys_schedtrace(void)
+{
+  int op;
+  int arg;
+  uint64 address;
+  struct proc *p = myproc();
+
+  if(argint(0, &op) < 0)
+    return -1;
+  if(argaddr(1, &address) < 0)
+    return -1;
+  if(argint(2, &arg) < 0)
+    return -1;
+
+  switch(op){
+  case SCHEDTRACE_OP_RESET:
+    schedtrace_reset();
+    return 0;
+  case SCHEDTRACE_OP_START:
+    return schedtrace_start();
+  case SCHEDTRACE_OP_STOP:
+    return schedtrace_stop();
+  case SCHEDTRACE_OP_WATCH_PID:
+    return schedtrace_watch_pid(arg);
+  case SCHEDTRACE_OP_READ:
+    ensure_schedtrace_sys_lock();
+    acquire(&schedtrace_sys_lock);
+    if(schedtrace_copy_snapshot(&schedtrace_sys_snapshot, arg) < 0){
+      release(&schedtrace_sys_lock);
+      return -1;
+    }
+    if(copyout(p->pagetable, address, (char *)&schedtrace_sys_snapshot,
+               sizeof(schedtrace_sys_snapshot)) < 0){
+      release(&schedtrace_sys_lock);
+      return -1;
+    }
+    release(&schedtrace_sys_lock);
+    return 0;
+  default:
+    return -1;
+  }
 }
 
 /**

@@ -17,6 +17,7 @@ OBJS = \
   $K/vmcopyin.o \
   $K/proc.o \
   $K/sched.o \
+  $K/schedtrace.o \
   $K/rbtree.o \
   $K/swtch.o \
   $K/trampoline.o \
@@ -58,6 +59,12 @@ endif
 
 QEMU = qemu-system-riscv64
 PYTHON ?= python3
+
+ifneq ($(KEEP_ARTIFACTS),1)
+CLEAN_SCHEDVIZ_ARTIFACTS = rm -rf artifacts/schedviz
+else
+CLEAN_SCHEDVIZ_ARTIFACTS = @true
+endif
 
 CC = $(TOOLPREFIX)gcc
 AS = $(TOOLPREFIX)gas
@@ -215,6 +222,7 @@ UPROGS=\
 	$U/_rm\
 	$U/_sh\
 	$U/_memviz\
+	$U/_schedviz\
 	$U/_varead\
 	$U/_vawrite\
 	$U/_vaprobe\
@@ -247,7 +255,8 @@ UPROGS=\
 	$U/_tracesmoke\
 	$U/_uthreadtest\
 	$U/_xv6test\
-	$U/_schedtest
+	$U/_schedtest\
+	$U/_schedtracetest
 
 UEXTRA = $U/xargstest.sh
 
@@ -261,7 +270,8 @@ clean:
 		*/*.o */*.d */*.asm */*.sym \
 		$T/*.o $T/*.d $T/*.asm $T/*.sym \
 		$U/initcode $U/initcode.out $K/kernel fs.img \
-		mkfs/mkfs .gdbinit $U/usys.S $(UPROGS) $(UEXTRA) ph barrier rbtree_test
+		mkfs/mkfs .gdbinit $U/usys.S $(UPROGS) $(UEXTRA) ph barrier rbtree_test scheduler_visualizer
+	$(CLEAN_SCHEDVIZ_ARTIFACTS)
 
 GDBPORT = $(shell expr `id -u` % 5000 + 25000)
 QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
@@ -270,6 +280,7 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
 ifndef CPUS
 CPUS := 3
 endif
+CFLAGS += -DXV6_CPUS=$(CPUS)
 
 QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
@@ -294,6 +305,9 @@ ph: $H/ph.c
 
 barrier: $H/barrier.c
 	gcc -o barrier -g -O2 $H/barrier.c -pthread
+
+scheduler_visualizer: $H/scheduler_visualizer.c
+	gcc -Wall -Werror -O2 -o scheduler_visualizer $H/scheduler_visualizer.c
 
 test-rbtree:
 	gcc -Wall -Werror -I. -o rbtree_test $H/rbtree_test.c kernel/rbtree.c
@@ -329,5 +343,13 @@ test-suite: $K/kernel fs.img
 	@test -n "$(SUITE)" || (echo "usage: make test-suite SUITE=<suite> [CPUS=<n>]"; exit 2)
 	$(PYTHON) tests/run.py --suite $(SUITE) --cpus $(CPUS)
 
-.PHONY: clean qemu qemu-gdb gdb ph barrier test-rbtree test test-unit test-grader \
-	test-integration test-labs test-usertests test-full test-suite
+schedviz:
+	$(MAKE) clean KEEP_ARTIFACTS=1
+	$(MAKE) $K/kernel fs.img scheduler_visualizer SCHED_POLICY=$(SCHED_POLICY) CPUS=$(CPUS)
+	mkdir -p artifacts/schedviz
+	./scheduler_visualizer --policy $(SCHED_POLICY) --cpus $(CPUS) \
+		--trace artifacts/schedviz/$(SCHED_POLICY)-cpu$(CPUS).trace \
+		--svg artifacts/schedviz/$(SCHED_POLICY)-cpu$(CPUS).svg
+
+.PHONY: clean qemu qemu-gdb gdb ph barrier scheduler_visualizer test-rbtree test test-unit test-grader \
+	test-integration test-labs test-usertests test-full test-suite schedviz

@@ -13,6 +13,7 @@ initcode
 initcode.out
 kernelmemfs
 mkfs
+scheduler_visualizer
 kernel/kernel
 user/usys.S
 .gdbinit
@@ -23,3 +24,4 @@ xv6.out*
 submissions/
 __pycache__/
 test-results/
+artifacts/

@@ -112,6 +112,8 @@ XV6TEST done status=0
 
 `sbrkmuch` 同时属于 Lab3 地址空间增长和 Lab8 allocator 行为，因此按两个稳定测试名注册；这是有意保留的跨 Lab 共享回归。
 
+`core-schedtrace` 属于教学调度器的基础观察回归，验证 `schedtrace` 默认关闭、启停/reset/read、PID 过滤、容量丢弃、RUN_START/RUN_STOP 配对和 `schedviz` 参数错误退出；策略图形语义由 `make schedviz SCHED_POLICY=<policy> CPUS=<n>` 的宿主端 visualizer 生成 trace/SVG 后检查。
+
 Lab9 的两个测试虽然都属于 `lab9` group，但默认宿主机 suite 使用两次 `--run` 并分别启动 snapshot。`bigfile` 会显著修改文件系统，不应与 `symlinktest` 共用自动化 snapshot。
 
 ## 新增测试的最短路径

@@ -1,6 +1,8 @@
 #ifndef XV6_SCHED_H
 #define XV6_SCHED_H
 
+#include "schedtrace_abi.h"
+
 struct proc;
 struct sched_stats;
 
