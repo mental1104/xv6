@@ -3,18 +3,20 @@
 #include "kernel/memviz.h"
 #include "kernel/sysinfo.h"
 
-// 复用原始 usertests 的全部测试函数，但把依赖固定物理容量的入口重命名，
-// 再在本文件提供适配 2 GiB 教学机配置的确定性版本。原始源码保持可直接
+// 复用原始 usertests 的全部测试函数，但把依赖固定物理容量或旧文件语义的入口
+// 重命名，再在本文件提供适配当前教学内核的确定性版本。原始源码保持可直接
 // 与上游对照，适配逻辑集中在单独的 C 翻译单元中。
 #define execout execout_capacity_dependent
 #define mem mem_capacity_dependent
 #define sbrkbasic sbrkbasic_capacity_dependent
 #define sbrkfail sbrkfail_capacity_dependent
+#define truncate2 truncate2_pre_sparse_semantics
 #define run usertests_original_run
 #define main usertests_original_main
 #include "usertests.c"
 #undef main
 #undef run
+#undef truncate2
 #undef sbrkfail
 #undef sbrkbasic
 #undef mem
@@ -370,6 +372,96 @@ sbrkfail(char *s)
   }
   if(adapter_after.free_pages != adapter_before.free_pages){
     printf("%s: aborted sparse process leaked pages\n", s);
+    exit(1);
+  }
+}
+
+/**
+ * truncate2 验证截断不会回退其他打开文件对象的偏移，并且后续越过 EOF 的
+ * 写入会建立可持久化的稀疏文件，而不是沿用上游 xv6 的失败语义。
+ *
+ * @param s 当前 usertests 名称，用于稳定错误输出。
+ *
+ * fd1 写入四字节后停在偏移 4；fd2 将同一 inode 截断到零，但不会修改 fd1
+ * 持有的独立 file offset。fd1 随后写入一个字节，逻辑文件应扩展到五字节，
+ * 偏移 0..3 成为读零的 hole，偏移 4 保存写入的 x。
+ */
+void
+truncate2(char *s)
+{
+  char data[5];
+  struct stat st;
+
+  unlink("truncfile");
+
+  int fd1 = open("truncfile", O_CREATE|O_TRUNC|O_WRONLY);
+  if(fd1 < 0){
+    printf("%s: create failed\n", s);
+    exit(1);
+  }
+  if(write(fd1, "abcd", 4) != 4){
+    printf("%s: initial write failed\n", s);
+    close(fd1);
+    unlink("truncfile");
+    exit(1);
+  }
+
+  int fd2 = open("truncfile", O_TRUNC|O_WRONLY);
+  if(fd2 < 0){
+    printf("%s: truncate open failed\n", s);
+    close(fd1);
+    unlink("truncfile");
+    exit(1);
+  }
+  close(fd2);
+
+  if(write(fd1, "x", 1) != 1){
+    printf("%s: sparse write after truncate failed\n", s);
+    close(fd1);
+    unlink("truncfile");
+    exit(1);
+  }
+  close(fd1);
+
+  // 重开文件验证 hole 与尾部数据已经进入 inode，而非只存在于旧 file offset。
+  int fd = open("truncfile", O_RDONLY);
+  if(fd < 0){
+    printf("%s: reopen failed\n", s);
+    unlink("truncfile");
+    exit(1);
+  }
+  if(fstat(fd, &st) < 0 || st.size != sizeof(data)){
+    printf("%s: sparse size %d, expected %d\n",
+           s, (int)st.size, (int)sizeof(data));
+    close(fd);
+    unlink("truncfile");
+    exit(1);
+  }
+  memset(data, 0x7f, sizeof(data));
+  if(read(fd, data, sizeof(data)) != sizeof(data)){
+    printf("%s: sparse read failed\n", s);
+    close(fd);
+    unlink("truncfile");
+    exit(1);
+  }
+  for(int i = 0; i < 4; i++){
+    if(data[i] != 0){
+      printf("%s: hole byte %d is %d, expected 0\n", s, i, data[i]);
+      close(fd);
+      unlink("truncfile");
+      exit(1);
+    }
+  }
+  if(data[4] != 'x'){
+    printf("%s: sparse tail is %d, expected x\n", s, data[4]);
+    close(fd);
+    unlink("truncfile");
+    exit(1);
+  }
+
+  close(fd);
+  if(unlink("truncfile") < 0){
+    printf("%s: unlink failed\n", s);
     exit(1);
   }
 }
