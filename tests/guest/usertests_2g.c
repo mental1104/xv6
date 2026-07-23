@@ -29,6 +29,25 @@ static struct memviz_snapshot adapter_during;
 static struct memviz_snapshot adapter_after;
 
 /**
+ * adapter_prime_snapshots 在采集资源基线前私有化快照缓冲区。
+ *
+ * usertests 的 run() 会先 fork 再执行具体测试，因此这些全局缓冲区最初与
+ * 测试调度进程共享 COW 页面。memsnapshot() 先统计空闲页、再 copyout 整个
+ * 快照；若第一次 copyout 才触发 COW，返回的计数不会包含这次合法分配，
+ * 后续比较就会把测试进程自身的私有页误判为被测 worker 泄漏。
+ *
+ * 这里在建立基线前主动写满三个输出缓冲区，使 COW 成本被基线包含。之后
+ * worker 退出时，资源比较只反映被测地址空间、页表和内核别名是否被回收。
+ */
+static void
+adapter_prime_snapshots(void)
+{
+  memset(&adapter_before, 0, sizeof(adapter_before));
+  memset(&adapter_during, 0, sizeof(adapter_during));
+  memset(&adapter_after, 0, sizeof(adapter_after));
+}
+
+/**
  * adapter_free_pages 返回当前可立即分配的物理页数。
  *
  * @return kalloc 所有 CPU freelist 的空闲页总数。
@@ -60,6 +79,7 @@ adapter_free_pages(void)
 void
 execout(char *s)
 {
+  adapter_prime_snapshots();
   uint64 free0 = adapter_free_pages();
 
   for(int avail = 0; avail < 15; avail++){
@@ -107,6 +127,7 @@ execout(char *s)
 void
 mem(char *s)
 {
+  adapter_prime_snapshots();
   uint64 free0 = adapter_free_pages();
   int pid = fork();
   if(pid < 0){
@@ -238,6 +259,7 @@ sbrkfail(char *s)
   char ready;
 
   reject_break_underflow(s);
+  adapter_prime_snapshots();
   if(memsnapshot(MEMVIZ_VIEW_PHYS, &adapter_before) < 0){
     printf("%s: baseline memsnapshot failed\n", s);
     exit(1);
