@@ -262,6 +262,7 @@ UPROGS=\
 	$U/_primes\
 	$U/_find\
 	$U/_xargs\
+	$U/_whereis\
 	$U/_trace\
 	$U/_call\
 	$U/_uthread\
@@ -309,7 +310,7 @@ clean:
 	$(CLEAN_SCHEDVIZ_ARTIFACTS)
 
 GDBPORT = $(shell expr `id -u` % 5000 + 25000)
-QEMUGDB = $(shell if $(QEMU) -help 2>/dev/null | grep -q '^-gdb'; \
+QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
 	then echo "-gdb tcp::$(GDBPORT)"; \
 	else echo "-s -p $(GDBPORT)"; fi)
 ifndef CPUS
