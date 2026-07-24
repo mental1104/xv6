@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""通过真实 QEMU 串口输入验证 xv6 Shell 行编辑、历史与作业控制。"""
+"""通过真实 QEMU 串口输入验证 xv6 Shell 提示符、行编辑、历史与作业控制。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,28 @@ import pexpect
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESULT_ROOT = REPO_ROOT / "test-results"
 TRANSCRIPT_PATH = RESULT_ROOT / "shell-history-interactive.log"
-PROMPT = "$ "
+ANSI_GREEN_BOLD = "\x1b[1;32m"
+ANSI_BLUE_BOLD = "\x1b[1;34m"
+ANSI_RESET = "\x1b[0m"
+
+
+def shell_prompt(path: str) -> str:
+    """构造固定 root 身份与指定逻辑目录对应的精确终端提示符。
+
+    Args:
+        path: Shell 应显示的绝对逻辑目录，或目录未知时的 ``?``。
+
+    Returns:
+        包含 ANSI 样式与 root ``#`` 结尾的完整提示符。
+    """
+
+    return (
+        f"{ANSI_GREEN_BOLD}root@xv6{ANSI_RESET}:"
+        f"{ANSI_BLUE_BOLD}{path}{ANSI_RESET}# "
+    )
+
+
+PROMPT = shell_prompt("/root")
 
 
 class ShellHistoryFailure(RuntimeError):
@@ -22,7 +43,7 @@ class ShellHistoryFailure(RuntimeError):
 
 
 def start_qemu(cpus: int, transcript: TextIO) -> pexpect.spawn:
-    """启动独立 snapshot QEMU 并等待首个 Shell 提示符。
+    """启动独立 snapshot QEMU 并等待 `/root` 登录 Shell 提示符。
 
     Args:
         cpus: QEMU 虚拟 CPU 数量，必须至少为 1。
@@ -63,13 +84,19 @@ def stop_qemu(child: pexpect.spawn) -> None:
         child.terminate(force=True)
 
 
-def submit(child: pexpect.spawn, text: str, timeout: int = 30) -> str:
+def submit(
+    child: pexpect.spawn,
+    text: str,
+    timeout: int = 30,
+    expected_prompt: str = PROMPT,
+) -> str:
     """向当前提示符提交一条命令并返回下一提示符前的原始输出。
 
     Args:
         child: 已处于 Shell 提示符的 QEMU 子进程。
-        text: 不含 Enter 的完整命令；外部程序必须使用绝对路径。
+        text: 不含 Enter 的命令文本；外部程序必须使用绝对路径。
         timeout: 等待下一提示符的秒数。
+        expected_prompt: 命令完成后必须出现的精确提示符。
 
     Returns:
         从命令输入到下一提示符之间捕获的原始终端输出。
@@ -78,7 +105,7 @@ def submit(child: pexpect.spawn, text: str, timeout: int = 30) -> str:
     child.timeout = timeout
     child.send(text)
     child.send("\r")
-    child.expect_exact(PROMPT)
+    child.expect_exact(expected_prompt)
     return child.before or ""
 
 
@@ -182,11 +209,49 @@ def run_job_control_checks(child: pexpect.spawn) -> None:
     reject(r"Running\s+/bin/cat &", output, "后台 console read 失败后作业未退出")
 
 
-def run_checks(child: pexpect.spawn) -> None:
-    """执行历史、方向键、编辑边界、作业控制及兼容性验收。
+def run_prompt_checks(child: pexpect.spawn) -> None:
+    """验证 `/root` 起点、提示符颜色、逻辑目录规范化与失败 cd 的提交边界。
 
     Args:
-        child: 已进入全新登录 Shell 的 QEMU 子进程。
+        child: 已处于 `/root` 提示符的 QEMU 子进程。
+    """
+
+    submit(child, "/bin/mkdir promptdir")
+    submit(
+        child,
+        "cd promptdir",
+        expected_prompt=shell_prompt("/root/promptdir"),
+    )
+    submit(
+        child,
+        "/bin/mkdir nested",
+        expected_prompt=shell_prompt("/root/promptdir"),
+    )
+    submit(
+        child,
+        "cd ./nested",
+        expected_prompt=shell_prompt("/root/promptdir/nested"),
+    )
+    submit(child, "cd .././..", expected_prompt=PROMPT)
+    submit(
+        child,
+        "cd /root/promptdir//nested/..",
+        expected_prompt=shell_prompt("/root/promptdir"),
+    )
+    output = submit(
+        child,
+        "cd /missing",
+        expected_prompt=shell_prompt("/root/promptdir"),
+    )
+    require(r"cannot cd /missing", output, "失败 cd 错误缺失或错误提交了目录状态")
+    submit(child, "cd /root", expected_prompt=PROMPT)
+
+
+def run_checks(child: pexpect.spawn) -> None:
+    """执行提示符、历史、方向键、编辑边界、作业控制及兼容性验收。
+
+    Args:
+        child: 已进入全新 `/root` 登录 Shell 的 QEMU 子进程。
     """
 
     output = submit(child, "/bin/echo first")
@@ -245,6 +310,7 @@ def run_checks(child: pexpect.spawn) -> None:
     require(r"ALL TESTS PASSED", output, "PR #49 pipe-driven jobctl 回归失败")
 
     run_job_control_checks(child)
+    run_prompt_checks(child)
 
     child.send("/bin/echo ctrl-d")
     child.sendcontrol("d")
