@@ -4,6 +4,7 @@
 #include "kernel/schedstat.h"
 #include "kernel/schedtrace_abi.h"
 #include "user/user.h"
+#include "user/paths.h"
 
 static struct schedtrace_snapshot snapshot;
 
@@ -19,9 +20,7 @@ fail(char *message)
   exit(1);
 }
 
-/**
- * burn 执行一段 CPU 工作，用于稳定产生 timer tick。
- */
+/** burn 执行一段 CPU 工作，用于稳定产生 timer tick。 */
 static void
 burn(void)
 {
@@ -148,9 +147,7 @@ trace_one_worker(int ticks, int max_events)
   read_snapshot(max_events);
 }
 
-/**
- * verify_default_off 确认默认关闭时 CPU worker 不会产生事件。
- */
+/** verify_default_off 确认默认关闭时 CPU worker 不会产生事件。 */
 static void
 verify_default_off(void)
 {
@@ -169,9 +166,7 @@ verify_default_off(void)
     fail("default off recorded events");
 }
 
-/**
- * verify_basic_events 校验 RUN_START/RUN_STOP 可配对且时间与 CPU 字段合法。
- */
+/** verify_basic_events 校验 RUN_START/RUN_STOP 可配对且时间与 CPU 字段合法。 */
 static void
 verify_basic_events(void)
 {
@@ -201,9 +196,7 @@ verify_basic_events(void)
     fail("start stop pairing");
 }
 
-/**
- * verify_capacity_shortage 确认调用者容量不足会通过 dropped 暴露。
- */
+/** verify_capacity_shortage 确认调用者容量不足会通过 dropped 暴露。 */
 static void
 verify_capacity_shortage(void)
 {
@@ -212,9 +205,7 @@ verify_capacity_shortage(void)
     fail("short read capacity did not report dropped");
 }
 
-/**
- * verify_pid_filter 确认未注册 PID 不会污染当前 session。
- */
+/** verify_pid_filter 确认未注册 PID 不会污染当前 session。 */
 static void
 verify_pid_filter(void)
 {
@@ -249,9 +240,7 @@ verify_pid_filter(void)
     fail("watched pid missing");
 }
 
-/**
- * verify_repeat_reset 确认第二次 session 不混入旧事件。
- */
+/** verify_repeat_reset 确认第二次 session 不混入旧事件。 */
 static void
 verify_repeat_reset(void)
 {
@@ -269,9 +258,7 @@ verify_repeat_reset(void)
       fail("old session leaked into new trace");
 }
 
-/**
- * verify_invalid_inputs 覆盖非法 operation、空容量和不存在 PID。
- */
+/** verify_invalid_inputs 覆盖非法 operation、空容量和不存在 PID。 */
 static void
 verify_invalid_inputs(void)
 {
@@ -284,20 +271,18 @@ verify_invalid_inputs(void)
     fail("empty buffer did not expose dropped");
 }
 
-/**
- * verify_schedviz_args 通过 exec 黑盒验证 schedviz 参数错误返回非零。
- */
+/** verify_schedviz_args 通过 exec 黑盒验证 schedviz 参数错误返回非零。 */
 static void
 verify_schedviz_args(void)
 {
   int status = 0;
   int pid = fork();
-  char *argv[] = {"schedviz", "bogus", 0};
+  char *argv[] = {XV6_USR_BIN_PATH("schedviz"), "bogus", 0};
 
   if(pid < 0)
     fail("fork schedviz");
   if(pid == 0){
-    exec("schedviz", argv);
+    exec(XV6_USR_BIN_PATH("schedviz"), argv);
     exit(127);
   }
   wait(&status);
