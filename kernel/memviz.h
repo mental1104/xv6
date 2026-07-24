@@ -157,7 +157,7 @@ struct memviz_snapshot {
   int view;
   int user_stack_valid;
   int kernel_stack_valid;
-  int reserved;
+  int process_pid;
 
   uint64 process_size;
   uint64 user_limit;
@@ -231,9 +231,13 @@ struct memviz_snapshot {
   struct memviz_pt_usage_page pagetable_usage[MEMVIZ_PT_USAGE_PAGES];
 };
 
+struct proc;
+
 // 以下接口只由内核实现调用；用户态仅使用 memsnapshot() 系统调用。
 void kalloc_mem_snapshot(struct memviz_snapshot *snapshot);
 int memviz_snapshot(int view, struct memviz_snapshot *snapshot);
+int memviz_snapshot_proc(struct proc *p, int view,
+                         struct memviz_snapshot *snapshot);
 int memviz_query_user_va(uint64 va, struct memviz_va_query *query);
 
 #endif
