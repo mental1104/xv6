@@ -204,7 +204,7 @@ int             uvmlazyalloc(struct proc*, uint64);
 
 // plic.c
 void            plicinit(void);
-void            plic_complete(int);
+void            plicinithart(void);
 int             plic_claim(void);
 void            plic_complete(int);
 
