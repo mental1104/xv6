@@ -14,12 +14,86 @@
 
 static int loadseg(pde_t *pgdir, uint64 addr, struct inode *ip, uint offset, uint sz);
 
+/**
+ * 将一个以空指针结尾的用户字符串向量复制到内核临时页。
+ *
+ * @param user_vector 用户地址空间中的指针数组；0 表示空向量。
+ * @param vector 接收内核字符串指针，容量必须为 maximum + 1。
+ * @param maximum 允许复制的非空字符串数量。
+ * @return 成功返回 0；地址非法、超过数量上限或内存不足返回 -1。
+ *
+ * 成功时由调用者通过 free_kernel_vector() 释放。失败时本函数已经释放所有已分配页。
+ */
+static int
+fetch_user_vector(uint64 user_vector, char **vector, int maximum)
+{
+  uint64 user_string;
+  int i;
+
+  memset(vector, 0, (maximum + 1) * sizeof(char *));
+  if(user_vector == 0)
+    return 0;
+
+  for(i = 0; ; i++){
+    if(i >= maximum)
+      goto bad;
+    if(fetchaddr(user_vector + sizeof(uint64) * i, &user_string) < 0)
+      goto bad;
+    if(user_string == 0){
+      vector[i] = 0;
+      return 0;
+    }
+    vector[i] = kalloc();
+    if(vector[i] == 0)
+      goto bad;
+    if(fetchstr(user_string, vector[i], PGSIZE) < 0)
+      goto bad;
+  }
+
+ bad:
+  for(i = 0; i < maximum && vector[i] != 0; i++){
+    kfree(vector[i]);
+    vector[i] = 0;
+  }
+  return -1;
+}
+
+/**
+ * 释放 fetch_user_vector() 产生的内核字符串向量。
+ *
+ * @param vector 以空指针结尾的内核字符串指针数组。
+ * @param maximum 数组允许持有的最大非空元素数量。
+ */
+static void
+free_kernel_vector(char **vector, int maximum)
+{
+  int i;
+
+  for(i = 0; i < maximum && vector[i] != 0; i++){
+    kfree(vector[i]);
+    vector[i] = 0;
+  }
+}
+
+/**
+ * 用 ELF 文件替换当前进程用户镜像，并同时建立 argv 与 envp。
+ *
+ * @param path ELF 文件路径。
+ * @param argv 以空指针结尾的参数字符串向量，最多 MAXARG 项。
+ * @param envp 以空指针结尾的环境字符串向量，最多 MAXENV 项。
+ * @return 成功返回 argc，并通过 trapframe 的 a1/a2 传递 argv/envp；失败返回 -1。
+ *
+ * 所有字符串和两个指针数组都放入新用户栈。完成提交前不修改当前进程页表，失败时
+ * 释放临时镜像并保留旧进程可继续运行。
+ */
 int
-exec(char *path, char **argv)
+execve(char *path, char **argv, char **envp)
 {
   char *s, *last;
   int i, off;
-  uint64 argc, sz = 0, sp, ustack[MAXARG+1], stackbase;
+  uint64 argc, envc, sz = 0, sp, stackbase;
+  uint64 uargv[MAXARG + 1], uenvp[MAXENV + 1];
+  uint64 argv_address, envp_address;
   struct elfhdr elf;
   struct inode *ip;
   struct proghdr ph;
@@ -83,27 +157,52 @@ exec(char *path, char **argv)
   sp = sz;
   stackbase = sp - PGSIZE;
 
-  // Push argument strings, prepare rest of stack in ustack.
+  // 先复制 argv 字符串；每个字符串后重新对齐 RISC-V 栈指针。
   for(argc = 0; argv[argc]; argc++) {
     if(argc >= MAXARG)
       goto bad;
     sp -= strlen(argv[argc]) + 1;
-    sp -= sp % 16; // riscv sp must be 16-byte aligned
+    sp -= sp % 16;
     if(sp < stackbase)
       goto bad;
     if(copyout(pagetable, sp, argv[argc], strlen(argv[argc]) + 1) < 0)
       goto bad;
-    ustack[argc] = sp;
+    uargv[argc] = sp;
   }
-  ustack[argc] = 0;
+  uargv[argc] = 0;
 
-  // push the array of argv[] pointers.
-  sp -= (argc+1) * sizeof(uint64);
+  // envp 与 argv 共享同一用户栈页，但拥有独立的数量上限和指针数组。
+  for(envc = 0; envp[envc]; envc++) {
+    if(envc >= MAXENV)
+      goto bad;
+    sp -= strlen(envp[envc]) + 1;
+    sp -= sp % 16;
+    if(sp < stackbase)
+      goto bad;
+    if(copyout(pagetable, sp, envp[envc], strlen(envp[envc]) + 1) < 0)
+      goto bad;
+    uenvp[envc] = sp;
+  }
+  uenvp[envc] = 0;
+
+  // 先压入 envp 指针数组，再压入 argv；两者地址分别交给 a2 和 a1。
+  sp -= (envc + 1) * sizeof(uint64);
   sp -= sp % 16;
   if(sp < stackbase)
     goto bad;
-  if(copyout(pagetable, sp, (char *)ustack, (argc+1)*sizeof(uint64)) < 0)
+  if(copyout(pagetable, sp, (char *)uenvp,
+             (envc + 1) * sizeof(uint64)) < 0)
     goto bad;
+  envp_address = sp;
+
+  sp -= (argc + 1) * sizeof(uint64);
+  sp -= sp % 16;
+  if(sp < stackbase)
+    goto bad;
+  if(copyout(pagetable, sp, (char *)uargv,
+             (argc + 1) * sizeof(uint64)) < 0)
+    goto bad;
+  argv_address = sp;
 
   // 为新用户镜像构造独立的进程内核页表。失败路径尚未替换 p 的任何状态，
   // 因而可以直接释放临时页表，不会留下指向已释放用户页的别名。
@@ -112,10 +211,9 @@ exec(char *path, char **argv)
   if(u2kvmcopy(pagetable, kpagetable, 0, sz) < 0)
     goto bad;
 
-  // arguments to user main(argc, argv)
-  // argc is returned via the system call return
-  // value, which goes in a0.
-  p->trapframe->a1 = sp;
+  // main(argc, argv, envp) 分别通过 a0、a1、a2 接收三个入口参数。
+  p->trapframe->a1 = argv_address;
+  p->trapframe->a2 = envp_address;
 
   // Save program name for debugging.
   for(last=s=path; *s; s++)
@@ -138,7 +236,7 @@ exec(char *path, char **argv)
   proc_freepagetable(oldpagetable, oldsz);
   kvmfree(oldkpagetable);
 
-  return argc; // this ends up in a0, the first argument to main(argc, argv)
+  return argc; // this ends up in a0, the first argument to main(argc, argv, envp)
 
  bad:
   if(kpagetable)
@@ -152,6 +250,53 @@ exec(char *path, char **argv)
   return -1;
 }
 
+/**
+ * 保留原 exec(path, argv) ABI，并为新镜像提供空环境向量。
+ *
+ * @param path ELF 文件路径。
+ * @param argv 以空指针结尾的参数向量。
+ * @return 与 execve() 相同；成功返回 argc，失败返回 -1。
+ */
+int
+exec(char *path, char **argv)
+{
+  char *empty_environment[] = {0};
+
+  return execve(path, argv, empty_environment);
+}
+
+/**
+ * 从用户地址空间读取 argv/envp，并调用内核 execve() 完成镜像替换。
+ *
+ * @return 成功返回 argc；路径、向量、字符串、数量或内存非法时返回 -1。
+ */
+uint64
+sys_execve(void)
+{
+  char path[MAXPATH];
+  char *argv[MAXARG + 1];
+  char *envp[MAXENV + 1];
+  uint64 user_argv;
+  uint64 user_envp;
+  int result;
+
+  if(argstr(0, path, MAXPATH) < 0 ||
+     argaddr(1, &user_argv) < 0 ||
+     argaddr(2, &user_envp) < 0)
+    return -1;
+  if(fetch_user_vector(user_argv, argv, MAXARG) < 0)
+    return -1;
+  if(fetch_user_vector(user_envp, envp, MAXENV) < 0){
+    free_kernel_vector(argv, MAXARG);
+    return -1;
+  }
+
+  result = execve(path, argv, envp);
+  free_kernel_vector(argv, MAXARG);
+  free_kernel_vector(envp, MAXENV);
+  return result;
+}
+
 // Load a program segment into pagetable at virtual address va.
 // va must be page-aligned
 // and the pages from va to va+sz must already be mapped.
@@ -161,9 +306,6 @@ loadseg(pagetable_t pagetable, uint64 va, struct inode *ip, uint offset, uint sz
 {
   uint i, n;
   uint64 pa;
-
-  if((va % PGSIZE) != 0)
-    panic("loadseg: va must be page aligned");
 
   for(i = 0; i < sz; i += PGSIZE){
     pa = walkaddr(pagetable, va + i);
