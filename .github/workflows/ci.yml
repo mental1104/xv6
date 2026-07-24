@@ -116,10 +116,21 @@ jobs:
           github.event_name == 'pull_request' &&
           steps.plan.outputs.full_usertests == 'true'
         run: |
+          dump_usertests_log() {
+            local log="test-results/usertests-full/usertests-full.log"
+            echo "::group::Failing usertests guest output (last 160 lines)"
+            if [[ -f "$log" ]]; then
+              tail -n 160 "$log"
+            else
+              echo "No usertests log was created at $log"
+            fi
+            echo "::endgroup::"
+          }
+
           if grep -qx 'tests/guest/usertests_2g.c' /tmp/changed-files.txt; then
-            make test-usertests CPUS=3
+            make test-usertests CPUS=3 || { dump_usertests_log; exit 1; }
           else
-            python3 tests/run_usertests.py --cpus 3
+            python3 tests/run_usertests.py --cpus 3 || { dump_usertests_log; exit 1; }
           fi
 
       - name: Run scheduled or manual full regression
