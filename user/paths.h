@@ -4,8 +4,8 @@
 /**
  * 定义启动镜像内稳定的绝对路径。
  *
- * 本教学布局不实现 PATH、环境变量或隐式命令搜索。调用 exec() 的代码必须显式
- * 选择 `/bin`、`/usr/bin` 或内部测试目录，避免把 Shell 行为误认为内核行为。
+ * Shell 可以通过环境中的 PATH 搜索 `/bin` 和 `/usr/bin`；内核 exec/execve、测试
+ * 注册表以及需要确定性路径的用户程序仍使用这些宏显式选择目标目录。
  */
 #define XV6_ROOT_HOME "/root"
 #define XV6_CONSOLE_PATH "/console"
