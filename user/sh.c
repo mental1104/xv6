@@ -18,6 +18,11 @@
 #define MAXARGS 10
 #define MAXJOBS 16
 #define MAXCMD  100
+#define SHELL_CWD_SIZE 256
+
+#define ANSI_GREEN_BOLD "\033[1;32m"
+#define ANSI_BLUE_BOLD  "\033[1;34m"
+#define ANSI_RESET      "\033[0m"
 
 /** Shell 只跟踪顶层 supervisor；其 pipeline 后代通过 PGID 统一受控。 */
 enum jobstate { JOB_UNUSED, JOB_RUNNING, JOB_STOPPED };
@@ -35,6 +40,8 @@ static struct job jobs[MAXJOBS];
 static int nextjid = 1;
 static int shell_pgid;
 static struct shell_history command_history;
+static char shell_cwd[SHELL_CWD_SIZE] = "/";
+static int shell_cwd_known = 1;
 
 struct cmd {
   int type;
@@ -96,6 +103,122 @@ appendtext(char *dst, int *length, int size, char *text)
   while(*text && *length + 1 < size)
     dst[(*length)++] = *text++;
   dst[*length] = 0;
+}
+
+/**
+ * 从逻辑目录中移除最后一个路径分量，根目录保持不变。
+ *
+ * @param path NUL 结尾的绝对逻辑路径，会被原地修改。
+ * @param length 路径当前长度，返回时同步为截断后的长度。
+ */
+static void
+popcwd(char *path, int *length)
+{
+  while(*length > 1 && path[*length - 1] != '/')
+    (*length)--;
+  if(*length > 1)
+    (*length)--;
+  path[*length] = 0;
+}
+
+/**
+ * 将一次 cd 参数合并到当前逻辑目录并消除重复斜杠、`.` 与 `..`。
+ *
+ * @param base 当前绝对逻辑目录；相对路径以它为起点。
+ * @param path 传给 chdir() 的用户路径。
+ * @param dst 接收规范化后的绝对逻辑路径。
+ * @param size dst 容量，包含结尾 NUL。
+ * @return 能完整表示结果时返回 0；容量不足时返回 -1。
+ *
+ * 该函数只维护 Bash 默认的逻辑路径语义，不解析符号链接对应的物理路径。
+ */
+static int
+normalizecwd(char *base, char *path, char *dst, int size)
+{
+  int length;
+  char *cursor;
+
+  if(size < 2)
+    return -1;
+
+  if(path[0] == '/'){
+    dst[0] = '/';
+    dst[1] = 0;
+    length = 1;
+  } else {
+    length = strlen(base);
+    if(length < 1 || length >= size)
+      return -1;
+    memmove(dst, base, length + 1);
+  }
+
+  cursor = path;
+  while(*cursor){
+    char *component;
+    int component_length;
+    int separator_length;
+
+    while(*cursor == '/')
+      cursor++;
+    if(*cursor == 0)
+      break;
+
+    component = cursor;
+    while(*cursor && *cursor != '/')
+      cursor++;
+    component_length = cursor - component;
+
+    if(component_length == 1 && component[0] == '.')
+      continue;
+    if(component_length == 2 && component[0] == '.' && component[1] == '.'){
+      popcwd(dst, &length);
+      continue;
+    }
+
+    separator_length = length > 1 ? 1 : 0;
+    if(length + separator_length + component_length + 1 > size)
+      return -1;
+    if(separator_length)
+      dst[length++] = '/';
+    memmove(dst + length, component, component_length);
+    length += component_length;
+    dst[length] = 0;
+  }
+
+  return 0;
+}
+
+/**
+ * 在 chdir() 成功后提交新的 Shell 逻辑目录。
+ *
+ * @param path 本次成功切换所使用的原始路径。
+ *
+ * 已知目录可处理绝对和相对路径；状态未知时只有绝对路径能够恢复。若实际 cwd
+ * 无法装入固定缓冲区，提示符退化为 `?`，但不会影响内核已经完成的目录切换。
+ */
+static void
+updatecwd(char *path)
+{
+  char next[SHELL_CWD_SIZE];
+
+  if((path[0] != '/' && !shell_cwd_known) ||
+     normalizecwd(shell_cwd, path, next, sizeof(next)) < 0){
+    shell_cwd[0] = '?';
+    shell_cwd[1] = 0;
+    shell_cwd_known = 0;
+    return;
+  }
+
+  memmove(shell_cwd, next, strlen(next) + 1);
+  shell_cwd_known = 1;
+}
+
+/** 输出带固定 root 身份和当前逻辑目录的 Bash 风格彩色提示符。 */
+static void
+printprompt(void)
+{
+  fprintf(2, ANSI_GREEN_BOLD "root@xv6" ANSI_RESET ":");
+  fprintf(2, ANSI_BLUE_BOLD "%s" ANSI_RESET "# ", shell_cwd);
 }
 
 /** 将命令树压缩成 jobs 可显示的单行文本。 */
@@ -245,9 +368,7 @@ reapjobs(void)
   }
 }
 
-/**
- * 创建后台 supervisor 并让父子双方尝试设置 PGID，缩小 fork/exec 启动竞态。
- */
+/** 创建后台 supervisor 并让父子双方尝试设置 PGID，缩小 fork/exec 启动竞态。 */
 static void
 startjob(struct cmd *cmd, char *command)
 {
@@ -314,7 +435,7 @@ waitforeground(struct job *job, int pid, int pgid, char *command)
   }
 
   if(job != 0 && job->state == JOB_STOPPED){
-    if(procctl(pgid, JOBCTL_CONT) < 0){
+    if(procctl(job->pgid, JOBCTL_CONT) < 0){
       fprintf(2, "fg: cannot continue job %d\n", job->jid);
       tcsetpgrp(shell_pgid);
       return;
@@ -460,6 +581,8 @@ runbuiltin(char *buf)
   if(startswith(buf, "cd ")){
     if(chdir(buf + 3) < 0)
       fprintf(2, "cannot cd %s\n", buf + 3);
+    else
+      updatecwd(buf + 3);
     return 1;
   }
   return 0;
@@ -544,7 +667,7 @@ runcmd(struct cmd *cmd)
 }
 
 /**
- * 输出提示符并读取一条命令。
+ * 输出上下文提示符并读取一条命令。
  *
  * @param buf 命令缓冲区。
  * @param nbuf 缓冲区容量。
@@ -553,7 +676,7 @@ runcmd(struct cmd *cmd)
 int
 getcmd(char *buf, int nbuf)
 {
-  fprintf(2, "$ ");
+  printprompt();
   memset(buf, 0, nbuf);
   return shell_readline(buf, nbuf, &command_history);
 }
@@ -600,9 +723,7 @@ main(void)
   exit(0);
 }
 
-/**
- * 在父 Shell 中展开顶层列表，并为每个前台或后台命令创建独立进程组。
- */
+/** 在父 Shell 中展开顶层列表，并为每个前台或后台命令创建独立进程组。 */
 void
 runline(struct cmd *cmd)
 {
