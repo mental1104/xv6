@@ -27,6 +27,7 @@ OBJS = \
   $K/trap.o \
   $K/syscall.o \
   $K/sysproc.o \
+  $K/sysps.o \
   $K/memviz.o \
   $K/sysmemviz.o \
   $K/bio.o \
@@ -238,6 +239,7 @@ UPROGS=\
 	$U/_grep\
 	$U/_init\
 	$U/_kill\
+	$U/_ps\
 	$U/_ln\
 	$U/_ls\
 	$U/_mkdir\
@@ -283,6 +285,7 @@ UPROGS=\
 	$U/_historytest\
 	$U/_consolelinetest\
 	$U/_lstest\
+	$U/_pstest\
 	$U/_xv6test\
 	$U/_schedtest\
 	$U/_schedtracetest
@@ -306,7 +309,7 @@ clean:
 	$(CLEAN_SCHEDVIZ_ARTIFACTS)
 
 GDBPORT = $(shell expr `id -u` % 5000 + 25000)
-QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
+QEMUGDB = $(shell if $(QEMU) -help 2>/dev/null | grep -q '^-gdb'; \
 	then echo "-gdb tcp::$(GDBPORT)"; \
 	else echo "-s -p $(GDBPORT)"; fi)
 ifndef CPUS
