@@ -18,9 +18,21 @@ usage(void)
 static int
 parse_positive(char *text, int maximum, int *value)
 {
-  int parsed = atoi(text);
+  int parsed = 0;
+
+  if(text[0] == 0)
+    return -1;
+  for(char *cursor = text; *cursor != 0; cursor++){
+    if(*cursor < '0' || *cursor > '9')
+      return -1;
+    int digit = *cursor - '0';
+    if(parsed > (maximum - digit) / 10)
+      return -1;
+    parsed = parsed * 10 + digit;
+  }
   if(parsed <= 0 || parsed > maximum)
     return -1;
+
   *value = parsed;
   return 0;
 }
