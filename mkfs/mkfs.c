@@ -5,6 +5,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <assert.h>
+#include <time.h>
 
 #define stat xv6_stat  // avoid clash with host struct stat
 #include "kernel/types.h"
@@ -32,6 +33,7 @@ struct superblock sb;
 char zeroes[BSIZE];
 uint freeinode = 1;
 uint freeblock;
+uint image_mtime;
 
 
 void balloc(int);
@@ -41,6 +43,7 @@ void rinode(uint inum, struct dinode *ip);
 void rsect(uint sec, void *buf);
 uint ialloc(ushort type);
 void iappend(uint inum, void *p, int n);
+void set_dinode_mtime(struct dinode*, ushort, uint);
 
 // convert to intel byte order
 ushort
@@ -76,6 +79,31 @@ xlong(uint64 x)
   return y;
 }
 
+/**
+ * 将构建时修改时间写入保持 64 字节布局的磁盘 inode。
+ *
+ * @param din 待初始化的宿主机端磁盘 inode。
+ * @param type inode 类型。
+ * @param mtime 32 位 Unix 秒数。
+ */
+void
+set_dinode_mtime(struct dinode *din, ushort type, uint mtime)
+{
+  if(type == T_DEVICE){
+    din->size = xlong((uint64)mtime << 32);
+    return;
+  }
+  din->major = xshort(mtime >> 16);
+  din->minor = xshort(mtime & 0xffff);
+}
+
+/**
+ * 构造 xv6 文件系统镜像，并让镜像内初始 inode 共享本次构建时间。
+ *
+ * @param argc 命令行参数数量。
+ * @param argv 第一个参数为镜像路径，其余参数为写入根目录的宿主机文件。
+ * @return 构造成功返回 0；输入、时间或 I/O 失败时终止进程。
+ */
 int
 main(int argc, char *argv[])
 {
@@ -85,6 +113,7 @@ main(int argc, char *argv[])
   struct dirent de;
   char buf[BSIZE];
   struct dinode din;
+  time_t now;
 
 
   static_assert(sizeof(int) == 4, "Integers must be 4 bytes!");
@@ -95,6 +124,13 @@ main(int argc, char *argv[])
     fprintf(stderr, "Usage: mkfs fs.img files...\n");
     exit(1);
   }
+
+  now = time(0);
+  if(now == (time_t)-1){
+    fprintf(stderr, "mkfs: cannot read host time\n");
+    exit(1);
+  }
+  image_mtime = (uint)now;
 
   assert((BSIZE % sizeof(struct dinode)) == 0);
   assert((BSIZE % sizeof(struct dirent)) == 0);
@@ -247,6 +283,12 @@ rsect(uint sec, void *buf)
   }
 }
 
+/**
+ * 分配一个镜像 inode，并写入本次 mkfs 的统一修改时间。
+ *
+ * @param type 新 inode 类型。
+ * @return 新分配的 inode 编号。
+ */
 uint
 ialloc(ushort type)
 {
@@ -257,6 +299,7 @@ ialloc(ushort type)
   din.type = xshort(type);
   din.nlink = xshort(1);
   din.size = xlong(0);
+  set_dinode_mtime(&din, type, image_mtime);
   winode(inum, &din);
   return inum;
 }
@@ -279,18 +322,11 @@ balloc(int used)
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
-/**
- * 把宿主机文件内容追加到普通启动镜像 inode。
- *
- * 启动镜像输入保持较小，本路径只负责直接块和一级间接块；运行中的内核负责
- * 二级、三级间接扩展。size 使用完整 64 位磁盘编码，避免依赖宿主机字节序。
- */
 void
 iappend(uint inum, void *xp, int n)
 {
   char *p = (char*)xp;
-  uint64 fbn, off;
-  uint n1;
+  uint fbn, off, n1;
   struct dinode din;
   char buf[BSIZE];
   uint indirect[NINDIRECT];
@@ -301,7 +337,7 @@ iappend(uint inum, void *xp, int n)
   // printf("append inum %d at off %d sz %d\n", inum, off, n);
   while(n > 0){
     fbn = off / BSIZE;
-    assert(fbn < (uint64)NDIRECT + NINDIRECT);
+    assert(fbn < MAXFILE);
     if(fbn < NDIRECT){
       if(xint(din.addrs[fbn]) == 0){
         din.addrs[fbn] = xint(freeblock++);
@@ -309,8 +345,10 @@ iappend(uint inum, void *xp, int n)
       x = xint(din.addrs[fbn]);
     } else {
       if(xint(din.addrs[NDIRECT]) == 0){
+        // printf("allocate indirect block\n");
         din.addrs[NDIRECT] = xint(freeblock++);
       }
+      // printf("read indirect block\n");
       rsect(xint(din.addrs[NDIRECT]), (char*)indirect);
       if(indirect[fbn - NDIRECT] == 0){
         indirect[fbn - NDIRECT] = xint(freeblock++);
@@ -318,9 +356,9 @@ iappend(uint inum, void *xp, int n)
       }
       x = xint(indirect[fbn-NDIRECT]);
     }
-    n1 = min((uint)n, BSIZE - off % BSIZE);
+    n1 = min(n, (fbn + 1) * BSIZE - off);
     rsect(x, buf);
-    bcopy(p, buf + off % BSIZE, n1);
+    bcopy(p, buf + off - (fbn * BSIZE), n1);
     wsect(x, buf);
     n -= n1;
     off += n1;
