@@ -59,6 +59,7 @@ static struct image_file image_files[] = {
   {"/sleep", XV6_BIN_PATH("sleep")},
   {"/find", XV6_BIN_PATH("find")},
   {"/xargs", XV6_BIN_PATH("xargs")},
+  {"/whereis", XV6_BIN_PATH("whereis")},
 
   {"/memviz", XV6_USR_BIN_PATH("memviz")},
   {"/schedviz", XV6_USR_BIN_PATH("schedviz")},
