@@ -68,7 +68,7 @@ def submit(child: pexpect.spawn, text: str, timeout: int = 30) -> str:
 
     Args:
         child: 已处于 Shell 提示符的 QEMU 子进程。
-        text: 不含 Enter 的命令文本。
+        text: 不含 Enter 的完整命令；外部程序必须使用绝对路径。
         timeout: 等待下一提示符的秒数。
 
     Returns:
@@ -111,36 +111,37 @@ def reject(pattern: str, output: str, message: str) -> None:
 def run_job_control_checks(child: pexpect.spawn) -> None:
     """通过真实控制字符验证前台 pipeline 的停止、继续和终止闭环。
 
-    `consolelinetest hold | cat` 的 ready 行只有在 pipeline 两端均完成 exec 后才会
-    到达串口，因此 Ctrl-Z 不依赖固定启动延迟。随后依次验证 jobs、bg、重复 bg、
-    fg、Ctrl-C、非法 JID，以及后台 `cat` 不能窃取 Shell 的下一条输入。
+    `/usr/lib/xv6/tests/consolelinetest hold | /bin/cat` 的 ready 行只有在 pipeline
+    两端均完成 exec 后才会到达串口，因此 Ctrl-Z 不依赖固定启动延迟。随后依次
+    验证 jobs、bg、重复 bg、fg、Ctrl-C、非法 JID，以及后台 cat 不能窃取输入。
 
     Args:
         child: 已处于 Shell 提示符的 QEMU 子进程。
     """
 
+    pipeline = "/usr/lib/xv6/tests/consolelinetest hold | /bin/cat"
     child.timeout = 30
-    child.send("consolelinetest hold | cat")
+    child.send(pipeline)
     child.send("\r")
     child.expect_exact("consolelinetest: hold ready")
     child.sendcontrol("z")
     child.expect_exact(PROMPT)
     require(
-        r"\[1\]\s+Stopped\s+consolelinetest hold \| cat",
+        r"\[1\]\s+Stopped\s+/usr/lib/xv6/tests/consolelinetest hold \| /bin/cat",
         child.before or "",
         "Ctrl-Z 未停止整个前台 pipeline",
     )
 
     output = submit(child, "jobs")
     require(
-        r"\[1\]\s+\d+\s+Stopped\s+consolelinetest hold \| cat",
+        r"\[1\]\s+\d+\s+Stopped\s+/usr/lib/xv6/tests/consolelinetest hold \| /bin/cat",
         output,
         "jobs 未显示停止态 pipeline",
     )
 
     output = submit(child, "bg %1")
     require(
-        r"\[1\]\s+\d+\s+Running\s+consolelinetest hold \| cat",
+        r"\[1\]\s+\d+\s+Running\s+/usr/lib/xv6/tests/consolelinetest hold \| /bin/cat",
         output,
         "bg 未恢复停止作业",
     )
@@ -149,7 +150,7 @@ def run_job_control_checks(child: pexpect.spawn) -> None:
 
     output = submit(child, "jobs")
     require(
-        r"\[1\]\s+\d+\s+Running\s+consolelinetest hold \| cat",
+        r"\[1\]\s+\d+\s+Running\s+/usr/lib/xv6/tests/consolelinetest hold \| /bin/cat",
         output,
         "后台恢复后 jobs 状态错误",
     )
@@ -165,7 +166,7 @@ def run_job_control_checks(child: pexpect.spawn) -> None:
 
     output = submit(child, "jobs")
     reject(r"\[1\].*(Running|Stopped)", output, "Ctrl-C 后作业仍留在 jobs 中")
-    output = submit(child, "echo shell-alive")
+    output = submit(child, "/bin/echo shell-alive")
     require(r"\bshell-alive\b", output, "Ctrl-C 误终止了 Shell")
 
     output = submit(child, "fg %999")
@@ -173,12 +174,12 @@ def run_job_control_checks(child: pexpect.spawn) -> None:
     output = submit(child, "bg %999")
     require(r"bg: no such job", output, "非法 bg JID 没有确定错误")
 
-    output = submit(child, "cat &")
+    output = submit(child, "/bin/cat &")
     require(r"\[2\]\s+\d+", output, "后台读取作业未登记")
-    output = submit(child, "echo shell-input-safe")
+    output = submit(child, "/bin/echo shell-input-safe")
     require(r"\bshell-input-safe\b", output, "后台 cat 窃取了 Shell 输入")
     output = submit(child, "jobs")
-    reject(r"Running\s+cat &", output, "后台 console read 失败后作业未退出")
+    reject(r"Running\s+/bin/cat &", output, "后台 console read 失败后作业未退出")
 
 
 def run_checks(child: pexpect.spawn) -> None:
@@ -188,10 +189,10 @@ def run_checks(child: pexpect.spawn) -> None:
         child: 已进入全新登录 Shell 的 QEMU 子进程。
     """
 
-    output = submit(child, "echo first")
+    output = submit(child, "/bin/echo first")
     require(r"\bfirst\b", output, "首条普通命令未执行")
 
-    child.send("echo draft")
+    child.send("/bin/echo draft")
     child.send("\x1b[A")
     child.send("\x1b[B")
     child.send("\r")
@@ -199,29 +200,29 @@ def run_checks(child: pexpect.spawn) -> None:
     require(r"\bdraft\b", child.before or "", "下键未恢复进入浏览前的 draft")
 
     output = submit(child, "history")
-    require(r"1 echo first", output, "history 缺少第一条命令")
-    require(r"2 echo draft", output, "history 缺少 draft 命令")
+    require(r"1 /bin/echo first", output, "history 缺少第一条命令")
+    require(r"2 /bin/echo draft", output, "history 缺少 draft 命令")
     require(r"3 history", output, "history 未包含自身")
 
-    child.send("echo 123456789")
+    child.send("/bin/echo 123456789")
     child.send("\x1b[A")
     child.send("\r")
     child.expect_exact(PROMPT)
     require(r"3 history", child.before or "", "长草稿替换为短历史项后执行内容错误")
 
-    child.send("echo ax")
+    child.send("/bin/echo ax")
     child.send("\x7f")
     child.send("b\r")
     child.expect_exact(PROMPT)
     require(r"\bab\b", child.before or "", "Backspace 未删除一个字符")
 
-    child.send("echo wrong")
+    child.send("/bin/echo wrong")
     child.sendcontrol("u")
-    child.send("echo cleared\r")
+    child.send("/bin/echo cleared\r")
     child.expect_exact(PROMPT)
     require(r"\bcleared\b", child.before or "", "Ctrl-U 未清空整行")
 
-    child.send("echo esc")
+    child.send("/bin/echo esc")
     child.send("\x1b[Z")
     child.send("ape\r")
     child.expect_exact(PROMPT)
@@ -229,29 +230,29 @@ def run_checks(child: pexpect.spawn) -> None:
 
     child.send("x" * 120)
     child.sendcontrol("u")
-    child.send("echo max-ok\r")
+    child.send("/bin/echo max-ok\r")
     child.expect_exact(PROMPT)
     require(r"\bmax-ok\b", child.before or "", "缓冲区满后 Ctrl-U 或 Enter 失效")
 
-    child.send("consolelinetest\r")
+    child.send("/usr/lib/xv6/tests/consolelinetest\r")
     child.expect_exact("consolelinetest: ready")
     child.send("ab\x7fc\r")
     child.expect_exact("consolelinetest: OK")
     child.expect_exact(PROMPT)
 
     # PR #49 的 jobctl 用 pipe 驱动子 Shell，同时覆盖非 console stdin fallback。
-    output = submit(child, "usertests jobctl", timeout=120)
+    output = submit(child, "/usr/lib/xv6/tests/usertests jobctl", timeout=120)
     require(r"ALL TESTS PASSED", output, "PR #49 pipe-driven jobctl 回归失败")
 
     run_job_control_checks(child)
 
-    child.send("echo ctrl-d")
+    child.send("/bin/echo ctrl-d")
     child.sendcontrol("d")
     child.expect_exact(PROMPT)
     require(r"\bctrl-d\b", child.before or "", "非空行 Ctrl-D 未提交当前输入")
 
     child.sendcontrol("p")
-    child.send("echo ctrlp-ok\r")
+    child.send("/bin/echo ctrlp-ok\r")
     child.expect_exact(PROMPT)
     require(r"\bsh\b.*\bctrlp-ok\b", child.before or "", "Ctrl-P 未保留或 Shell 未继续读取")
 
