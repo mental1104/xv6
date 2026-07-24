@@ -20,7 +20,7 @@
 #define MAXCMD  100
 #define SHELL_CWD_SIZE 256
 
-#define ANSI_GREEN_BOLD "\033[1;32m"
+#define ANSI_ORANGE_BOLD "\033[1;38;5;208m"
 #define ANSI_BLUE_BOLD  "\033[1;34m"
 #define ANSI_RESET      "\033[0m"
 
@@ -227,7 +227,7 @@ printprompt(void)
   int length = 0;
 
   appendtext(prompt, &length, sizeof(prompt),
-             ANSI_GREEN_BOLD "root@xv6" ANSI_RESET ":" ANSI_BLUE_BOLD);
+             ANSI_ORANGE_BOLD "root@xv6" ANSI_RESET ":" ANSI_BLUE_BOLD);
   appendtext(prompt, &length, sizeof(prompt), shell_cwd);
   appendtext(prompt, &length, sizeof(prompt), ANSI_RESET "# ");
   write(2, prompt, length);
