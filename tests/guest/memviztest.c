@@ -8,6 +8,7 @@
 static struct memviz_snapshot before;
 static struct memviz_snapshot after_alloc;
 static struct memviz_snapshot after_free;
+static char render_output[32768];
 
 /**
  * fail 输出失败原因并以非零状态终止测试。
@@ -19,6 +20,26 @@ fail(char *message)
 {
   printf("memviztest: FAIL: %s\n", message);
   exit(1);
+}
+
+/**
+ * text_contains 判断完整输出中是否包含指定稳定片段。
+ *
+ * @param text 以 NUL 结尾的完整输出。
+ * @param pattern 非空匹配片段。
+ * @return 找到返回 1，否则返回 0。
+ */
+static int
+text_contains(char *text, char *pattern)
+{
+  for(int i = 0; text[i] != 0; i++){
+    int j = 0;
+    while(pattern[j] != 0 && text[i + j] == pattern[j])
+      j++;
+    if(pattern[j] == 0)
+      return 1;
+  }
+  return 0;
 }
 
 /**
@@ -43,7 +64,7 @@ cell_page_count(uint64 total_pages, int cell)
 }
 
 /**
- * test_user_snapshot 验证用户栈、动态边界和物理计数的基本不变量。
+ * test_user_snapshot 验证用户栈、顶端固定页和物理计数的基本不变量。
  */
 static void
 test_user_snapshot(void)
@@ -54,12 +75,59 @@ test_user_snapshot(void)
     fail("user snapshot syscall");
   if(before.user_limit != USERMAX)
     fail("user limit mismatch");
+  if(before.maxva != MAXVA)
+    fail("MAXVA mismatch");
+  if(before.trapframe != TRAPFRAME || before.trapframe != before.user_limit)
+    fail("trapframe VA mismatch");
+  if(before.trampoline != TRAMPOLINE)
+    fail("trampoline VA mismatch");
+  if(before.trapframe + PGSIZE != before.trampoline ||
+     before.trampoline + PGSIZE != before.maxva)
+    fail("top fixed pages are not adjacent");
+
+  if(before.trapframe_pa == 0 || before.trampoline_pa == 0)
+    fail("top fixed page PA missing");
+  if((before.trapframe_pa % PGSIZE) != 0 ||
+     (before.trampoline_pa % PGSIZE) != 0)
+    fail("top fixed page PA alignment");
+  if(before.trapframe_pa == before.trampoline_pa)
+    fail("top fixed pages share PA");
+
+  uint64 trapframe_required = PTE_V | PTE_R | PTE_W;
+  if((before.trapframe_flags & trapframe_required) != trapframe_required)
+    fail("trapframe PTE permissions");
+  if(before.trapframe_flags & (PTE_X | PTE_U))
+    fail("trapframe executable or user-accessible");
+
+  uint64 trampoline_required = PTE_V | PTE_R | PTE_X;
+  if((before.trampoline_flags & trampoline_required) != trampoline_required)
+    fail("trampoline PTE permissions");
+  if(before.trampoline_flags & (PTE_W | PTE_U))
+    fail("trampoline writable or user-accessible");
+
+  if(before.trapframe_used !=
+     MEMVIZ_TRAPFRAME_SLOT_COUNT * sizeof(uint64))
+    fail("trapframe used bytes");
+  if(before.trapframe_used >= PGSIZE)
+    fail("trapframe does not fit one page");
+  if(before.uservec_offset > before.userret_offset ||
+     before.userret_offset >= before.trampoline_used ||
+     before.trampoline_used >= PGSIZE)
+    fail("trampoline symbol order");
+
   if(!before.user_stack_valid)
     fail("user stack invalid");
   if(before.stack_used + before.stack_free != PGSIZE)
     fail("user stack accounting");
   if(before.user_sp < before.stack_bottom || before.user_sp > before.stack_top)
     fail("user sp outside stack bounds");
+  if(before.trapframe_values[MEMVIZ_TF_SP] != before.user_sp)
+    fail("trapframe SP snapshot mismatch");
+  if(before.trapframe_values[MEMVIZ_TF_KERNEL_SATP] == 0 ||
+     before.trapframe_values[MEMVIZ_TF_KERNEL_SP] == 0 ||
+     before.trapframe_values[MEMVIZ_TF_KERNEL_TRAP] == 0)
+    fail("trapframe kernel entry context missing");
+
   if(before.dynamic_start != before.stack_top)
     fail("dynamic start mismatch");
   if(before.process_size < before.dynamic_start)
@@ -75,6 +143,75 @@ test_user_snapshot(void)
     fail("physical total in user view");
 
   printf("memviztest: user invariants OK\n");
+}
+
+/**
+ * test_user_render 黑盒验证增强字符图确实显示固定页、物理页和比例断裂。
+ *
+ * 子进程通过 pipe 重定向 stdout 后 exec 真实 memviz 命令；父进程只断言稳定
+ * 教学标签，不复制 renderer 的地址或布局计算。
+ */
+static void
+test_user_render(void)
+{
+  int fds[2];
+  if(pipe(fds) < 0)
+    fail("render pipe");
+
+  int pid = fork();
+  if(pid < 0)
+    fail("render fork");
+  if(pid == 0){
+    close(fds[0]);
+    close(1);
+    if(dup(fds[1]) != 1)
+      exit(1);
+    close(fds[1]);
+
+    char *argv[] = { "memviz", "user", "--plain", 0 };
+    exec("memviz", argv);
+    exit(1);
+  }
+
+  close(fds[1]);
+  int total = 0;
+  while(total < (int)sizeof(render_output) - 1){
+    int count = read(fds[0], render_output + total,
+                     sizeof(render_output) - 1 - total);
+    if(count < 0)
+      fail("render read");
+    if(count == 0)
+      break;
+    total += count;
+  }
+  close(fds[0]);
+  render_output[total] = 0;
+
+  int status = -1;
+  if(wait(&status) != pid || status != 0)
+    fail("memviz user execution");
+
+  if(!text_contains(render_output, "MAXVA"))
+    fail("render MAXVA missing");
+  if(!text_contains(render_output, "TRAMPOLINE / supervisor-only RX"))
+    fail("render trampoline block missing");
+  if(!text_contains(render_output, "TRAPFRAME / supervisor-only RW"))
+    fail("render trapframe block missing");
+  if(!text_contains(render_output, "ADDRESS-SPACE BREAK"))
+    fail("render address gap break missing");
+  if(!text_contains(render_output, "not drawn to scale"))
+    fail("render scale warning missing");
+  if(!text_contains(render_output, "TRAMPOLINE PAGE DETAIL"))
+    fail("render trampoline detail missing");
+  if(!text_contains(render_output, "TRAPFRAME PAGE MEMBER ORDER"))
+    fail("render trapframe detail missing");
+  if(!text_contains(render_output, "PA page:"))
+    fail("render physical page range missing");
+  if(!text_contains(render_output, "name=kernel_satp") ||
+     !text_contains(render_output, "name=t6"))
+    fail("render trapframe member boundaries missing");
+
+  printf("memviztest: user renderer OK\n");
 }
 
 /**
@@ -330,9 +467,10 @@ test_pagetable_snapshot(void)
 static int
 run_named(char *name)
 {
-  if(strcmp(name, "user") == 0)
+  if(strcmp(name, "user") == 0){
     test_user_snapshot();
-  else if(strcmp(name, "phys") == 0)
+    test_user_render();
+  } else if(strcmp(name, "phys") == 0)
     test_physical_snapshot();
   else if(strcmp(name, "alloc") == 0)
     test_allocate_and_release();
@@ -347,12 +485,17 @@ run_named(char *name)
 
 /**
  * main 默认运行完整测试；传入一个名称时只运行对应检查。
+ *
+ * @param argc 参数数量。
+ * @param argv 可选具名检查。
+ * @return 所有断言通过时返回 0；失败路径由 fail 终止。
  */
 int
 main(int argc, char **argv)
 {
   if(argc == 1){
     test_user_snapshot();
+    test_user_render();
     test_dynamic_extent();
     test_physical_snapshot();
     test_allocate_and_release();
