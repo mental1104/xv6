@@ -161,6 +161,29 @@ place_file(char *source, char *destination)
     layout_fail("unlink source", source);
 }
 
+/**
+ * 确保固定数据文件在用户主目录中有一个兼容硬链接，但保留根目录原入口。
+ *
+ * @param source 需要保留的权威绝对路径。
+ * @param destination 旧测试从 `/root` 使用相对路径访问的兼容入口。
+ */
+static void
+ensure_file_link(char *source, char *destination)
+{
+  struct stat source_stat;
+  struct stat destination_stat;
+
+  if(stat(source, &source_stat) < 0)
+    layout_fail("missing link source", source);
+  if(stat(destination, &destination_stat) == 0){
+    if(source_stat.ino != destination_stat.ino)
+      layout_fail("link conflict", destination);
+    return;
+  }
+  if(link(source, destination) < 0)
+    layout_fail("link data", destination);
+}
+
 /** 在首个 Shell 启动前建立并验证教学版目录布局。 */
 static void
 setup_image_layout(void)
@@ -169,6 +192,9 @@ setup_image_layout(void)
     ensure_directory(*directory);
   for(struct image_file *file = image_files; file->source != 0; file++)
     place_file(file->source, file->destination);
+
+  // 原始 usertests 的 copyout 用例读取相对路径 README；它不是可执行文件搜索。
+  ensure_file_link("/README", "/root/README");
 }
 
 int
