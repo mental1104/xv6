@@ -14,7 +14,7 @@ import pexpect
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESULT_ROOT = REPO_ROOT / "test-results"
 TRANSCRIPT_PATH = RESULT_ROOT / "shell-history-interactive.log"
-ANSI_GREEN_BOLD = "\x1b[1;32m"
+ANSI_ORANGE_BOLD = "\x1b[1;38;5;208m"
 ANSI_BLUE_BOLD = "\x1b[1;34m"
 ANSI_RESET = "\x1b[0m"
 
@@ -30,7 +30,7 @@ def shell_prompt(path: str) -> str:
     """
 
     return (
-        f"{ANSI_GREEN_BOLD}root@xv6{ANSI_RESET}:"
+        f"{ANSI_ORANGE_BOLD}root@xv6{ANSI_RESET}:"
         f"{ANSI_BLUE_BOLD}{path}{ANSI_RESET}# "
     )
 
