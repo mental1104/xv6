@@ -140,6 +140,9 @@ $U/_%: $T/%.o $(ULIB)
 # 仅 usertests 适配翻译单元允许在比较 exec 路径前过滤越界用户地址。
 $T/usertests_2g.o: CFLAGS += -DXV6_USERTESTS_EXEC_ADAPTER
 
+# memviztest 主体跟随主线，编译时单独注入绝对程序路径适配。
+$T/memviztest.o: CFLAGS += -include $T/memviztest_exec.h
+
 # 2 GiB 配置使用容量无关的 C 适配入口；它复用原 usertests.c 的测试全集，
 # 仅替换固定 OOM 假设和破坏式空闲页计数。
 $U/_usertests: $T/usertests_2g.o $(ULIB)
