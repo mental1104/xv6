@@ -1,3 +1,6 @@
+#ifndef XV6_USER_USER_H
+#define XV6_USER_USER_H
+
 struct stat;
 struct rtcdate;
 struct sysinfo;
@@ -149,3 +152,5 @@ char *envget(char **envp, const char *name);
  * @return 仅全部候选执行失败时返回 -1；成功后不会返回。
  */
 int execvpe(char *program, char **argv, char **envp);
+
+#endif
