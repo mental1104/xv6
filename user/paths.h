@@ -26,7 +26,7 @@
  * usertests_2g.o 的目标级编译开关下启用，不改变其他用户程序的 strcmp 语义。
  */
 static inline int
-xv6_usertests_path_strcmp(char *left, char *right)
+xv6_usertests_path_strcmp(const char *left, const char *right)
 {
   uint64 address = (uint64)left;
   uint64 process_size = (uint64)sbrk(0);
