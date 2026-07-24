@@ -49,6 +49,7 @@ static const char *const syscall_names[] = {
 [SYS_tcsetpgrp]        = "tcsetpgrp",
 [SYS_lseek]            = "lseek",
 [SYS_execve]           = "execve",
+[SYS_getprocs]         = "getprocs",
 [SYS_memsnapshot_pid]  = "memsnapshot_pid",
 };
 
