@@ -127,11 +127,9 @@ jobs:
             echo "::endgroup::"
           }
 
-          if grep -qx 'tests/guest/usertests_2g.c' /tmp/changed-files.txt; then
-            make test-usertests CPUS=3 || { dump_usertests_log; exit 1; }
-          else
-            python3 tests/run_usertests.py --cpus 3 || { dump_usertests_log; exit 1; }
-          fi
+          # 逐项 runner 为每个测试设置独立看门狗，并有意跳过旧 writebig 的
+          # MAXFILE 密集写。三级间接和文件上界由已选中的 lab9-bigfile 专项覆盖。
+          python3 tests/run_usertests.py --cpus 3 || { dump_usertests_log; exit 1; }
 
       - name: Run scheduled or manual full regression
         if: github.event_name != 'pull_request'
