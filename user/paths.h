@@ -111,6 +111,26 @@ xv6_usertests_mkdir_relative(const char *path)
 }
 
 #define mkdir xv6_usertests_mkdir_relative
+
+/**
+ * xv6_usertests_chdir_root_home 保留 subdir 的越过根目录钳制测试。
+ *
+ * @param path 传给 chdir() 的路径。
+ * @return chdir() 的原始返回值。
+ *
+ * 原路径从 `/dd` 出发，三个 `..` 会越过根目录再回到 `/dd`。测试目录迁到
+ * `/root/dd` 后，需要多退一级并显式重新进入 `/root/dd`，才能继续验证真正的
+ * 根目录钳制，而不是误把不存在的 `/dd` 当作目标。
+ */
+static inline int
+xv6_usertests_chdir_root_home(const char *path)
+{
+  if(strcmp(path, "dd/../../../dd") == 0)
+    return chdir("dd/../../../../root/dd");
+  return chdir(path);
+}
+
+#define chdir xv6_usertests_chdir_root_home
 #endif
 
 #endif
