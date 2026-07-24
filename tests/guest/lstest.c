@@ -2,6 +2,7 @@
 #include "kernel/stat.h"
 #include "kernel/fcntl.h"
 #include "user/user.h"
+#include "user/paths.h"
 
 #define OUTPUT_SIZE 2048
 
@@ -74,12 +75,7 @@ has_line(char *text, char *expected)
   return 0;
 }
 
-/**
- * 判断字符是否为十进制数字。
- *
- * @param value 待判断字符。
- * @return 数字返回 1，否则返回 0。
- */
+/** 判断字符是否为十进制数字。 */
 static int
 is_digit(char value)
 {
@@ -121,15 +117,16 @@ has_mtime_field(char *text)
 }
 
 /**
- * 在子进程中执行 ls，并同时捕获 stdout 与 stderr。
+ * 在子进程中执行指定程序，并同时捕获 stdout 与 stderr。
  *
- * @param argv 传给 exec("ls") 的空指针结尾参数数组。
+ * @param program 传给 exec() 的路径；正常 ls 验证必须使用 `/bin/ls`。
+ * @param argv 传给程序的空指针结尾参数数组。
  * @param buffer 输出缓冲区。
  * @param capacity buffer 容量，必须大于 1。
- * @return ls 的退出状态；基础设施失败时直接终止测试。
+ * @return 程序退出状态；基础设施失败时直接终止测试。
  */
 static int
-run_ls(char **argv, char *buffer, int capacity)
+run_program(char *program, char **argv, char *buffer, int capacity)
 {
   int pipefd[2];
   int pid;
@@ -147,7 +144,7 @@ run_ls(char **argv, char *buffer, int capacity)
     close(2);
     check(dup(pipefd[1]) == 2, "redirect stderr failed");
     close(pipefd[1]);
-    exec("ls", argv);
+    exec(program, argv);
     exit(127);
   }
 
@@ -163,6 +160,54 @@ run_ls(char **argv, char *buffer, int capacity)
   close(pipefd[0]);
   check(wait(&status) == pid, "wait returned wrong child");
   return status;
+}
+
+/**
+ * 要求路径存在且具有指定 inode 类型。
+ *
+ * @param path 被检查的绝对路径。
+ * @param type T_DIR、T_FILE 或其他 xv6 inode 类型。
+ */
+static void
+require_path_type(char *path, short type)
+{
+  struct stat st;
+
+  check(stat(path, &st) == 0, "layout path missing");
+  check(st.type == type, "layout path type mismatch");
+}
+
+/**
+ * 验证启动目录、一级目录、程序分类和无 PATH 反例。
+ */
+static void
+test_filesystem_layout(void)
+{
+  static char *directories[] = {
+    "/etc", "/bin", "/usr", "/home", "/mnt", "/root", "/sys",
+    "/var", "/tmp", "/lib", "/usr/bin", "/usr/lib",
+    "/usr/lib/xv6", "/usr/lib/xv6/tests", 0,
+  };
+  struct stat current;
+  struct stat root_home;
+  struct stat removed_root_program;
+  char *bare_argv[] = {"ls", "--help", 0};
+
+  check(stat(".", &current) == 0, "cannot stat current directory");
+  check(stat(XV6_ROOT_HOME, &root_home) == 0, "cannot stat /root");
+  check(current.type == T_DIR && current.ino == root_home.ino,
+        "initial shell is not in /root");
+
+  for(char **path = directories; *path != 0; path++)
+    require_path_type(*path, T_DIR);
+  require_path_type(XV6_BIN_PATH("ls"), T_FILE);
+  require_path_type(XV6_USR_BIN_PATH("xv6test"), T_FILE);
+  require_path_type(XV6_TEST_PATH("usertests"), T_FILE);
+  check(stat("/ls", &removed_root_program) < 0,
+        "legacy root program entry still exists");
+
+  check(run_program("ls", bare_argv, output, sizeof(output)) == 127,
+        "bare ls unexpectedly executed without PATH");
 }
 
 /** 创建 ls 选项测试使用的目录、隐藏文件、普通文件和符号链接。 */
@@ -218,26 +263,29 @@ remove_fixture(void)
 static void
 test_ls_options(void)
 {
-  char *default_argv[] = {"ls", "lstmp", 0};
-  char *all_argv[] = {"ls", "-a", "lstmp", 0};
-  char *long_argv[] = {"ls", "-l", "lstmp", 0};
-  char *human_argv[] = {"ls", "-lh", "lstmp", 0};
-  char *combined_argv[] = {"ls", "-alh", "lstmp", 0};
-  char *device_argv[] = {"ls", "-l", "console", 0};
-  char *dash_argv[] = {"ls", "--", "-lsdash", 0};
-  char *help_argv[] = {"ls", "--help", 0};
-  char *invalid_argv[] = {"ls", "-z", 0};
-  char *multi_argv[] = {"ls", "missing-ls", "lstmp/visible", 0};
+  char *default_argv[] = {XV6_BIN_PATH("ls"), "lstmp", 0};
+  char *all_argv[] = {XV6_BIN_PATH("ls"), "-a", "lstmp", 0};
+  char *long_argv[] = {XV6_BIN_PATH("ls"), "-l", "lstmp", 0};
+  char *human_argv[] = {XV6_BIN_PATH("ls"), "-lh", "lstmp", 0};
+  char *combined_argv[] = {XV6_BIN_PATH("ls"), "-alh", "lstmp", 0};
+  char *device_argv[] = {XV6_BIN_PATH("ls"), "-l", XV6_CONSOLE_PATH, 0};
+  char *dash_argv[] = {XV6_BIN_PATH("ls"), "--", "-lsdash", 0};
+  char *help_argv[] = {XV6_BIN_PATH("ls"), "--help", 0};
+  char *invalid_argv[] = {XV6_BIN_PATH("ls"), "-z", 0};
+  char *multi_argv[] = {XV6_BIN_PATH("ls"), "missing-ls", "lstmp/visible", 0};
   char *default_expected = "\033[1;34msubdir\033[0m visible link\n";
   char *all_expected = "\033[1;34m.\033[0m \033[1;34m..\033[0m \033[1;34msubdir\033[0m visible .hidden link\n";
 
-  check(run_ls(default_argv, output, sizeof(output)) == 0, "default ls status");
+  check(run_program(XV6_BIN_PATH("ls"), default_argv, output, sizeof(output)) == 0,
+        "default ls status");
   check(strcmp(output, default_expected) == 0, "default ls is not one colored line");
 
-  check(run_ls(all_argv, output, sizeof(output)) == 0, "ls -a status");
+  check(run_program(XV6_BIN_PATH("ls"), all_argv, output, sizeof(output)) == 0,
+        "ls -a status");
   check(strcmp(output, all_expected) == 0, "ls -a layout or hidden entries");
 
-  check(run_ls(long_argv, output, sizeof(output)) == 0, "ls -l status");
+  check(run_program(XV6_BIN_PATH("ls"), long_argv, output, sizeof(output)) == 0,
+        "ls -l status");
   check(contains(output, "total "), "ls -l missing total");
   check(contains(output, "-rw-r--r--"), "ls -l missing file mode");
   check(contains(output, "drwxr-xr-x"), "ls -l missing directory mode");
@@ -247,29 +295,36 @@ test_ls_options(void)
   check(contains(output, "\033[1;34msubdir\033[0m"), "ls -l missing directory color");
   check(has_mtime_field(output), "ls -l missing modification time");
 
-  check(run_ls(human_argv, output, sizeof(output)) == 0, "ls -lh status");
+  check(run_program(XV6_BIN_PATH("ls"), human_argv, output, sizeof(output)) == 0,
+        "ls -lh status");
   check(contains(output, "total 1.5K\n"), "ls -lh missing human total");
   check(contains(output, "1.5K "), "ls -lh missing human file size");
 
-  check(run_ls(combined_argv, output, sizeof(output)) == 0, "ls -alh status");
+  check(run_program(XV6_BIN_PATH("ls"), combined_argv, output, sizeof(output)) == 0,
+        "ls -alh status");
   check(contains(output, ".hidden"), "ls -alh missing hidden file");
   check(contains(output, "1.5K "), "ls -alh lost human size");
 
-  check(run_ls(device_argv, output, sizeof(output)) == 0, "ls device status");
+  check(run_program(XV6_BIN_PATH("ls"), device_argv, output, sizeof(output)) == 0,
+        "ls device status");
   check(contains(output, "crw-rw-rw-"), "ls missing device mode");
   check(contains(output, " root root "), "ls device missing owner or group");
 
-  check(run_ls(dash_argv, output, sizeof(output)) == 0, "ls -- status");
+  check(run_program(XV6_BIN_PATH("ls"), dash_argv, output, sizeof(output)) == 0,
+        "ls -- status");
   check(has_line(output, "-lsdash"), "ls -- did not preserve dash path");
 
-  check(run_ls(help_argv, output, sizeof(output)) == 0, "ls --help status");
+  check(run_program(XV6_BIN_PATH("ls"), help_argv, output, sizeof(output)) == 0,
+        "ls --help status");
   check(contains(output, "Usage: ls [-alh]"), "ls --help missing usage");
 
-  check(run_ls(invalid_argv, output, sizeof(output)) == 2, "invalid option status");
+  check(run_program(XV6_BIN_PATH("ls"), invalid_argv, output, sizeof(output)) == 2,
+        "invalid option status");
   check(contains(output, "invalid option"), "invalid option diagnostic");
   check(contains(output, "Usage: ls"), "invalid option usage");
 
-  check(run_ls(multi_argv, output, sizeof(output)) == 1, "multi-path failure status");
+  check(run_program(XV6_BIN_PATH("ls"), multi_argv, output, sizeof(output)) == 1,
+        "multi-path failure status");
   check(contains(output, "cannot access 'missing-ls'"), "missing path diagnostic");
   check(has_line(output, "visible"), "multi-path stopped before valid path");
 }
@@ -285,7 +340,7 @@ test_mtime(void)
   struct stat reopened;
   struct stat truncated;
 
-  fd = open("README", O_RDONLY);
+  fd = open("/README", O_RDONLY);
   check(fd >= 0, "open README failed");
   check(fstat(fd, &initial) == 0, "stat README failed");
   check(initial.mtime > 0, "mkfs inode mtime is zero");
@@ -321,6 +376,7 @@ test_mtime(void)
 int
 main(void)
 {
+  test_filesystem_layout();
   create_fixture();
   test_ls_options();
   test_mtime();

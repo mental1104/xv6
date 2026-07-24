@@ -6,6 +6,7 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "user/user.h"
+#include "user/paths.h"
 #include "kernel/fs.h"
 #include "kernel/fcntl.h"
 #include "kernel/syscall.h"
@@ -221,7 +222,7 @@ go(int which_child)
       close(fd1);
       unlink("c");
     } else if(what == 22){
-      // echo hi | cat
+      // /bin/echo hi | /bin/cat
       int aa[2], bb[2];
       if(pipe(aa) < 0){
         fprintf(2, "pipe failed\n");
@@ -242,8 +243,8 @@ go(int which_child)
           exit(1);
         }
         close(aa[1]);
-        char *args[3] = { "echo", "hi", 0 };
-        exec("grindir/../echo", args);
+        char *args[3] = {XV6_BIN_PATH("echo"), "hi", 0};
+        exec(XV6_BIN_PATH("echo"), args);
         fprintf(2, "echo: not found\n");
         exit(2);
       } else if(pid1 < 0){
@@ -266,8 +267,8 @@ go(int which_child)
           exit(5);
         }
         close(bb[1]);
-        char *args[2] = { "cat", 0 };
-        exec("/cat", args);
+        char *args[2] = {XV6_BIN_PATH("cat"), 0};
+        exec(XV6_BIN_PATH("cat"), args);
         fprintf(2, "cat: not found\n");
         exit(6);
       } else if(pid2 < 0){

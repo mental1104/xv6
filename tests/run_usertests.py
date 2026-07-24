@@ -54,7 +54,8 @@ def _commands(selected_cases: tuple[str, ...] = ()) -> tuple[str, ...]:
             这些用例，不额外加入默认压力前序；空元组表示执行完整回归。
 
     Returns:
-        可依次发送到同一 xv6 Shell 的命令元组。
+        可依次发送到同一 xv6 Shell 的逻辑命令元组；发送前由公共 runner 转为
+        `/usr/bin/xv6test` 绝对入口。
     """
 
     if selected_cases:
@@ -140,24 +141,25 @@ def run(cpus: int, selected_cases: tuple[str, ...] = ()) -> None:
     chunks = [child.before]
     try:
         for command in _commands(selected_cases):
+            guest_command = RUNNER._absolute_guest_command(command)
             child.timeout = WATCHDOG_SECONDS
-            child.sendline(command)
+            child.sendline(guest_command)
             result = RUNNER._wait_for_qemu_command(child)
-            chunks.append(f"$ {command}\n{result.output}")
+            chunks.append(f"$ {guest_command}\n{result.output}")
             output = "\n".join(chunks)
             if result.failure is not None:
                 log_path = RUNNER._write_log("usertests-full", "usertests-full", output)
-                excerpt = _format_failure_output(command, result.output)
+                excerpt = _format_failure_output(guest_command, result.output)
                 raise RUNNER.TestFailure(
                     f"{result.failure}\n{excerpt}\nfull log: {log_path}"
                 )
             try:
-                _assert_command_output(command, result.output)
+                _assert_command_output(guest_command, result.output)
             except RUNNER.TestFailure as exc:
                 # 输出断言失败同样属于需要保留的 guest 现场，不能只在 panic/timeout
                 # 路径写日志，否则真正的 status=1 和业务失败文本会被调用者丢失。
                 log_path = RUNNER._write_log("usertests-full", "usertests-full", output)
-                excerpt = _format_failure_output(command, result.output)
+                excerpt = _format_failure_output(guest_command, result.output)
                 raise RUNNER.TestFailure(
                     f"{exc}\n{excerpt}\nfull log: {log_path}"
                 ) from exc

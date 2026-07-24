@@ -2,6 +2,7 @@
 #include "kernel/stat.h"
 #include "kernel/fcntl.h"
 #include "user/user.h"
+#include "user/paths.h"
 #include "tests/guest/testlib.h"
 
 #define OUTPUT_SIZE 2048
@@ -31,7 +32,7 @@ fail(char *name, char *reason, char *output)
 static void
 sleep_test(void)
 {
-  char *argv[] = {"sleep", "2", 0};
+  char *argv[] = {XV6_BIN_PATH("sleep"), "2", 0};
   char output[OUTPUT_SIZE];
   int status;
   int start = uptime();
@@ -52,7 +53,7 @@ sleep_test(void)
 static void
 pingpong_test(void)
 {
-  char *argv[] = {"pingpong", 0};
+  char *argv[] = {XV6_USR_BIN_PATH("pingpong"), 0};
   char output[OUTPUT_SIZE];
   int status;
 
@@ -73,7 +74,7 @@ pingpong_test(void)
 static void
 primes_test(void)
 {
-  char *argv[] = {"primes", 0};
+  char *argv[] = {XV6_USR_BIN_PATH("primes"), 0};
   char output[OUTPUT_SIZE];
   int status;
 
@@ -94,7 +95,7 @@ primes_test(void)
 static void
 find_test(void)
 {
-  char *argv[] = {"find", ".", "needle", 0};
+  char *argv[] = {XV6_BIN_PATH("find"), ".", "needle", 0};
   char output[OUTPUT_SIZE];
   int fd;
   int status;
@@ -139,7 +140,9 @@ find_test(void)
 static void
 xargs_test(void)
 {
-  char *argv[] = {"xargs", "echo", "bye", 0};
+  char *argv[] = {
+    XV6_BIN_PATH("xargs"), XV6_BIN_PATH("echo"), "bye", 0,
+  };
   char output[OUTPUT_SIZE];
   int status;
 

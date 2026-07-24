@@ -1,6 +1,7 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "user/user.h"
+#include "user/paths.h"
 #include "tests/guest/testlib.h"
 
 #define OUTPUT_SIZE 2048
@@ -17,7 +18,7 @@
 int
 main(void)
 {
-  char *argv[] = {"uthread", 0};
+  char *argv[] = {XV6_USR_BIN_PATH("uthread"), 0};
   char *output = malloc(OUTPUT_SIZE);
   int status;
 

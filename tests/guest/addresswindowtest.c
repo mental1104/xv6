@@ -5,6 +5,7 @@
 #include "kernel/fcntl.h"
 #include "kernel/memviz.h"
 #include "user/user.h"
+#include "user/paths.h"
 
 static struct memviz_snapshot snapshot;
 static struct memviz_va_query query;
@@ -91,7 +92,7 @@ test_copy_paths(void)
   close(fds[1]);
 
   char *path = (char *)UART0;
-  strcpy(path, "README");
+  strcpy(path, "/README");
   int fd = open(path, O_RDONLY);
   if(fd < 0)
     fail("copyinstr above UART failed");
@@ -133,7 +134,7 @@ test_cow(void)
 static void
 test_mmap(void)
 {
-  int fd = open("README", O_RDONLY);
+  int fd = open("/README", O_RDONLY);
   if(fd < 0)
     fail("mmap source open failed");
 
@@ -166,7 +167,7 @@ test_exec(void)
     char *argument = (char *)(UART0 + 192);
     char **arguments = (char **)(PLIC + 2 * PGSIZE);
 
-    strcpy(path, "echo");
+    strcpy(path, XV6_BIN_PATH("echo"));
     strcpy(argument, "alias-exec");
     arguments[0] = path;
     arguments[1] = argument;
@@ -207,7 +208,7 @@ test_direct_map_crossing(void)
   close(fds[0]);
   close(fds[1]);
 
-  int fd = open("README", O_RDONLY);
+  int fd = open("/README", O_RDONLY);
   if(fd < 0)
     fail("direct-map copyout source failed");
   char *target = (char *)(KERNBASE + PGSIZE);

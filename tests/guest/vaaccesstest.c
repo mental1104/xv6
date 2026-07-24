@@ -4,6 +4,7 @@
 #include "kernel/riscv.h"
 #include "kernel/memviz.h"
 #include "user/user.h"
+#include "user/paths.h"
 #include "tests/guest/testlib.h"
 
 static char output[4096];
@@ -38,7 +39,7 @@ require_contains(char *text, char *needle)
 /**
  * run_command 执行用户命令并校验退出状态。
  *
- * @param argv exec 参数数组，argv[0] 是命令名。
+ * @param argv exec 参数数组，argv[0] 是绝对程序路径。
  * @param expected_status 期望 wait status。
  * @return 捕获输出缓冲区；下次调用会覆盖。
  */
@@ -71,14 +72,16 @@ free_pages(void)
   return snapshot.free_pages;
 }
 
-/**
- * test_mapped_access 验证已映射 ELF 页的读写都走普通命中路径。
- */
+/** test_mapped_access 验证已映射 ELF 页的读写都走普通命中路径。 */
 static void
 test_mapped_access(void)
 {
-  char *read_args[] = {"varead", "image+0", "--expect", "ok", "--snapshot", 0};
-  char *write_args[] = {"vawrite", "image+0", "0x41", "--expect", "ok", 0};
+  char *read_args[] = {
+    XV6_USR_BIN_PATH("varead"), "image+0", "--expect", "ok", "--snapshot", 0,
+  };
+  char *write_args[] = {
+    XV6_USR_BIN_PATH("vawrite"), "image+0", "0x41", "--expect", "ok", 0,
+  };
 
   char *text = run_command(read_args, 0);
   require_contains(text, "VAACCESS result=ok");
@@ -92,14 +95,16 @@ test_mapped_access(void)
   printf("vaaccesstest: mapped access OK\n");
 }
 
-/**
- * test_lazy_access 验证 lazy reserve 与首次触页分离，且命令退出后归还页面。
- */
+/** test_lazy_access 验证 lazy reserve 与首次触页分离，且命令退出后归还页面。 */
 static void
 test_lazy_access(void)
 {
-  char *read_args[] = {"varead", "--lazy", "0", "--snapshot", 0};
-  char *write_args[] = {"vawrite", "--lazy", "2", "0x42", "--snapshot", 0};
+  char *read_args[] = {
+    XV6_USR_BIN_PATH("varead"), "--lazy", "0", "--snapshot", 0,
+  };
+  char *write_args[] = {
+    XV6_USR_BIN_PATH("vawrite"), "--lazy", "2", "0x42", "--snapshot", 0,
+  };
   uint64 before = free_pages();
 
   char *text = run_command(read_args, 0);
@@ -120,13 +125,13 @@ test_lazy_access(void)
   printf("vaaccesstest: lazy access OK\n");
 }
 
-/**
- * test_cow_access 验证 COW 写前共享 PA、写后 child 私有 PA、父子内容隔离。
- */
+/** test_cow_access 验证 COW 写前共享 PA、写后 child 私有 PA、父子内容隔离。 */
 static void
 test_cow_access(void)
 {
-  char *args[] = {"vawrite", "--cow", "0x43", "--snapshot", 0};
+  char *args[] = {
+    XV6_USR_BIN_PATH("vawrite"), "--cow", "0x43", "--snapshot", 0,
+  };
   uint64 before = free_pages();
   char *text = run_command(args, 0);
 
@@ -141,18 +146,24 @@ test_cow_access(void)
   printf("vaaccesstest: cow access OK\n");
 }
 
-/**
- * test_faults 验证非法访问只杀 worker，supervisor 和后续命令仍可继续。
- */
+/** test_faults 验证非法访问只杀 worker，supervisor 和后续命令仍可继续。 */
 static void
 test_faults(void)
 {
-  char *guard_read[] = {"varead", "guard+0", "--expect", "fault", "--snapshot", 0};
-  char *guard_write[] = {"vawrite", "guard+0", "0x41", "--expect", "fault", 0};
-  char *brk_read[] = {"varead", "brk+4096", "--expect", "fault", 0};
-  char *plic_write[] = {"vawrite", "0x000000000C000000", "0x41",
-                        "--expect", "fault", 0};
-  char *alive[] = {"echo", "shell-alive", 0};
+  char *guard_read[] = {
+    XV6_USR_BIN_PATH("varead"), "guard+0", "--expect", "fault", "--snapshot", 0,
+  };
+  char *guard_write[] = {
+    XV6_USR_BIN_PATH("vawrite"), "guard+0", "0x41", "--expect", "fault", 0,
+  };
+  char *brk_read[] = {
+    XV6_USR_BIN_PATH("varead"), "brk+4096", "--expect", "fault", 0,
+  };
+  char *plic_write[] = {
+    XV6_USR_BIN_PATH("vawrite"), "0x000000000C000000", "0x41",
+    "--expect", "fault", 0,
+  };
+  char *alive[] = {XV6_BIN_PATH("echo"), "shell-alive", 0};
 
   require_contains(run_command(guard_read, 0), "VAACCESS result=fault");
   require_contains(run_command(guard_write, 0), "VAACCESS result=fault");
@@ -163,17 +174,17 @@ test_faults(void)
   printf("vaaccesstest: fault isolation OK\n");
 }
 
-/**
- * test_parsing_and_expect 验证地址解析、溢出拒绝和 --expect 状态传播。
- */
+/** test_parsing_and_expect 验证地址解析、溢出拒绝和 --expect 状态传播。 */
 static void
 test_parsing_and_expect(void)
 {
-  char *decimal[] = {"varead", "0", "--expect", "ok", 0};
-  char *hex[] = {"varead", "0x0", "--expect", "ok", 0};
-  char *bad[] = {"varead", "not-a-va", 0};
-  char *overflow[] = {"varead", "0xffffffffffffffff", 0};
-  char *mismatch[] = {"varead", "image+0", "--expect", "fault", 0};
+  char *decimal[] = {XV6_USR_BIN_PATH("varead"), "0", "--expect", "ok", 0};
+  char *hex[] = {XV6_USR_BIN_PATH("varead"), "0x0", "--expect", "ok", 0};
+  char *bad[] = {XV6_USR_BIN_PATH("varead"), "not-a-va", 0};
+  char *overflow[] = {XV6_USR_BIN_PATH("varead"), "0xffffffffffffffff", 0};
+  char *mismatch[] = {
+    XV6_USR_BIN_PATH("varead"), "image+0", "--expect", "fault", 0,
+  };
 
   require_contains(run_command(decimal, 0), "VAACCESS result=ok");
   require_contains(run_command(hex, 0), "VAACCESS result=ok");
@@ -184,9 +195,7 @@ test_parsing_and_expect(void)
   printf("vaaccesstest: parsing and expect OK\n");
 }
 
-/**
- * test_va_zero_follows_real_pagetable 验证 VA 0 不是写死的 NULL page 假设。
- */
+/** test_va_zero_follows_real_pagetable 验证 VA 0 不是写死的 NULL page 假设。 */
 static void
 test_va_zero_follows_real_pagetable(void)
 {
@@ -195,10 +204,14 @@ test_va_zero_follows_real_pagetable(void)
     fail("vaquery zero failed");
 
   if(query.present){
-    char *args[] = {"varead", "image+0", "--expect", "ok", 0};
+    char *args[] = {
+      XV6_USR_BIN_PATH("varead"), "image+0", "--expect", "ok", 0,
+    };
     require_contains(run_command(args, 0), "VAACCESS result=ok");
   } else {
-    char *args[] = {"varead", "0", "--expect", "fault", 0};
+    char *args[] = {
+      XV6_USR_BIN_PATH("varead"), "0", "--expect", "fault", 0,
+    };
     require_contains(run_command(args, 0), "VAACCESS result=fault");
   }
 
