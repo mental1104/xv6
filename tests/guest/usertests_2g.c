@@ -25,11 +25,11 @@ usertests_exec_absolute(char *path, char **argv)
   return exec(path, argv);
 }
 
-// 复用原始 usertests 的全部测试函数，但把依赖固定物理容量或旧文件语义的入口
-// 重命名，再在本文件提供适配当前教学内核的确定性版本。原始源码保持可直接
-// 与上游对照，适配逻辑集中在单独的 C 翻译单元中。
+// 复用原始 usertests 的全部测试函数，但把依赖固定物理容量、旧文件语义或裸
+// Shell 脚本的入口重命名，再在本文件提供适配当前教学内核的确定性版本。
 #define exec usertests_exec_absolute
 #define execout execout_capacity_dependent
+#define jobctl jobctl_relative_commands
 #define mem mem_capacity_dependent
 #define sbrkbasic sbrkbasic_capacity_dependent
 #define sbrkfail sbrkfail_capacity_dependent
@@ -43,6 +43,7 @@ usertests_exec_absolute(char *path, char **argv)
 #undef sbrkfail
 #undef sbrkbasic
 #undef mem
+#undef jobctl
 #undef execout
 #undef exec
 
@@ -55,6 +56,95 @@ usertests_exec_absolute(char *path, char **argv)
 static struct memviz_snapshot adapter_before;
 static struct memviz_snapshot adapter_during;
 static struct memviz_snapshot adapter_after;
+
+/**
+ * jobctl 验证 waitpid 兼容性以及非交互子 Shell 的后台作业生命周期。
+ *
+ * @param s usertests 统一测试名称，本函数不读取其内容。
+ *
+ * 子 Shell 没有 PATH；写入 pipe 的每条外部命令必须携带完整路径。jobs、fg 仍是
+ * Shell 内置命令。输出断言也保留绝对命令文本，避免测试悄悄依赖根目录兼容链接。
+ */
+void
+jobctl(char *s)
+{
+  char output[1024];
+  char *argv[] = {XV6_BIN_PATH("sh"), 0};
+  char *commands =
+    "/bin/sleep 1 &\n"
+    "/bin/sleep 3\n"
+    "/bin/sleep 20 &\n"
+    "/bin/echo foreground\n"
+    "jobs\n"
+    "fg %2\n"
+    "/bin/echo fg-done\n";
+  int command_len = strlen(commands);
+  int input[2], result[2], pid, n, total = 0, status;
+
+  (void)s;
+  pid = fork();
+  if(pid < 0)
+    jobctlfail("waitpid fork failed");
+  if(pid == 0){
+    sleep(10);
+    exit(7);
+  }
+  if(waitpid(pid, &status, WNOHANG) != 0)
+    jobctlfail("WNOHANG did not return 0 for a running child");
+  if(waitpid(pid + 100000, &status, WNOHANG) != -1)
+    jobctlfail("waitpid accepted a non-child pid");
+  if(waitpid(pid, &status, 2) != -1)
+    jobctlfail("waitpid accepted unsupported options");
+  if(waitpid(pid, &status, 0) != pid || status != 7)
+    jobctlfail("blocking waitpid returned the wrong result");
+
+  pid = fork();
+  if(pid < 0)
+    jobctlfail("compatibility fork failed");
+  if(pid == 0)
+    exit(9);
+  if(wait(&status) != pid || status != 9)
+    jobctlfail("wait compatibility regressed");
+
+  if(pipe(input) < 0 || pipe(result) < 0)
+    jobctlfail("pipe failed");
+  pid = fork();
+  if(pid < 0)
+    jobctlfail("shell fork failed");
+  if(pid == 0){
+    close(input[1]);
+    close(result[0]);
+    close(0);
+    dup(input[0]);
+    close(1);
+    dup(result[1]);
+    close(2);
+    dup(result[1]);
+    close(input[0]);
+    close(result[1]);
+    exec(XV6_BIN_PATH("sh"), argv);
+    exit(1);
+  }
+
+  close(input[0]);
+  close(result[1]);
+  if(write(input[1], commands, command_len) != command_len)
+    jobctlfail("could not feed shell commands");
+  close(input[1]);
+  while(total + 1 < (int)sizeof(output) &&
+        (n = read(result[0], output + total, sizeof(output) - total - 1)) > 0)
+    total += n;
+  output[total] = 0;
+  close(result[0]);
+
+  if(wait(&status) != pid || status != 0)
+    jobctlfail("shell exited with an error");
+  if(!jobctlcontains(output, "Done /bin/sleep 1 &") ||
+     !jobctlcontains(output, "Running /bin/sleep 20 &") ||
+     !jobctlcontains(output, "foreground") ||
+     !jobctlcontains(output, "fg-done"))
+    jobctlfail("shell job lifecycle output was incomplete");
+}
 
 /**
  * adapter_prime_snapshots 在采集资源基线前私有化快照缓冲区。
