@@ -15,9 +15,9 @@
 #define DEFAULT_TIMEOUT_SECONDS 180
 #define READ_CHUNK_SIZE 4096
 
-/** 登录 Shell 根目录下的完整 ANSI 提示符，用作 QEMU 输入同步边界。 */
+/** 登录 Shell `/root` 目录下的完整 ANSI 提示符，用作 QEMU 输入同步边界。 */
 static const char root_shell_prompt[] =
-  "\033[1;32mroot@xv6\033[0m:\033[1;34m/\033[0m# ";
+  "\033[1;32mroot@xv6\033[0m:\033[1;34m/root\033[0m# ";
 
 struct smoke_options {
   const char *policy;
@@ -278,7 +278,7 @@ run_smoke(const struct smoke_options *options)
   struct output_buffer output = {0};
   char expected_banner[64];
   char expected_result[64];
-  char command[32];
+  char command[64];
   int input_fd = -1;
   int output_fd = -1;
   pid_t pid = spawn_qemu(options, &input_fd, &output_fd);
@@ -289,7 +289,7 @@ run_smoke(const struct smoke_options *options)
 
   snprintf(expected_banner, sizeof(expected_banner), "scheduler: %s", options->policy);
   snprintf(expected_result, sizeof(expected_result), "schedtest: OK policy=%s", options->policy);
-  snprintf(command, sizeof(command), "schedtest %s\n",
+  snprintf(command, sizeof(command), "/usr/lib/xv6/tests/schedtest %s\n",
            options->cpus == 1 ? "verify" : "smoke");
 
   bool command_sent = false;
