@@ -108,8 +108,13 @@ jobs:
           make clean
           make -j2 SCHED_POLICY=rr
 
-      - name: Run pull-request regression
-        run: make test-integration CPUS=3 SCHED_POLICY=rr
+      # 将交互式 Shell 与通用 suite 分成独立步骤，使提示符、行编辑或作业控制失败
+      # 不再被聚合 make 目标隐藏；两者仍复用同一份已构建的 kernel 与 fs.img。
+      - name: Run shell interaction regression
+        run: python3 tests/shell_history_interactive.py --cpus 3
+
+      - name: Run pull-request regression suites
+        run: python3 tests/run.py --suite pr --cpus 3
 
       - name: Run complete usertests
         run: python3 tests/run_usertests.py --cpus 3
@@ -124,3 +129,11 @@ jobs:
             --cpus 1 \
             --case reparent2 \
             --case reparent
+
+      - name: Upload regression logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduler-regression-${{ github.run_id }}
+          path: test-results/
+          if-no-files-found: ignore
