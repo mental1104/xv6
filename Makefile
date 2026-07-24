@@ -244,11 +244,13 @@ UPROGS=\
 	$U/_rm\
 	$U/_sh\
 	$U/_memviz\
+	$U/_memtarget\
 	$U/_schedviz\
 	$U/_varead\
 	$U/_vawrite\
 	$U/_vaprobe\
 	$U/_memviztest\
+	$U/_memtargettest\
 	$U/_vaaccesstest\
 	$U/_addresswindowtest\
 	$U/_wc\
