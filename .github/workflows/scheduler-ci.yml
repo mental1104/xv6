@@ -105,8 +105,9 @@ jobs:
 
       - name: Build default RR policy
         run: |
+          mkdir -p test-results
           make clean
-          make -j2 SCHED_POLICY=rr
+          make -j2 SCHED_POLICY=rr 2>&1 | tee test-results/ps-build.log
 
       # 将交互式 Shell 与通用 suite 分成独立步骤，使提示符、行编辑或作业控制失败
       # 能直接定位，同时仍复用同一份已构建的 kernel 与 fs.img。
