@@ -77,6 +77,32 @@ class CommandOutputTests(unittest.TestCase):
             )
 
 
+class FailureExcerptTests(unittest.TestCase):
+    """验证 CI 失败片段保留根因，同时限制历史输出体积。"""
+
+    def test_failure_excerpt_includes_current_guest_output(self) -> None:
+        """当前用例的失败文本和 completion 状态应直接出现在诊断片段中。"""
+
+        excerpt = RUNNER._format_failure_output(
+            "xv6test --usertest truncate2",
+            "truncate2: inode size mismatch\nXV6TEST done status=1\n",
+        )
+
+        self.assertIn("failing guest output: xv6test --usertest truncate2", excerpt)
+        self.assertIn("truncate2: inode size mismatch", excerpt)
+        self.assertIn("XV6TEST done status=1", excerpt)
+
+    def test_failure_excerpt_keeps_only_latest_lines(self) -> None:
+        """超长输出应只保留末尾有界行数，并明确报告省略量。"""
+
+        output = "\n".join(f"line-{index}" for index in range(100))
+        excerpt = RUNNER._format_failure_output("xv6test test", output)
+
+        self.assertIn("... 20 earlier lines omitted ...", excerpt)
+        self.assertNotIn("line-0\n", excerpt)
+        self.assertIn("line-99", excerpt)
+
+
 class FailureLogTests(unittest.TestCase):
     """验证输出断言失败与 panic/timeout 一样会保存累计 guest 日志。"""
 
@@ -91,8 +117,8 @@ class FailureLogTests(unittest.TestCase):
 
             self.command = command
 
-    def test_assertion_failure_writes_log_before_raising(self) -> None:
-        """status=1 路径应把当前命令输出写入稳定日志后再抛错。"""
+    def test_assertion_failure_writes_log_and_exposes_guest_output(self) -> None:
+        """status=1 路径应保存完整日志，并把当前 guest 根因附到异常中。"""
 
         child = self.FakeChild()
         result = RUNNER.RUNNER.QemuCommandResult(
@@ -111,12 +137,13 @@ class FailureLogTests(unittest.TestCase):
             mock.patch.object(RUNNER.RUNNER, "_write_log", return_value=log_path) as write_log,
             mock.patch.object(RUNNER.RUNNER, "_stop_qemu"),
         ):
-            with self.assertRaisesRegex(
-                RUNNER.RUNNER.TestFailure,
-                r"status=1; log: /tmp/usertests-full.log",
-            ):
+            with self.assertRaises(RUNNER.RUNNER.TestFailure) as raised:
                 RUNNER.run(1)
 
+        message = str(raised.exception)
+        self.assertIn("XV6TEST completed with status=1", message)
+        self.assertIn("FAILED -- lost pages", message)
+        self.assertIn("full log: /tmp/usertests-full.log", message)
         write_log.assert_called_once()
         self.assertIn("XV6TEST done status=1", write_log.call_args.args[2])
 

@@ -10,6 +10,7 @@
 #include "sleeplock.h"
 #include "fs.h"
 #include "file.h"
+#include "fcntl.h"
 #include "stat.h"
 #include "proc.h"
 
@@ -112,6 +113,69 @@ filestat(struct file *f, uint64 addr)
       return -1;
     return 0;
   }
+  return -1;
+}
+
+/**
+ * 按 SEEK_SET、SEEK_CUR 或 SEEK_END 更新普通文件的共享 64 位偏移。
+ *
+ * @param f 已打开的 file 对象；仅 T_FILE-backed FD_INODE 支持定位。
+ * @param offset 相对 whence 基准的有符号字节偏移。
+ * @param whence kernel/fcntl.h 定义的 SEEK_SET、SEEK_CUR 或 SEEK_END。
+ * @return 成功返回新的非负偏移；对象不支持定位、结果为负或超过
+ *         MAXFILE_BYTES 时返回 -1。
+ *
+ * inode 锁同时保护 inode size 和当前 file offset 的读改写，使 dup()/fork()
+ * 共享 file 对象时，lseek 与普通 read/write 保持相同的串行化边界。定位本身
+ * 不修改 inode size，也不分配数据块。
+ */
+int64
+fileseek(struct file *f, int64 offset, int whence)
+{
+  uint64 base;
+  uint64 next;
+
+  if(f->type != FD_INODE)
+    return -1;
+
+  ilock(f->ip);
+  if(f->ip->type != T_FILE)
+    goto invalid;
+
+  switch(whence){
+  case SEEK_SET:
+    base = 0;
+    break;
+  case SEEK_CUR:
+    base = f->off;
+    break;
+  case SEEK_END:
+    base = f->ip->size;
+    break;
+  default:
+    goto invalid;
+  }
+
+  if(base > MAXFILE_BYTES)
+    goto invalid;
+  if(offset < 0){
+    // 先偏移一再取反，避免对 INT64_MIN 直接求负产生有符号溢出。
+    uint64 magnitude = (uint64)(-(offset + 1)) + 1;
+    if(magnitude > base)
+      goto invalid;
+    next = base - magnitude;
+  } else {
+    if((uint64)offset > MAXFILE_BYTES - base)
+      goto invalid;
+    next = base + (uint64)offset;
+  }
+
+  f->off = next;
+  iunlock(f->ip);
+  return next;
+
+ invalid:
+  iunlock(f->ip);
   return -1;
 }
 

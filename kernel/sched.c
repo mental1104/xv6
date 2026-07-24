@@ -598,6 +598,11 @@ scheduler(void)
     w_satp(MAKE_SATP(p->kpagetable));
     sfence_vma();
     swtch(&c->context, &p->context);
+
+    // swtch() 返回时仍持有 p->lock。先切回全局内核页表，再允许另一 CPU
+    // 在 wait()/freeproc() 中取得该锁并释放 p->kpagetable。
+    kvminithart();
+
     int stop_reason = p->sched.pending_stop_reason;
     if(p->killed)
       stop_reason = SCHEDTRACE_REASON_KILLED;

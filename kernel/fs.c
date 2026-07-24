@@ -525,16 +525,18 @@ stati(struct inode *ip, struct stat *st)
   st->size = ip->size;
 }
 
+// 缺失数据块代表稀疏文件 hole；该只读零块可被并发 readi() 安全共享。
+static char sparse_zero_block[BSIZE];
+
 /**
- * Read bytes from a locked inode without allocating missing blocks.
+ * 从锁定 inode 读取字节；缺失映射作为稀疏 hole 返回零且不分配块。
  *
  * @param ip Locked inode.
  * @param user_dst Whether dst is a user virtual address.
  * @param dst Destination address.
  * @param off 64-bit file offset.
  * @param n Maximum bytes to read.
- * @return Bytes copied, zero at EOF, or -1 when the first required block is
- *         missing/copyout fails.
+ * @return Bytes copied, zero at EOF, or -1 when the first copyout fails.
  */
 int
 readi(struct inode *ip, int user_dst, uint64 dst, uint64 off, uint n)
@@ -547,16 +549,22 @@ readi(struct inode *ip, int user_dst, uint64 dst, uint64 off, uint n)
     n = ip->size - off;
 
   while(tot < n){
-    uint addr = bmap(ip, off / BSIZE, 0);
-    if(addr == 0)
-      break;
-    struct buf *bp = bread(ip->dev, addr);
     uint m = min(n - tot, BSIZE - off % BSIZE);
-    if(either_copyout(user_dst, dst, bp->data + off % BSIZE, m) == -1){
+    uint addr = bmap(ip, off / BSIZE, 0);
+
+    if(addr == 0){
+      // seek 越过 EOF 后写入只建立目标路径，中间未映射的数据块按零读取。
+      if(either_copyout(user_dst, dst, sparse_zero_block, m) == -1)
+        break;
+    } else {
+      struct buf *bp = bread(ip->dev, addr);
+      if(either_copyout(user_dst, dst, bp->data + off % BSIZE, m) == -1){
+        brelse(bp);
+        break;
+      }
       brelse(bp);
-      break;
     }
-    brelse(bp);
+
     tot += m;
     off += m;
     dst += m;
@@ -570,10 +578,11 @@ readi(struct inode *ip, int user_dst, uint64 dst, uint64 off, uint n)
 /**
  * Write bytes to a locked inode using a 64-bit file offset.
  *
- * The file remains dense and append-like: callers may overwrite existing data
- * or write exactly at ip->size, but may not create holes. Disk exhaustion
- * returns a short write (or -1 before the first byte) and persists every newly
- * linked index block so later truncation can reclaim it.
+ * Callers may overwrite existing data, append, or write beyond EOF. A sparse
+ * write allocates only the target data blocks and the indirect-index path needed
+ * to reach them; untouched logical blocks remain holes and read back as zero.
+ * Disk exhaustion returns a short write (or -1 before the first byte) and
+ * persists every newly linked index block so later truncation can reclaim it.
  *
  * @param ip Locked inode.
  * @param user_src Whether src is a user virtual address.
@@ -588,7 +597,7 @@ writei(struct inode *ip, int user_src, uint64 src, uint64 off, uint n)
   uint tot = 0;
   uint64 end = off + (uint64)n;
 
-  if(off > ip->size || end < off || end > MAXFILE_BYTES)
+  if(end < off || end > MAXFILE_BYTES)
     return -1;
 
   while(tot < n){
