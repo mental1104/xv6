@@ -20,11 +20,11 @@ RESULT_ROOT = REPO_ROOT / "test-results"
 ANSI_GREEN_BOLD = "\x1b[1;32m"
 ANSI_BLUE_BOLD = "\x1b[1;34m"
 ANSI_RESET = "\x1b[0m"
-# QEMU 回归从根目录登录 Shell 开始；精确匹配完整 ANSI 提示符，避免命令输出中的
+# PID 1 在首个 Shell 前切换到 /root；精确匹配完整 ANSI 提示符，避免命令输出中的
 # 普通 `# ` 或颜色复位序列被误判为下一次输入边界。
 QEMU_SHELL_PROMPT = (
     f"{ANSI_GREEN_BOLD}root@xv6{ANSI_RESET}:"
-    f"{ANSI_BLUE_BOLD}/{ANSI_RESET}# "
+    f"{ANSI_BLUE_BOLD}/root{ANSI_RESET}# "
 )
 QEMU_FATAL_OUTPUTS = (
     "panic:",
@@ -36,6 +36,9 @@ DEFAULT_REJECTED = QEMU_FATAL_OUTPUTS + (
 )
 # guest-first 测试只向宿主机暴露稳定结束协议，不再匹配各测试程序的业务输出。
 GUEST_SUCCESS = (r"^XV6TEST done status=0$",)
+GUEST_PROGRAM_PATHS = {
+    "xv6test": "/usr/bin/xv6test",
+}
 
 
 @dataclass(frozen=True)
@@ -284,6 +287,22 @@ def _normalize_output(output: str) -> str:
     return output.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _absolute_guest_command(command: str) -> str:
+    """把 guest 命令首程序名替换为固定绝对路径。
+
+    Args:
+        command: suite 中保存的可读命令文本。首 token 可以是已登记程序名，后续参数
+            与重定向文本保持原样。
+
+    Returns:
+        实际发送给 xv6 Shell 的命令。未知程序原样返回，不做 PATH 或目录遍历搜索。
+    """
+
+    program, separator, remainder = command.partition(" ")
+    absolute = GUEST_PROGRAM_PATHS.get(program, program)
+    return f"{absolute}{separator}{remainder}"
+
+
 def _assert_output(test: TestCase, output: str) -> None:
     """检查拒绝、必需和计数模式，不解释 guest 业务语义。"""
 
@@ -475,10 +494,11 @@ def _run_qemu_tests(suite: str, tests: Sequence[TestCase], cpus: int) -> None:
             started = time.perf_counter()
             chunks = [boot_output]
             for command in test.commands:
+                guest_command = _absolute_guest_command(command)
                 child.timeout = test.timeout
-                child.sendline(command)
+                child.sendline(guest_command)
                 result = _wait_for_qemu_command(child)
-                chunks.append(f"$ {command}\n{result.output}")
+                chunks.append(f"$ {guest_command}\n{result.output}")
                 if result.failure is not None:
                     output = "\n".join(chunks)
                     log_path = _write_log(suite, test.name, output)

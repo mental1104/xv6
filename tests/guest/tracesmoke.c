@@ -16,7 +16,7 @@ int
 main(void)
 {
   char buffer[16];
-  int fd = open("README", O_RDONLY);
+  int fd = open("/README", O_RDONLY);
 
   if(fd < 0){
     printf("tracesmoke: open README failed\n");

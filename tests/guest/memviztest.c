@@ -4,6 +4,7 @@
 #include "kernel/riscv.h"
 #include "kernel/memviz.h"
 #include "user/user.h"
+#include "user/paths.h"
 
 static struct memviz_snapshot before;
 static struct memviz_snapshot after_alloc;
@@ -168,8 +169,8 @@ test_user_render(void)
       exit(1);
     close(fds[1]);
 
-    char *argv[] = { "memviz", "user", "--plain", 0 };
-    exec("memviz", argv);
+    char *argv[] = { XV6_USR_BIN_PATH("memviz"), "user", "--plain", 0 };
+    exec(XV6_USR_BIN_PATH("memviz"), argv);
     exit(1);
   }
 
