@@ -16,8 +16,10 @@
 #include "fs.h"
 #include "buf.h"
 #include "file.h"
+#include "memlayout.h"
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
+#define NANOSECONDS_PER_SECOND 1000000000ULL
 
 typedef char dinode_must_remain_64_bytes[(sizeof(struct dinode) == 64) ? 1 : -1];
 
@@ -28,6 +30,75 @@ struct superblock sb;
 // the buffer cache sleeplock for each bitmap block.
 static struct spinlock balloc_lock;
 static uint balloc_cursor;
+
+// Goldfish RTC 通过先读低位再读高位形成一次快照；该锁防止不同 CPU 的两次
+// MMIO 读取互相覆盖锁存值。
+static struct spinlock mtime_lock;
+
+/**
+ * 从 QEMU Goldfish RTC 读取当前 Unix 秒数。
+ *
+ * @return 自 1970-01-01 00:00:00 UTC 起的秒数；受 32 位 inode 字段限制，
+ *         该教学实现会在 2106 年回绕。
+ */
+static uint
+filesystem_time(void)
+{
+  uint low;
+  uint high;
+
+  acquire(&mtime_lock);
+  low = *(volatile uint*)RTC_TIME_LOW;
+  high = *(volatile uint*)RTC_TIME_HIGH;
+  release(&mtime_lock);
+
+  return (((uint64)high << 32) | low) / NANOSECONDS_PER_SECOND;
+}
+
+/**
+ * 从保持 64 字节布局的磁盘 inode 中解码修改时间。
+ *
+ * @param dip 已从 inode block 读取的磁盘 inode。
+ * @return 32 位 Unix 秒数。
+ */
+static uint
+dinode_mtime(struct dinode *dip)
+{
+  if(dip->type == T_DEVICE)
+    return (uint)(dip->size >> 32);
+  return ((uint)(ushort)dip->major << 16) | (ushort)dip->minor;
+}
+
+/**
+ * 将修改时间写入按 inode 类型空闲的磁盘字段，不改变 dinode 大小。
+ *
+ * @param dip 待修改的磁盘 inode。
+ * @param type inode 类型；设备节点必须保留 major/minor。
+ * @param mtime 32 位 Unix 秒数。
+ */
+static void
+dinode_set_mtime(struct dinode *dip, short type, uint mtime)
+{
+  if(type == T_DEVICE){
+    dip->size = ((uint64)mtime << 32) | (uint)dip->size;
+    return;
+  }
+  dip->major = (short)(mtime >> 16);
+  dip->minor = (short)(mtime & 0xffff);
+}
+
+/**
+ * 更新锁定 inode 的修改时间，并避免宿主机时钟回拨造成时间倒退。
+ *
+ * @param ip 调用者已持有 sleeplock 的内存 inode。
+ */
+static void
+inode_touch(struct inode *ip)
+{
+  uint now = filesystem_time();
+  if(now >= ip->mtime)
+    ip->mtime = now;
+}
 
 /**
  * Read the file-system superblock from device dev.
@@ -56,6 +127,7 @@ fsinit(int dev)
     panic("invalid file system");
 
   initlock(&balloc_lock, "balloc");
+  initlock(&mtime_lock, "mtime");
   balloc_cursor = sb.size - sb.nblocks;
   initlog(dev, &sb);
 }
@@ -201,6 +273,7 @@ ialloc(uint dev, short type)
     if(dip->type == 0){
       memset(dip, 0, sizeof(*dip));
       dip->type = type;
+      dinode_set_mtime(dip, type, filesystem_time());
       log_write(bp);
       brelse(bp);
       return iget(dev, inum);
@@ -222,10 +295,13 @@ iupdate(struct inode *ip)
   struct dinode *dip = (struct dinode*)bp->data + ip->inum % IPB;
 
   dip->type = ip->type;
-  dip->major = ip->major;
-  dip->minor = ip->minor;
   dip->nlink = ip->nlink;
   dip->size = ip->size;
+  if(ip->type == T_DEVICE){
+    dip->major = ip->major;
+    dip->minor = ip->minor;
+  }
+  dinode_set_mtime(dip, ip->type, ip->mtime);
   memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
   log_write(bp);
   brelse(bp);
@@ -285,10 +361,17 @@ ilock(struct inode *ip)
     struct buf *bp = bread(ip->dev, IBLOCK(ip->inum, sb));
     struct dinode *dip = (struct dinode*)bp->data + ip->inum % IPB;
     ip->type = dip->type;
-    ip->major = dip->major;
-    ip->minor = dip->minor;
     ip->nlink = dip->nlink;
-    ip->size = dip->size;
+    ip->mtime = dinode_mtime(dip);
+    if(ip->type == T_DEVICE){
+      ip->major = dip->major;
+      ip->minor = dip->minor;
+      ip->size = (uint)dip->size;
+    } else {
+      ip->major = 0;
+      ip->minor = 0;
+      ip->size = dip->size;
+    }
     memmove(ip->addrs, dip->addrs, sizeof(ip->addrs));
     brelse(bp);
     ip->valid = 1;
@@ -356,7 +439,7 @@ static const uint64 indirect_capacity[NINDIRECT_LEVELS] = {
  * @param addr Root index-block address.
  * @param bn Block number relative to this tree.
  * @param depth Tree depth: 1, 2, or 3.
- * @param alloc Non-zero to allocate missing index/data blocks.
+ * @param alloc Non-zero to allocate missing nodes.
  * @return Data block address, or zero for a missing block/allocation failure.
  */
 static uint
@@ -511,6 +594,7 @@ itrunc(struct inode *ip)
   }
 
   ip->size = 0;
+  inode_touch(ip);
   iupdate(ip);
 }
 
@@ -522,6 +606,7 @@ stati(struct inode *ip, struct stat *st)
   st->ino = ip->inum;
   st->type = ip->type;
   st->nlink = ip->nlink;
+  st->mtime = ip->mtime;
   st->size = ip->size;
 }
 
@@ -622,6 +707,8 @@ writei(struct inode *ip, int user_src, uint64 src, uint64 off, uint n)
   if(n > 0){
     if(off > ip->size)
       ip->size = off;
+    if(tot > 0)
+      inode_touch(ip);
     // bmap() may have linked a new root before a deeper allocation failed.
     // Persisting addrs[] keeps that partial tree reachable and reclaimable.
     iupdate(ip);
