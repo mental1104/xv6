@@ -322,11 +322,18 @@ balloc(int used)
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
+/**
+ * 把宿主机文件内容追加到普通启动镜像 inode。
+ *
+ * 启动镜像输入保持较小，本路径只负责直接块和一级间接块；运行中的内核负责
+ * 二级、三级间接扩展。size 使用完整 64 位磁盘编码，避免依赖宿主机字节序。
+ */
 void
 iappend(uint inum, void *xp, int n)
 {
   char *p = (char*)xp;
-  uint fbn, off, n1;
+  uint64 fbn, off;
+  uint n1;
   struct dinode din;
   char buf[BSIZE];
   uint indirect[NINDIRECT];
@@ -337,7 +344,7 @@ iappend(uint inum, void *xp, int n)
   // printf("append inum %d at off %d sz %d\n", inum, off, n);
   while(n > 0){
     fbn = off / BSIZE;
-    assert(fbn < MAXFILE);
+    assert(fbn < (uint64)NDIRECT + NINDIRECT);
     if(fbn < NDIRECT){
       if(xint(din.addrs[fbn]) == 0){
         din.addrs[fbn] = xint(freeblock++);
@@ -345,10 +352,8 @@ iappend(uint inum, void *xp, int n)
       x = xint(din.addrs[fbn]);
     } else {
       if(xint(din.addrs[NDIRECT]) == 0){
-        // printf("allocate indirect block\n");
         din.addrs[NDIRECT] = xint(freeblock++);
       }
-      // printf("read indirect block\n");
       rsect(xint(din.addrs[NDIRECT]), (char*)indirect);
       if(indirect[fbn - NDIRECT] == 0){
         indirect[fbn - NDIRECT] = xint(freeblock++);
@@ -356,9 +361,9 @@ iappend(uint inum, void *xp, int n)
       }
       x = xint(indirect[fbn-NDIRECT]);
     }
-    n1 = min(n, (fbn + 1) * BSIZE - off);
+    n1 = min((uint)n, BSIZE - off % BSIZE);
     rsect(x, buf);
-    bcopy(p, buf + off - (fbn * BSIZE), n1);
+    bcopy(p, buf + off % BSIZE, n1);
     wsect(x, buf);
     n -= n1;
     off += n1;
