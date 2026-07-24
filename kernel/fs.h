@@ -33,12 +33,16 @@ struct superblock {
 
 // On-disk inode structure. Keep this structure exactly 64 bytes so that the
 // inode density and the surrounding disk layout stay stable.
+//
+// xv6 尚未实现权限和多用户字段。为不降低三级索引容量，mtime 复用按类型空闲的
+// 既有字段：非设备 inode 使用 major/minor 的两个 16 位槽；设备 inode 必须保留
+// major/minor，因此将 mtime 放入其逻辑上未使用的 size 高 32 位。
 struct dinode {
   short type;                        // File type
-  short major;                       // Major device number (T_DEVICE only)
-  short minor;                       // Minor device number (T_DEVICE only)
+  short major;                       // Device major, or non-device mtime high 16 bits
+  short minor;                       // Device minor, or non-device mtime low 16 bits
   short nlink;                       // Number of links to inode in file system
-  uint64 size;                       // Size of file (bytes)
+  uint64 size;                       // File size; device mtime occupies high 32 bits
   uint addrs[NDIRECT+NINDIRECT_LEVELS]; // Direct and 1/2/3-level index roots
 };
 

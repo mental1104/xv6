@@ -5,6 +5,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <assert.h>
+#include <time.h>
 
 #define stat xv6_stat  // avoid clash with host struct stat
 #include "kernel/types.h"
@@ -32,6 +33,7 @@ struct superblock sb;
 char zeroes[BSIZE];
 uint freeinode = 1;
 uint freeblock;
+uint image_mtime;
 
 
 void balloc(int);
@@ -41,6 +43,7 @@ void rinode(uint inum, struct dinode *ip);
 void rsect(uint sec, void *buf);
 uint ialloc(ushort type);
 void iappend(uint inum, void *p, int n);
+void set_dinode_mtime(struct dinode*, ushort, uint);
 
 // convert to intel byte order
 ushort
@@ -76,6 +79,31 @@ xlong(uint64 x)
   return y;
 }
 
+/**
+ * 将构建时修改时间写入保持 64 字节布局的磁盘 inode。
+ *
+ * @param din 待初始化的宿主机端磁盘 inode。
+ * @param type inode 类型。
+ * @param mtime 32 位 Unix 秒数。
+ */
+void
+set_dinode_mtime(struct dinode *din, ushort type, uint mtime)
+{
+  if(type == T_DEVICE){
+    din->size = xlong((uint64)mtime << 32);
+    return;
+  }
+  din->major = xshort(mtime >> 16);
+  din->minor = xshort(mtime & 0xffff);
+}
+
+/**
+ * 构造 xv6 文件系统镜像，并让镜像内初始 inode 共享本次构建时间。
+ *
+ * @param argc 命令行参数数量。
+ * @param argv 第一个参数为镜像路径，其余参数为写入根目录的宿主机文件。
+ * @return 构造成功返回 0；输入、时间或 I/O 失败时终止进程。
+ */
 int
 main(int argc, char *argv[])
 {
@@ -85,6 +113,7 @@ main(int argc, char *argv[])
   struct dirent de;
   char buf[BSIZE];
   struct dinode din;
+  time_t now;
 
 
   static_assert(sizeof(int) == 4, "Integers must be 4 bytes!");
@@ -95,6 +124,13 @@ main(int argc, char *argv[])
     fprintf(stderr, "Usage: mkfs fs.img files...\n");
     exit(1);
   }
+
+  now = time(0);
+  if(now == (time_t)-1){
+    fprintf(stderr, "mkfs: cannot read host time\n");
+    exit(1);
+  }
+  image_mtime = (uint)now;
 
   assert((BSIZE % sizeof(struct dinode)) == 0);
   assert((BSIZE % sizeof(struct dirent)) == 0);
@@ -247,6 +283,12 @@ rsect(uint sec, void *buf)
   }
 }
 
+/**
+ * 分配一个镜像 inode，并写入本次 mkfs 的统一修改时间。
+ *
+ * @param type 新 inode 类型。
+ * @return 新分配的 inode 编号。
+ */
 uint
 ialloc(ushort type)
 {
@@ -257,6 +299,7 @@ ialloc(ushort type)
   din.type = xshort(type);
   din.nlink = xshort(1);
   din.size = xlong(0);
+  set_dinode_mtime(&din, type, image_mtime);
   winode(inum, &din);
   return inum;
 }

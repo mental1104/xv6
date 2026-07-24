@@ -18,6 +18,9 @@ main()
     printf("\n");
     kinit();         // physical page allocator
     kvminit();       // create kernel page table
+    // Goldfish RTC 位于普通 RAM direct map 之外，必须在启用分页前显式映射。
+    // 每进程内核页表会复制全局低半区，因此后续文件系统路径也能读取该 MMIO。
+    kvmmap(RTC, RTC, PGSIZE, PTE_R | PTE_W);
     kvminithart();   // turn on paging
     procinit();      // process table
     trapinit();      // trap vectors
