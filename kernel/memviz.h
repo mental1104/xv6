@@ -39,6 +39,47 @@ enum memviz_pte_role {
   MEMVIZ_PTE_ROLE_PLIC = 15,
 };
 
+// trapframe 从页内低偏移到高偏移的稳定 ABI 槽位次序。
+enum memviz_trapframe_slot {
+  MEMVIZ_TF_KERNEL_SATP = 0,
+  MEMVIZ_TF_KERNEL_SP,
+  MEMVIZ_TF_KERNEL_TRAP,
+  MEMVIZ_TF_EPC,
+  MEMVIZ_TF_KERNEL_HARTID,
+  MEMVIZ_TF_RA,
+  MEMVIZ_TF_SP,
+  MEMVIZ_TF_GP,
+  MEMVIZ_TF_TP,
+  MEMVIZ_TF_T0,
+  MEMVIZ_TF_T1,
+  MEMVIZ_TF_T2,
+  MEMVIZ_TF_S0,
+  MEMVIZ_TF_S1,
+  MEMVIZ_TF_A0,
+  MEMVIZ_TF_A1,
+  MEMVIZ_TF_A2,
+  MEMVIZ_TF_A3,
+  MEMVIZ_TF_A4,
+  MEMVIZ_TF_A5,
+  MEMVIZ_TF_A6,
+  MEMVIZ_TF_A7,
+  MEMVIZ_TF_S2,
+  MEMVIZ_TF_S3,
+  MEMVIZ_TF_S4,
+  MEMVIZ_TF_S5,
+  MEMVIZ_TF_S6,
+  MEMVIZ_TF_S7,
+  MEMVIZ_TF_S8,
+  MEMVIZ_TF_S9,
+  MEMVIZ_TF_S10,
+  MEMVIZ_TF_S11,
+  MEMVIZ_TF_T3,
+  MEMVIZ_TF_T4,
+  MEMVIZ_TF_T5,
+  MEMVIZ_TF_T6,
+  MEMVIZ_TRAPFRAME_SLOT_COUNT,
+};
+
 // 一个字符单元覆盖连续物理页，并记录其中可立即分配的页数。
 struct memviz_cell {
   uint total_pages;
@@ -119,6 +160,19 @@ struct memviz_snapshot {
   uint64 stack_used;
   uint64 stack_free;
   uint64 dynamic_start;
+
+  // 用户页表顶端两个 supervisor-only 固定页及其页内逻辑布局。
+  uint64 maxva;
+  uint64 trapframe;
+  uint64 trapframe_pa;
+  uint64 trapframe_flags;
+  uint64 trapframe_used;
+  uint64 trampoline_pa;
+  uint64 trampoline_flags;
+  uint64 trampoline_used;
+  uint64 uservec_offset;
+  uint64 userret_offset;
+  uint64 trapframe_values[MEMVIZ_TRAPFRAME_SLOT_COUNT];
 
   uint64 kalloc_start;
   uint64 kalloc_end;
