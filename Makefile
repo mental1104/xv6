@@ -137,6 +137,9 @@ $U/_%: $T/%.o $(ULIB)
 	$(OBJDUMP) -S $@ > $T/$*.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/$*.sym
 
+# 仅 usertests 适配翻译单元允许在比较 exec 路径前过滤越界用户地址。
+$T/usertests_2g.o: CFLAGS += -DXV6_USERTESTS_EXEC_ADAPTER
+
 # 2 GiB 配置使用容量无关的 C 适配入口；它复用原 usertests.c 的测试全集，
 # 仅替换固定 OOM 假设和破坏式空闲页计数。
 $U/_usertests: $T/usertests_2g.o $(ULIB)
