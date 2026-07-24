@@ -69,6 +69,26 @@ xv6_usertests_open_absolute(const char *path, int mode)
 }
 
 #define open xv6_usertests_open_absolute
+
+/**
+ * xv6_usertests_mkdir_relative 消除 subdir 对启动目录为 `/` 的单点假设。
+ *
+ * @param path 传给 mkdir() 的路径。
+ * @return mkdir() 的原始返回值。
+ *
+ * subdir 先用相对路径创建 `dd`，随后却写死 `/dd/dd`。Shell 改从 `/root`
+ * 启动后，两者不再属于同一棵测试目录。只将该字面量改回 `dd/dd`，其余目录
+ * 创建保持原样，使临时测试数据继续留在当前测试目录而不是污染根目录。
+ */
+static inline int
+xv6_usertests_mkdir_relative(const char *path)
+{
+  if(strcmp(path, "/dd/dd") == 0)
+    return mkdir("dd/dd");
+  return mkdir(path);
+}
+
+#define mkdir xv6_usertests_mkdir_relative
 #endif
 
 #endif
