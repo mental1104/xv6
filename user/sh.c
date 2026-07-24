@@ -32,14 +32,13 @@ shell_print_environment(void)
 }
 
 /**
- * 代替原 Shell 对 exec() 的直接调用，并保留失败返回语义。
+ * 在命令子进程中执行内置 env 或通过 PATH 搜索外部程序。
  *
  * @param program 用户输入的命令名或显式路径。
- * @param argv 解析后的参数数组。
- * @return PATH 中全部候选执行失败时返回 -1；成功后不返回。
+ * @param argv 解析后的空指针结尾参数数组。
  *
- * `env` 是当前教学 Shell 的只读内置工具，运行在命令子进程中。其他命令统一通过
- * execvpe() 搜索，内核 execve() 本身从不解释 PATH。
+ * 成功执行外部程序后当前进程镜像被替换；内置命令或全部候选执行失败时直接退出，
+ * 因此本函数不会返回调用方。内核 execve() 本身从不解释 PATH。
  */
 static int
 shell_exec(char *program, char **argv)
@@ -52,7 +51,12 @@ shell_exec(char *program, char **argv)
     shell_print_environment();
     exit(0);
   }
-  return execvpe(program, argv, shell_environment);
+
+  execvpe(program, argv, shell_environment);
+  // execvpe() 只会在显式路径或 PATH 中全部候选均执行失败后返回。这里直接终止命令
+  // 子进程，避免 shcore.inc 再输出旧的 `exec ... failed` 诊断。
+  fprintf(2, "\"%s\" command not found\n", program);
+  exit(0);
 }
 
 // 保持原 Shell 实现及其静态状态位于同一个翻译单元，使启动层可以在进入主循环前

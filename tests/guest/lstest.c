@@ -281,6 +281,52 @@ test_environment_execution(void)
   check(status == 0, "execve accepted more than MAXENV entries");
 }
 
+/** 验证 whereis 的 PATH 搜索、多参数状态、显式路径和参数错误。 */
+static void
+test_whereis_command(void)
+{
+  char *path_environment[] = {"PATH=/bin:/usr/bin", 0};
+  char *no_path_environment[] = {"HOME=/root", 0};
+  char *multi_argv[] = {
+    XV6_BIN_PATH("whereis"), "ls", "xv6test", "missing-command", 0,
+  };
+  char *explicit_argv[] = {XV6_BIN_PATH("whereis"), XV6_BIN_PATH("ls"), 0};
+  char *no_path_argv[] = {XV6_BIN_PATH("whereis"), "ls", 0};
+  char *usage_argv[] = {XV6_BIN_PATH("whereis"), 0};
+
+  check(run_program_mode(XV6_BIN_PATH("whereis"), multi_argv,
+                         path_environment, EXEC_ENVIRONMENT,
+                         output, sizeof(output)) == 1,
+        "whereis multi-name status");
+  check(has_line(output, "ls: /bin/ls"),
+        "whereis did not locate /bin command");
+  check(has_line(output, "xv6test: /usr/bin/xv6test"),
+        "whereis did not locate /usr/bin command");
+  check(has_line(output, "missing-command:"),
+        "whereis missing-name output");
+
+  check(run_program_mode(XV6_BIN_PATH("whereis"), explicit_argv,
+                         path_environment, EXEC_ENVIRONMENT,
+                         output, sizeof(output)) == 0,
+        "whereis explicit path status");
+  check(has_line(output, "/bin/ls: /bin/ls"),
+        "whereis explicit path output");
+
+  check(run_program_mode(XV6_BIN_PATH("whereis"), no_path_argv,
+                         no_path_environment, EXEC_ENVIRONMENT,
+                         output, sizeof(output)) == 1,
+        "whereis missing PATH status");
+  check(strcmp(output, "ls:\n") == 0,
+        "whereis unexpectedly used a fallback PATH");
+
+  check(run_program_mode(XV6_BIN_PATH("whereis"), usage_argv,
+                         path_environment, EXEC_ENVIRONMENT,
+                         output, sizeof(output)) == 2,
+        "whereis usage status");
+  check(has_line(output, "Usage: whereis name..."),
+        "whereis usage output");
+}
+
 /** 创建 ls 选项测试使用的目录、隐藏文件、普通文件和符号链接。 */
 static void
 create_fixture(void)
@@ -449,6 +495,7 @@ main(void)
 {
   test_filesystem_layout();
   test_environment_execution();
+  test_whereis_command();
   create_fixture();
   test_ls_options();
   test_mtime();

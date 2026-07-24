@@ -17,7 +17,7 @@
 
 /** 登录 Shell `/root` 目录下的完整 ANSI 提示符，用作 QEMU 输入同步边界。 */
 static const char root_shell_prompt[] =
-  "\033[1;32mroot@xv6\033[0m:\033[1;34m/root\033[0m# ";
+  "\033[1;38;5;208mroot@xv6\033[0m:\033[1;34m/root\033[0m# ";
 
 struct smoke_options {
   const char *policy;
