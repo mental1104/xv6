@@ -71,6 +71,28 @@ xv6_usertests_open_absolute(const char *path, int mode)
 #define open xv6_usertests_open_absolute
 
 /**
+ * xv6_usertests_link_absolute 将被当作既有镜像源文件的路径固定到真实位置。
+ *
+ * @param old 既有源路径；动态和非法路径保持原样。
+ * @param new 新目录项路径，始终原样传递。
+ * @return link() 的原始返回值。
+ *
+ * linkunlink 使用 `cat` 作为稳定 inode，iref 使用 `README` 构造错误路径。
+ * 迁移后若继续使用相对源路径，测试可能静默少覆盖成功 link 分支。
+ */
+static inline int
+xv6_usertests_link_absolute(const char *old, const char *new)
+{
+  if(strcmp(old, "cat") == 0)
+    return link(XV6_BIN_PATH("cat"), new);
+  if(strcmp(old, "README") == 0)
+    return link("/README", new);
+  return link(old, new);
+}
+
+#define link xv6_usertests_link_absolute
+
+/**
  * xv6_usertests_mkdir_relative 消除 subdir 对启动目录为 `/` 的单点假设。
  *
  * @param path 传给 mkdir() 的路径。
