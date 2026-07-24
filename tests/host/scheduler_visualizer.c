@@ -18,6 +18,10 @@
 #define MAX_SEGMENTS 2048
 #define MAX_CPUS 64
 
+/** 登录 Shell 根目录下的完整 ANSI 提示符，用作 QEMU 输入同步边界。 */
+static const char root_shell_prompt[] =
+  "\033[1;32mroot@xv6\033[0m:\033[1;34m/\033[0m# ";
+
 struct options {
   const char *policy;
   const char *trace_path;
@@ -115,7 +119,7 @@ parse_options(int argc, char **argv, struct options *options)
  *
  * @param output 累积输出缓冲。
  * @param data 本次读取内容。
- * @param size 本次读取字节数。
+ * @param size 本次数据字节数。
  * @return 成功返回 0，内存分配失败返回 -1。
  */
 static int
@@ -487,7 +491,7 @@ run_session(const struct options *options)
         break;
       if(strstr(output.data, "panic:") || strstr(output.data, "kerneltrap"))
         break;
-      if(!command_sent && strstr(output.data, "$ ")){
+      if(!command_sent && strstr(output.data, root_shell_prompt)){
         if(write_all(input_fd, command, strlen(command)) < 0)
           break;
         command_sent = true;

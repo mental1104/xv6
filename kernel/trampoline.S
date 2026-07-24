@@ -5,7 +5,7 @@
         # (TRAMPOLINE) in user and kernel space so that
         # it continues to work when it switches page tables.
 	#
-	# kernel.ld causes this to be aligned
+        # kernel.ld causes this to be aligned
         # to a page boundary.
         #
 	.section trampsec
@@ -139,3 +139,7 @@ userret:
         # return to user mode and user pc.
         # usertrapret() set up sstatus and sepc.
         sret
+
+        # memviz 通过该标签计算 trampoline 页内真实代码占用，不手写指令长度。
+.globl trampoline_end
+trampoline_end:
