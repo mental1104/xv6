@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #define stat xv6_stat  // avoid clash with the host struct stat tag
@@ -29,6 +30,7 @@ struct superblock sb;
 char zeroes[BSIZE];
 uint freeinode = 1;
 uint freeblock;
+uint image_mtime;
 
 void balloc(int);
 void wsect(uint, void*);
@@ -38,6 +40,7 @@ void rsect(uint, void*);
 uint ialloc(ushort);
 void iappend(uint, void*, int);
 void die(const char*);
+void set_dinode_mtime(struct dinode*, ushort, uint);
 
 uint
 xint(uint x)
@@ -77,6 +80,24 @@ die(const char *message)
 {
   perror(message);
   exit(1);
+}
+
+/**
+ * 将构建时修改时间写入保持 64 字节布局的磁盘 inode。
+ *
+ * @param din 待初始化的宿主机端磁盘 inode。
+ * @param type inode 类型。
+ * @param mtime 32 位 Unix 秒数。
+ */
+void
+set_dinode_mtime(struct dinode *din, ushort type, uint mtime)
+{
+  if(type == T_DEVICE){
+    din->size = xlong((uint64)mtime << 32);
+    return;
+  }
+  din->major = xshort(mtime >> 16);
+  din->minor = xshort(mtime & 0xffff);
 }
 
 /** Write one complete file-system sector using an off_t-safe offset. */
@@ -122,6 +143,12 @@ rinode(uint inum, struct dinode *ip)
   *ip = *dip;
 }
 
+/**
+ * 分配一个大镜像 inode，并写入本次 mkfs 的统一修改时间。
+ *
+ * @param type 新 inode 类型。
+ * @return 新分配的 inode 编号。
+ */
 uint
 ialloc(ushort type)
 {
@@ -131,6 +158,7 @@ ialloc(ushort type)
   din.type = xshort(type);
   din.nlink = xshort(1);
   din.size = xlong(0);
+  set_dinode_mtime(&din, type, image_mtime);
   winode(inum, &din);
   return inum;
 }
@@ -211,6 +239,13 @@ balloc(int used)
   }
 }
 
+/**
+ * 构造大容量 xv6 文件系统镜像，并为初始 inode 写入统一构建时间。
+ *
+ * @param argc 命令行参数数量。
+ * @param argv 第一个参数为镜像路径，其余参数为写入根目录的宿主机文件。
+ * @return 成功返回 0；输入、时间或 I/O 失败时终止进程。
+ */
 int
 main(int argc, char *argv[])
 {
@@ -219,6 +254,7 @@ main(int argc, char *argv[])
   struct dirent de;
   char buf[BSIZE];
   struct dinode din;
+  time_t now;
 
   static_assert(sizeof(int) == 4, "integers must be 4 bytes");
   static_assert(sizeof(uint64) == 8, "uint64 must be 8 bytes");
@@ -229,6 +265,13 @@ main(int argc, char *argv[])
     fprintf(stderr, "Usage: mkfs-large fs.img files...\n");
     exit(1);
   }
+
+  now = time(0);
+  if(now == (time_t)-1){
+    fprintf(stderr, "mkfs-large: cannot read host time\n");
+    exit(1);
+  }
+  image_mtime = (uint)now;
 
   assert((BSIZE % sizeof(struct dirent)) == 0);
   nmeta = 2 + nlog + ninodeblocks + nbitmap;
