@@ -1,6 +1,9 @@
-*** Begin Patch
-*** Update File: user/sh.c
-@@
+--- a/user/sh.c
++++ b/user/sh.c
+@@ -213,12 +213,24 @@
+   shell_cwd_known = 1;
+ }
+ 
 -/** 输出带固定 root 身份和当前逻辑目录的 Bash 风格彩色提示符。 */
 +/**
 + * 通过一次 console write 输出完整提示符，避免后台作业逐字符穿插 ANSI 序列。
@@ -23,4 +26,5 @@
 +  appendtext(prompt, &length, sizeof(prompt), ANSI_RESET "# ");
 +  write(2, prompt, length);
  }
-*** End Patch
+ 
+ /** 将命令树压缩成 jobs 可显示的单行文本。 */
