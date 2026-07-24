@@ -35,7 +35,7 @@ fetch_user_vector(uint64 user_vector, char **vector, int maximum)
     return 0;
 
   for(i = 0; ; i++){
-    if(i >= maximum)
+    if(i > maximum)
       goto bad;
     if(fetchaddr(user_vector + sizeof(uint64) * i, &user_string) < 0)
       goto bad;
@@ -43,6 +43,9 @@ fetch_user_vector(uint64 user_vector, char **vector, int maximum)
       vector[i] = 0;
       return 0;
     }
+    // 下标 maximum 只为读取结尾空指针保留，不能再接受非空字符串。
+    if(i == maximum)
+      goto bad;
     vector[i] = kalloc();
     if(vector[i] == 0)
       goto bad;
@@ -229,7 +232,7 @@ execve(char *path, char **argv, char **envp)
   p->pagetable = pagetable;
   p->kpagetable = kpagetable;
   p->sz = sz;
-  p->trapframe->epc = elf.entry;  // initial program counter = main
+  p->trapframe->epc = elf.entry;  // initial program counter
   p->trapframe->sp = sp; // initial stack pointer
   w_satp(MAKE_SATP(p->kpagetable));
   sfence_vma();
@@ -306,6 +309,9 @@ loadseg(pagetable_t pagetable, uint64 va, struct inode *ip, uint offset, uint sz
 {
   uint i, n;
   uint64 pa;
+
+  if(va % PGSIZE != 0)
+    panic("loadseg: va must be page aligned");
 
   for(i = 0; i < sz; i += PGSIZE){
     pa = walkaddr(pagetable, va + i);
