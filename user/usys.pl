@@ -59,3 +59,4 @@ entry("setpgid");
 entry("getpgid");
 entry("procctl");
 entry("tcsetpgrp");
+entry("getprocs");

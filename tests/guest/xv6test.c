@@ -53,6 +53,7 @@ static char *core_schedtrace_argv[] = {XV6_TEST_PATH("schedtracetest"), 0};
 static char *core_history_argv[] = {XV6_TEST_PATH("historytest"), 0};
 static char *core_job_control_argv[] = {XV6_TEST_PATH("consolelinetest"), "jobctl", 0};
 static char *core_ls_options_argv[] = {XV6_TEST_PATH("lstest"), 0};
+static char *core_ps_argv[] = {XV6_TEST_PATH("pstest"), 0};
 static char *legacy_forktest_argv[] = {XV6_TEST_PATH("forktest"), 0};
 static char *legacy_stressfs_argv[] = {XV6_TEST_PATH("stressfs"), 0};
 static char *legacy_grind_argv[] = {XV6_TEST_PATH("grind"), 0};
@@ -109,6 +110,7 @@ static struct xv6_test_case tests[] = {
   {"core", "core-shell-history", core_history_argv},
   {"core", "core-job-control", core_job_control_argv},
   {"core", "core-ls-options", core_ls_options_argv},
+  {"core", "core-ps", core_ps_argv},
   {"legacy", "legacy-forktest", legacy_forktest_argv},
   {"legacy", "legacy-stressfs", legacy_stressfs_argv},
   {"legacy", "legacy-grind", legacy_grind_argv},

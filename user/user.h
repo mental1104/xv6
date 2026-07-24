@@ -4,6 +4,7 @@
 struct stat;
 struct rtcdate;
 struct sysinfo;
+struct procinfo;
 struct memviz_snapshot;
 struct memviz_va_query;
 struct sched_stats;
@@ -70,6 +71,15 @@ int sched_set_hint(int ticks);
 int sched_set_weight(int weight);
 int sched_get_stats(struct sched_stats *stats);
 int schedtrace(int op, struct schedtrace_snapshot *snapshot, int arg);
+
+/**
+ * 将当前进程表复制到用户提供的结构化快照数组。
+ *
+ * @param entries 接收最多 max_entries 个 struct procinfo；结构定义在 kernel/procinfo.h。
+ * @param max_entries 数组容量，必须大于 0；超过 NPROC 时由内核钳制。
+ * @return 成功返回复制的非 UNUSED 进程数量；参数或用户地址非法时返回 -1。
+ */
+int getprocs(struct procinfo *entries, int max_entries);
 
 /**
  * 将当前进程或直接子进程放入指定进程组。
