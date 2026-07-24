@@ -4,6 +4,7 @@
 // based on qemu's hw/riscv/virt.c:
 //
 // 00001000 -- boot ROM, provided by qemu
+// 00101000 -- Goldfish real-time clock
 // 02000000 -- CLINT
 // 0C000000 -- PLIC
 // 10000000 -- uart0 
@@ -11,11 +12,17 @@
 // 80000000 -- boot ROM jumps here in machine mode
 //             -kernel loads the kernel here
 // unused RAM after 80000000.
-
+//
 // the kernel uses physical memory thus:
 // 80000000 -- entry.S, then kernel text and data
 // end -- start of kernel page allocation area
 // PHYSTOP -- end RAM used by the kernel
+
+// qemu puts the Goldfish RTC registers here. Reading TIME_LOW first latches
+// TIME_HIGH so the two 32-bit loads describe one nanosecond timestamp.
+#define RTC 0x00101000L
+#define RTC_TIME_LOW  (RTC + 0x00)
+#define RTC_TIME_HIGH (RTC + 0x04)
 
 // qemu puts UART registers here in physical memory.
 #define UART0 0x10000000L
@@ -51,7 +58,7 @@
 // in both user and kernel space.
 #define TRAMPOLINE (MAXVA - PGSIZE)
 
-// map kernel stacks beneath the trampoline,
+// Map kernel stacks beneath the trampoline,
 // each surrounded by invalid guard pages.
 #define KSTACK(p) (TRAMPOLINE - ((p)+1)* 2*PGSIZE)
 
