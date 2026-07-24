@@ -30,6 +30,7 @@ void            console_apply_pending_control(void);
 
 // exec.c
 int             exec(char*, char**);
+int             execve(char*, char**, char**);
 
 // file.c
 struct file*    filealloc(void);

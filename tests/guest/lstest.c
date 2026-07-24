@@ -1,6 +1,7 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "kernel/fcntl.h"
+#include "kernel/param.h"
 #include "user/user.h"
 #include "user/paths.h"
 
@@ -8,6 +9,13 @@
 
 // 专项输出包含 ANSI 颜色和长格式字段；放在 BSS 避免占满 xv6 单页用户栈。
 static char output[OUTPUT_SIZE];
+
+/** 描述子进程使用的程序执行入口。 */
+enum execution_mode {
+  EXEC_LEGACY,
+  EXEC_ENVIRONMENT,
+  EXEC_PATH_SEARCH,
+};
 
 /**
  * 在断言失败时打印稳定诊断并终止测试。
@@ -119,14 +127,17 @@ has_mtime_field(char *text)
 /**
  * 在子进程中执行指定程序，并同时捕获 stdout 与 stderr。
  *
- * @param program 传给 exec() 的路径；正常 ls 验证必须使用 `/bin/ls`。
+ * @param program 程序路径或供 PATH 搜索的命令名。
  * @param argv 传给程序的空指针结尾参数数组。
+ * @param envp EXEC_ENVIRONMENT/EXEC_PATH_SEARCH 使用的环境数组。
+ * @param mode 选择旧 exec、直接 execve 或用户态 PATH 搜索。
  * @param buffer 输出缓冲区。
  * @param capacity buffer 容量，必须大于 1。
  * @return 程序退出状态；基础设施失败时直接终止测试。
  */
 static int
-run_program(char *program, char **argv, char *buffer, int capacity)
+run_program_mode(char *program, char **argv, char **envp,
+                 enum execution_mode mode, char *buffer, int capacity)
 {
   int pipefd[2];
   int pid;
@@ -144,7 +155,12 @@ run_program(char *program, char **argv, char *buffer, int capacity)
     close(2);
     check(dup(pipefd[1]) == 2, "redirect stderr failed");
     close(pipefd[1]);
-    exec(program, argv);
+    if(mode == EXEC_PATH_SEARCH)
+      execvpe(program, argv, envp);
+    else if(mode == EXEC_ENVIRONMENT)
+      execve(program, argv, envp);
+    else
+      exec(program, argv);
     exit(127);
   }
 
@@ -162,6 +178,13 @@ run_program(char *program, char **argv, char *buffer, int capacity)
   return status;
 }
 
+/** 使用旧 exec() 执行显式路径并捕获输出。 */
+static int
+run_program(char *program, char **argv, char *buffer, int capacity)
+{
+  return run_program_mode(program, argv, 0, EXEC_LEGACY, buffer, capacity);
+}
+
 /**
  * 要求路径存在且具有指定 inode 类型。
  *
@@ -177,9 +200,7 @@ require_path_type(char *path, short type)
   check(st.type == type, "layout path type mismatch");
 }
 
-/**
- * 验证启动目录、一级目录、程序分类和无 PATH 反例。
- */
+/** 验证启动目录、一级目录、程序分类和用户态 PATH 搜索。 */
 static void
 test_filesystem_layout(void)
 {
@@ -192,6 +213,7 @@ test_filesystem_layout(void)
   struct stat root_home;
   struct stat removed_root_program;
   char *bare_argv[] = {"ls", "--help", 0};
+  char *path_environment[] = {"PATH=/bin:/usr/bin", 0};
 
   check(stat(".", &current) == 0, "cannot stat current directory");
   check(stat(XV6_ROOT_HOME, &root_home) == 0, "cannot stat /root");
@@ -206,8 +228,57 @@ test_filesystem_layout(void)
   check(stat("/ls", &removed_root_program) < 0,
         "legacy root program entry still exists");
 
-  check(run_program("ls", bare_argv, output, sizeof(output)) == 127,
-        "bare ls unexpectedly executed without PATH");
+  check(run_program_mode("ls", bare_argv, path_environment,
+                         EXEC_PATH_SEARCH, output, sizeof(output)) == 0,
+        "bare ls did not resolve through PATH");
+  check(contains(output, "Usage: ls [-alh]"),
+        "PATH resolved ls produced unexpected output");
+}
+
+/**
+ * 验证 execve 的环境入口 ABI、旧 exec 空环境兼容和 MAXENV 错误路径。
+ */
+static void
+test_environment_execution(void)
+{
+  char *print_argv[] = {XV6_BIN_PATH("sh"), "--print-environment", 0};
+  char *custom_environment[] = {
+    "PATH=/bin:/usr/bin",
+    "TEST_VALUE=visible",
+    0,
+  };
+  char *oversized_environment[MAXENV + 2];
+  int pid;
+  int status;
+  int i;
+
+  check(run_program_mode(XV6_BIN_PATH("sh"), print_argv,
+                         custom_environment, EXEC_ENVIRONMENT,
+                         output, sizeof(output)) == 0,
+        "execve custom environment status");
+  check(has_line(output, "PATH=/bin:/usr/bin"),
+        "execve lost PATH environment entry");
+  check(has_line(output, "TEST_VALUE=visible"),
+        "execve lost custom environment entry");
+
+  check(run_program(XV6_BIN_PATH("sh"), print_argv,
+                    output, sizeof(output)) == 0,
+        "legacy exec environment status");
+  check(output[0] == 0, "legacy exec unexpectedly inherited environment");
+
+  for(i = 0; i < MAXENV + 1; i++)
+    oversized_environment[i] = "OVERFLOW=1";
+  oversized_environment[MAXENV + 1] = 0;
+
+  pid = fork();
+  check(pid >= 0, "fork MAXENV test failed");
+  if(pid == 0){
+    if(execve(XV6_BIN_PATH("sh"), print_argv, oversized_environment) < 0)
+      exit(0);
+    exit(2);
+  }
+  check(wait(&status) == pid, "wait MAXENV test failed");
+  check(status == 0, "execve accepted more than MAXENV entries");
 }
 
 /** 创建 ls 选项测试使用的目录、隐藏文件、普通文件和符号链接。 */
@@ -377,6 +448,7 @@ int
 main(void)
 {
   test_filesystem_layout();
+  test_environment_execution();
   create_fixture();
   test_ls_options();
   test_mtime();

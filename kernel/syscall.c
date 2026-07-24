@@ -102,6 +102,7 @@ extern uint64 sys_chdir(void);
 extern uint64 sys_close(void);
 extern uint64 sys_dup(void);
 extern uint64 sys_exec(void);
+extern uint64 sys_execve(void);
 extern uint64 sys_exit(void);
 extern uint64 sys_fork(void);
 extern uint64 sys_fstat(void);
@@ -186,6 +187,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_procctl]          sys_procctl,
 [SYS_tcsetpgrp]        sys_tcsetpgrp,
 [SYS_lseek]            sys_lseek,
+[SYS_execve]           sys_execve,
 };
 
 void

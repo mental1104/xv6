@@ -48,6 +48,7 @@ static const char *const syscall_names[] = {
 [SYS_procctl]          = "procctl",
 [SYS_tcsetpgrp]        = "tcsetpgrp",
 [SYS_lseek]            = "lseek",
+[SYS_execve]           = "execve",
 };
 
 // 名称表中可访问的元素数量（包含下标 0），用于限制遍历和查找范围。

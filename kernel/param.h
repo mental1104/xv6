@@ -6,6 +6,7 @@
 #define NDEV         10  // maximum major device number
 #define ROOTDEV       1  // device number of file system root disk
 #define MAXARG       32  // max exec arguments
+#define MAXENV       32  // max exec environment entries
 #define MAXOPBLOCKS 540  // 4 GiB unlink may dirty every bitmap block in one transaction
 #define LOGSIZE     600  // total on-disk log region; includes header blocks
 #define NBUF        (LOGSIZE + MAXOPBLOCKS) // pinned log blocks plus active I/O

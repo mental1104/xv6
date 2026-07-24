@@ -1,3 +1,6 @@
+#ifndef XV6_USER_USER_H
+#define XV6_USER_USER_H
+
 struct stat;
 struct rtcdate;
 struct sysinfo;
@@ -18,6 +21,17 @@ int read(int, void*, int);
 int close(int);
 int kill(int);
 int exec(char*, char**);
+
+/**
+ * 用指定程序替换当前用户镜像，并向入口传递参数与环境向量。
+ *
+ * @param path ELF 程序路径。
+ * @param argv 以空指针结尾的参数数组，最多 MAXARG 项。
+ * @param envp 以空指针结尾的 NAME=VALUE 环境数组，最多 MAXENV 项；0 表示空环境。
+ * @return 仅失败时返回 -1；成功后从新程序的 main(argc, argv, envp) 开始执行。
+ */
+int execve(char*, char**, char**);
+
 int open(const char*, int);
 int mknod(const char*, short, short);
 int unlink(const char*);
@@ -119,3 +133,24 @@ void free(void*);
 int atoi(const char*);
 int memcmp(const void *, const void *, uint);
 void *memcpy(void *, const void *, uint);
+
+/**
+ * 在显式环境向量中查找变量。
+ *
+ * @param envp 以空指针结尾的 NAME=VALUE 数组；0 等价于空环境。
+ * @param name 不含等号的变量名。
+ * @return 找到时返回 VALUE 起始地址，否则返回 0；返回指针由 envp 持有。
+ */
+char *envget(char **envp, const char *name);
+
+/**
+ * 使用 envp 中的 PATH 搜索并执行程序。
+ *
+ * @param program 命令名或显式路径；包含斜杠时不搜索 PATH。
+ * @param argv 传给新程序的参数数组。
+ * @param envp 同时用于 PATH 查询和新程序环境继承。
+ * @return 仅全部候选执行失败时返回 -1；成功后不会返回。
+ */
+int execvpe(char *program, char **argv, char **envp);
+
+#endif
