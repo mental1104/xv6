@@ -25,6 +25,7 @@ struct inode {
   short major;
   short minor;
   short nlink;
+  uint mtime;         // Unix seconds of the last visible content change
   uint64 size;
   uint addrs[NDIRECT+NINDIRECT_LEVELS];
 };
