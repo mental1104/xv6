@@ -13,6 +13,15 @@
 // --login 只由 init 传入，使首个交互 shell 在 prompt 前打印一次自身内存视图。
 char *argv[] = { XV6_BIN_PATH("sh"), "--login", 0 };
 
+// 初始环境由 PID 1 显式拥有；PATH 搜索仍由 Shell 用户态代码解释。
+char *envp[] = {
+  "PATH=/bin:/usr/bin",
+  "HOME=/root",
+  "USER=root",
+  "SHELL=/bin/sh",
+  0,
+};
+
 /** 描述一个从历史根目录位置迁移到稳定绝对路径的初始镜像文件。 */
 struct image_file {
   char *source;
@@ -221,7 +230,7 @@ main(void)
       exit(1);
     }
     if(pid == 0){
-      exec(XV6_BIN_PATH("sh"), argv);
+      execve(XV6_BIN_PATH("sh"), argv, envp);
       printf("init: exec sh failed\n");
       exit(1);
     }
