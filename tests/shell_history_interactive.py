@@ -217,9 +217,10 @@ def run_prompt_checks(child: pexpect.spawn) -> None:
 
     submit(child, "mkdir promptdir")
     submit(child, "cd promptdir", expected_prompt=shell_prompt("/promptdir"))
+    # xv6 Shell 不实现 PATH 搜索；离开根目录后必须显式引用根目录中的用户程序。
     submit(
         child,
-        "mkdir nested",
+        "/mkdir nested",
         expected_prompt=shell_prompt("/promptdir"),
     )
     submit(
