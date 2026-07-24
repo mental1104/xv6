@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - concept/125-whereis-command
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
