@@ -17,7 +17,15 @@ import pexpect
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESULT_ROOT = REPO_ROOT / "test-results"
-QEMU_SHELL_PROMPT = "$ "
+ANSI_GREEN_BOLD = "\x1b[1;32m"
+ANSI_BLUE_BOLD = "\x1b[1;34m"
+ANSI_RESET = "\x1b[0m"
+# QEMU 回归从根目录登录 Shell 开始；精确匹配完整 ANSI 提示符，避免命令输出中的
+# 普通 `# ` 或颜色复位序列被误判为下一次输入边界。
+QEMU_SHELL_PROMPT = (
+    f"{ANSI_GREEN_BOLD}root@xv6{ANSI_RESET}:"
+    f"{ANSI_BLUE_BOLD}/{ANSI_RESET}# "
+)
 QEMU_FATAL_OUTPUTS = (
     "panic:",
     "kerneltrap",
