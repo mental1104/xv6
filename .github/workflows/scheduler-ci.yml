@@ -7,35 +7,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: scheduler-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  apply-prompt-fix:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout PR head
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-          fetch-depth: 0
-
-      - name: Apply staged prompt patch
-        run: |
-          if [[ ! -f user/sh_prompt_atomic.patch ]]; then
-            exit 0
-          fi
-          git apply user/sh_prompt_atomic.patch
-          rm user/sh_prompt_atomic.patch
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add user/sh.c user/sh_prompt_atomic.patch
-          git commit -m 'fix: 原子输出完整 Shell 提示符'
-          git push origin HEAD:${GITHUB_HEAD_REF}
-
   scheduler:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -130,6 +108,8 @@ jobs:
           make clean
           make -j2 SCHED_POLICY=rr
 
+      # 将交互式 Shell 与通用 suite 分成独立步骤，使提示符、行编辑或作业控制失败
+      # 能直接定位，同时仍复用同一份已构建的 kernel 与 fs.img。
       - name: Run shell interaction regression
         run: python3 tests/shell_history_interactive.py --cpus 3
 
@@ -141,6 +121,8 @@ jobs:
 
       - name: Run reparent cleanup single-core
         run: |
+          # CPUS 同时参与编译期 schedtrace 元数据和 QEMU -smp，切换到单核前必须
+          # 重新构建，避免使用按三核配置生成的旧目标文件掩盖回收时序问题。
           make clean
           make -j2 CPUS=1 SCHED_POLICY=rr
           python3 tests/run_usertests.py \
@@ -153,7 +135,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: scheduler-regression-${{ github.run_id }}
-          path: |
-            test-results/
-            user/sh.c
+          path: test-results/
           if-no-files-found: ignore
