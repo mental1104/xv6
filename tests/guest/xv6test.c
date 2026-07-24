@@ -1,12 +1,14 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "user/user.h"
+#include "user/paths.h"
 
 /**
  * 描述一个由 xv6 用户态执行的回归测试。
  *
  * group 用于按 Lab 或能力筛选；name 是稳定且全局唯一的测试名称；argv
- * 是传给 exec() 的空指针结尾参数数组。测试语义由 tests/guest 下的目标
+ * 是传给 exec() 的空指针结尾参数数组。argv[0] 必须是镜像内绝对路径，避免
+ * 测试结果依赖 Shell 当前目录或不存在的 PATH。测试语义由 tests/guest 下的目标
  * 程序拥有，本入口只负责注册、进程隔离、退出状态传播和统一结果协议。
  */
 struct xv6_test_case {
@@ -15,46 +17,46 @@ struct xv6_test_case {
   char **argv;
 };
 
-static char *lab1_sleep_argv[] = {"lab1test", "sleep", 0};
-static char *lab1_pingpong_argv[] = {"lab1test", "pingpong", 0};
-static char *lab1_primes_argv[] = {"lab1test", "primes", 0};
-static char *lab1_find_argv[] = {"lab1test", "find", 0};
-static char *lab1_xargs_argv[] = {"lab1test", "xargs", 0};
-static char *lab2_tracemask_argv[] = {"tracemasktest", 0};
-static char *lab2_sysinfo_argv[] = {"sysinfotest", 0};
-static char *lab2_trace_smoke_argv[] = {"tracesmoke", 0};
-static char *lab3_copyin_argv[] = {"usertests", "copyin", 0};
-static char *lab3_copyout_argv[] = {"usertests", "copyout", 0};
-static char *lab3_copyinstr_argv[] = {"usertests", "copyinstr1", 0};
-static char *lab3_sbrkmuch_argv[] = {"usertests", "sbrkmuch", 0};
-static char *lab3_memviz_argv[] = {"memviztest", 0};
-static char *lab3_vaaccess_argv[] = {"vaaccesstest", 0};
-static char *lab3_address_window_argv[] = {"addresswindowtest", 0};
-static char *lab4_backtrace_argv[] = {"bttest", 0};
-static char *lab4_alarm_argv[] = {"alarmtest", 0};
-static char *lab5_lazytests_argv[] = {"lazytests", 0};
-static char *lab6_cowtest_argv[] = {"cowtest", 0};
-static char *lab7_uthread_argv[] = {"uthreadtest", 0};
-static char *lab8_kalloc_argv[] = {"usertests", "sbrkmuch", 0};
-static char *lab8_createdelete_argv[] = {"usertests", "createdelete", 0};
-static char *lab8_fourfiles_argv[] = {"usertests", "fourfiles", 0};
-static char *lab8_bigwrite_argv[] = {"usertests", "bigwrite", 0};
-static char *lab9_bigfile_argv[] = {"bigfile", 0};
-static char *lab9_symlink_argv[] = {"symlinktest", 0};
-static char *largefs_4gib_argv[] = {"largefile", 0};
-static char *lab10_mmap_argv[] = {"mmaptest", 0};
-static char *core_sbrkbugs_argv[] = {"usertests", "sbrkbugs", 0};
-static char *core_forkforkfork_argv[] = {"usertests", "forkforkfork", 0};
-static char *core_linkunlink_argv[] = {"usertests", "linkunlink", 0};
-static char *core_openiput_argv[] = {"usertests", "openiput", 0};
-static char *core_schedtrace_argv[] = {"schedtracetest", 0};
-static char *core_history_argv[] = {"historytest", 0};
-static char *core_job_control_argv[] = {"consolelinetest", "jobctl", 0};
-static char *core_ls_options_argv[] = {"lstest", 0};
-static char *legacy_forktest_argv[] = {"forktest", 0};
-static char *legacy_stressfs_argv[] = {"stressfs", 0};
-static char *legacy_grind_argv[] = {"grind", 0};
-static char *full_usertests_argv[] = {"usertests", 0};
+static char *lab1_sleep_argv[] = {XV6_TEST_PATH("lab1test"), "sleep", 0};
+static char *lab1_pingpong_argv[] = {XV6_TEST_PATH("lab1test"), "pingpong", 0};
+static char *lab1_primes_argv[] = {XV6_TEST_PATH("lab1test"), "primes", 0};
+static char *lab1_find_argv[] = {XV6_TEST_PATH("lab1test"), "find", 0};
+static char *lab1_xargs_argv[] = {XV6_TEST_PATH("lab1test"), "xargs", 0};
+static char *lab2_tracemask_argv[] = {XV6_TEST_PATH("tracemasktest"), 0};
+static char *lab2_sysinfo_argv[] = {XV6_TEST_PATH("sysinfotest"), 0};
+static char *lab2_trace_smoke_argv[] = {XV6_TEST_PATH("tracesmoke"), 0};
+static char *lab3_copyin_argv[] = {XV6_TEST_PATH("usertests"), "copyin", 0};
+static char *lab3_copyout_argv[] = {XV6_TEST_PATH("usertests"), "copyout", 0};
+static char *lab3_copyinstr_argv[] = {XV6_TEST_PATH("usertests"), "copyinstr1", 0};
+static char *lab3_sbrkmuch_argv[] = {XV6_TEST_PATH("usertests"), "sbrkmuch", 0};
+static char *lab3_memviz_argv[] = {XV6_TEST_PATH("memviztest"), 0};
+static char *lab3_vaaccess_argv[] = {XV6_TEST_PATH("vaaccesstest"), 0};
+static char *lab3_address_window_argv[] = {XV6_TEST_PATH("addresswindowtest"), 0};
+static char *lab4_backtrace_argv[] = {XV6_TEST_PATH("bttest"), 0};
+static char *lab4_alarm_argv[] = {XV6_TEST_PATH("alarmtest"), 0};
+static char *lab5_lazytests_argv[] = {XV6_TEST_PATH("lazytests"), 0};
+static char *lab6_cowtest_argv[] = {XV6_TEST_PATH("cowtest"), 0};
+static char *lab7_uthread_argv[] = {XV6_TEST_PATH("uthreadtest"), 0};
+static char *lab8_kalloc_argv[] = {XV6_TEST_PATH("usertests"), "sbrkmuch", 0};
+static char *lab8_createdelete_argv[] = {XV6_TEST_PATH("usertests"), "createdelete", 0};
+static char *lab8_fourfiles_argv[] = {XV6_TEST_PATH("usertests"), "fourfiles", 0};
+static char *lab8_bigwrite_argv[] = {XV6_TEST_PATH("usertests"), "bigwrite", 0};
+static char *lab9_bigfile_argv[] = {XV6_TEST_PATH("bigfile"), 0};
+static char *lab9_symlink_argv[] = {XV6_TEST_PATH("symlinktest"), 0};
+static char *largefs_4gib_argv[] = {XV6_TEST_PATH("largefile"), 0};
+static char *lab10_mmap_argv[] = {XV6_TEST_PATH("mmaptest"), 0};
+static char *core_sbrkbugs_argv[] = {XV6_TEST_PATH("usertests"), "sbrkbugs", 0};
+static char *core_forkforkfork_argv[] = {XV6_TEST_PATH("usertests"), "forkforkfork", 0};
+static char *core_linkunlink_argv[] = {XV6_TEST_PATH("usertests"), "linkunlink", 0};
+static char *core_openiput_argv[] = {XV6_TEST_PATH("usertests"), "openiput", 0};
+static char *core_schedtrace_argv[] = {XV6_TEST_PATH("schedtracetest"), 0};
+static char *core_history_argv[] = {XV6_TEST_PATH("historytest"), 0};
+static char *core_job_control_argv[] = {XV6_TEST_PATH("consolelinetest"), "jobctl", 0};
+static char *core_ls_options_argv[] = {XV6_TEST_PATH("lstest"), 0};
+static char *legacy_forktest_argv[] = {XV6_TEST_PATH("forktest"), 0};
+static char *legacy_stressfs_argv[] = {XV6_TEST_PATH("stressfs"), 0};
+static char *legacy_grind_argv[] = {XV6_TEST_PATH("grind"), 0};
+static char *full_usertests_argv[] = {XV6_TEST_PATH("usertests"), 0};
 
 // usertests 对未知名称会执行零项后成功退出，因此动态入口必须先做白名单校验。
 static char *usertest_names[] = {
@@ -221,7 +223,7 @@ known_usertest(char *name)
 static int
 run_usertest(char *name)
 {
-  char *argv[] = {"usertests", name, 0};
+  char *argv[] = {XV6_TEST_PATH("usertests"), name, 0};
   struct xv6_test_case test = {"regression", name, argv};
   int passed;
   int status;
