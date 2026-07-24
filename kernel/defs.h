@@ -65,7 +65,7 @@ void            itrunc(struct inode*);
 // ramdisk.c
 void            ramdiskinit(void);
 void            ramdiskintr(void);
-void            ramdiskrw(struct buf*, int);
+void            ramdiskrw(struct buf*);
 
 // kalloc.c
 void*           kalloc(void);
@@ -83,8 +83,8 @@ void            end_op(void);
 // pipe.c
 int             pipealloc(struct file**, struct file**);
 void            pipeclose(struct pipe*, int);
-int             piperead(struct pipe*, uint64, int n);
-int             pipewrite(struct pipe*, uint64, int n);
+int             piperead(struct pipe*, uint64, int);
+int             pipewrite(struct pipe*, uint64, int);
 
 // printf.c
 void            printf(char*, ...);
