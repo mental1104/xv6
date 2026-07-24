@@ -4,6 +4,7 @@
 #include "riscv.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "vma.h"
 #include "memviz.h"
 #include "defs.h"
 
@@ -138,6 +139,259 @@ fill_user_top_snapshot(struct proc *p, struct memviz_snapshot *snapshot)
 }
 
 /**
+ * dynamic_cell_bounds 返回一个压缩单元覆盖的页下标半开区间。
+ *
+ * @param snapshot 已初始化动态页总数和单元数量的快照。
+ * @param cell 单元下标，范围为 [0, dynamic_state_cell_count)。
+ * @param first 接收首个页下标。
+ * @param end 接收末尾后一页下标。
+ */
+static void
+dynamic_cell_bounds(struct memviz_snapshot *snapshot, int cell,
+                    uint64 *first, uint64 *end)
+{
+  uint64 cells = snapshot->dynamic_state_cell_count;
+  uint64 pages = snapshot->dynamic_page_count;
+  *first = (uint64)cell * pages / cells;
+  *end = (uint64)(cell + 1) * pages / cells;
+}
+
+/**
+ * interval_overlap_pages 计算两个页下标半开区间的交集页数。
+ *
+ * @param first_a 第一个区间起点。
+ * @param end_a 第一个区间终点。
+ * @param first_b 第二个区间起点。
+ * @param end_b 第二个区间终点。
+ * @return 两区间重叠的页数。
+ */
+static uint64
+interval_overlap_pages(uint64 first_a, uint64 end_a,
+                       uint64 first_b, uint64 end_b)
+{
+  uint64 first = first_a > first_b ? first_a : first_b;
+  uint64 end = end_a < end_b ? end_a : end_b;
+  return end > first ? end - first : 0;
+}
+
+/**
+ * initialize_dynamic_cells 建立动态范围的固定宽度压缩桶，初始均视为 lazy。
+ *
+ * @param snapshot 已包含 dynamic_start 和 process_size 的快照。
+ *
+ * 当动态范围不超过 32 页时，每个单元恰好覆盖一页；更大范围按连续地址
+ * 等比例压缩。初始 lazy 只是“尚未观察到 VMA 或有效叶子”的默认状态，
+ * 后续步骤会按 VMA 和 PTE 事实覆盖它。
+ */
+static void
+initialize_dynamic_cells(struct memviz_snapshot *snapshot)
+{
+  if(snapshot->process_size <= snapshot->dynamic_start)
+    return;
+
+  uint64 end = PGROUNDUP(snapshot->process_size);
+  snapshot->dynamic_page_count =
+    (end - snapshot->dynamic_start) / PGSIZE;
+  snapshot->dynamic_state_cell_count = snapshot->dynamic_page_count;
+  if(snapshot->dynamic_state_cell_count > MEMVIZ_USER_STATE_CELLS)
+    snapshot->dynamic_state_cell_count = MEMVIZ_USER_STATE_CELLS;
+
+  for(int cell = 0; cell < (int)snapshot->dynamic_state_cell_count; cell++){
+    uint64 first;
+    uint64 cell_end;
+    dynamic_cell_bounds(snapshot, cell, &first, &cell_end);
+    struct memviz_user_state_cell *state = &snapshot->dynamic_state[cell];
+    state->total_pages = cell_end - first;
+    state->lazy_pages = state->total_pages;
+  }
+}
+
+/**
+ * overlay_vma_ranges 将活动 VMA 覆盖的逻辑页从 lazy 改记为 mmap。
+ *
+ * @param p 当前进程；函数只读 p->vma[] 和 VMA 边界。
+ * @param snapshot 已初始化动态压缩单元的快照。
+ *
+ * 这里只根据 VMA 元数据标记整段逻辑区域，不读取文件、不建立 PTE。后续扫描
+ * 有效叶子时，带 PTE_COW 的 mmap 页会再次提升为 COW，保持最终优先级。
+ */
+static void
+overlay_vma_ranges(struct proc *p, struct memviz_snapshot *snapshot)
+{
+  if(snapshot->dynamic_page_count == 0)
+    return;
+
+  uint64 range_start = snapshot->dynamic_start;
+  uint64 range_end = PGROUNDUP(snapshot->process_size);
+
+  for(int index = 0; index < NOFILE; index++){
+    struct VMA *v = p->vma[index];
+    if(v == 0 || !v->used || v->length == 0)
+      continue;
+
+    uint64 vma_end_raw = v->addr + v->length;
+    if(vma_end_raw < v->addr)
+      continue;
+    uint64 vma_start = PGROUNDDOWN(v->addr);
+    uint64 vma_end = PGROUNDUP(vma_end_raw);
+    if(vma_start < range_start)
+      vma_start = range_start;
+    if(vma_end > range_end)
+      vma_end = range_end;
+    if(vma_end <= vma_start)
+      continue;
+
+    uint64 first_page = (vma_start - range_start) / PGSIZE;
+    uint64 end_page = (vma_end - range_start) / PGSIZE;
+    for(int cell = 0; cell < (int)snapshot->dynamic_state_cell_count; cell++){
+      uint64 cell_first;
+      uint64 cell_end;
+      dynamic_cell_bounds(snapshot, cell, &cell_first, &cell_end);
+      uint64 overlap = interval_overlap_pages(first_page, end_page,
+                                              cell_first, cell_end);
+      if(overlap == 0)
+        continue;
+
+      struct memviz_user_state_cell *state = &snapshot->dynamic_state[cell];
+      if(overlap > state->lazy_pages)
+        overlap = state->lazy_pages;
+      state->lazy_pages -= overlap;
+      state->mmap_pages += overlap;
+    }
+  }
+}
+
+/**
+ * classify_dynamic_leaf 将一个有效 L0 用户叶子覆盖到对应动态压缩单元。
+ *
+ * @param p 当前进程，用于判断该 VA 是否仍属于活动 VMA。
+ * @param snapshot 已完成默认 lazy 和 VMA 覆盖的快照。
+ * @param va 页对齐用户虚拟地址。
+ * @param pte 该地址的有效叶子 PTE。
+ *
+ * 最终优先级为 COW > mmap > resident > lazy。普通 mmap 驻留页仍显示为
+ * mmap，以表达区域来源；只有其 PTE 被 fork 转换为 COW 时才提升为 COW。
+ */
+static void
+classify_dynamic_leaf(struct proc *p, struct memviz_snapshot *snapshot,
+                      uint64 va, pte_t pte)
+{
+  if(va < snapshot->dynamic_start || va >= PGROUNDUP(snapshot->process_size))
+    return;
+  if((pte & PTE_V) == 0 || (pte & PTE_U) == 0)
+    return;
+
+  uint64 page = (va - snapshot->dynamic_start) / PGSIZE;
+  uint64 cell = page * snapshot->dynamic_state_cell_count /
+                snapshot->dynamic_page_count;
+  if(cell >= snapshot->dynamic_state_cell_count)
+    return;
+
+  struct memviz_user_state_cell *state = &snapshot->dynamic_state[cell];
+  int is_mmap = vma_find(p, va) != 0;
+  if(pte & PTE_COW){
+    if(is_mmap){
+      if(state->mmap_pages > 0)
+        state->mmap_pages--;
+    } else if(state->lazy_pages > 0){
+      state->lazy_pages--;
+    }
+    state->cow_pages++;
+    return;
+  }
+
+  if(is_mmap)
+    return;
+  if(state->lazy_pages > 0)
+    state->lazy_pages--;
+  state->resident_pages++;
+}
+
+/**
+ * scan_dynamic_leaves 只遍历与动态范围相交的有效页表子树。
+ *
+ * @param p 当前进程。
+ * @param snapshot 动态页状态快照。
+ * @param pagetable 当前页表页。
+ * @param level 当前 Sv39 层级，根为 2、叶为 0。
+ * @param base 当前页表页下标 0 对应的虚拟地址。
+ *
+ * xv6 用户映射由 mappages() 建立在 L0。本观察器遇到高层 leaf 时跳过，避免
+ * 为未来可能出现的大页映射逐页展开巨量范围；当前实现不会产生这种用户大页。
+ */
+static void
+scan_dynamic_leaves(struct proc *p, struct memviz_snapshot *snapshot,
+                    pagetable_t pagetable, int level, uint64 base)
+{
+  uint64 span = PGSIZE;
+  for(int current = 0; current < level; current++)
+    span *= 512;
+
+  uint64 range_start = snapshot->dynamic_start;
+  uint64 range_end = PGROUNDUP(snapshot->process_size);
+  for(int index = 0; index < 512; index++){
+    uint64 va = base + (uint64)index * span;
+    if(va >= range_end)
+      break;
+    if(va + span <= range_start)
+      continue;
+
+    pte_t pte = pagetable[index];
+    if((pte & PTE_V) == 0)
+      continue;
+    if(pte & (PTE_R | PTE_W | PTE_X)){
+      if(level == 0)
+        classify_dynamic_leaf(p, snapshot, va, pte);
+      continue;
+    }
+    if(level > 0)
+      scan_dynamic_leaves(p, snapshot, (pagetable_t)PTE2PA(pte),
+                          level - 1, va);
+  }
+}
+
+/**
+ * finish_dynamic_totals 汇总压缩单元并验证每个单元仍覆盖相同页数。
+ *
+ * @param snapshot 已完成 VMA 与 PTE 覆盖的快照。
+ */
+static void
+finish_dynamic_totals(struct memviz_snapshot *snapshot)
+{
+  for(int cell = 0; cell < (int)snapshot->dynamic_state_cell_count; cell++){
+    struct memviz_user_state_cell *state = &snapshot->dynamic_state[cell];
+    uint64 classified = state->resident_pages + state->cow_pages +
+                        state->lazy_pages + state->mmap_pages;
+    if(classified != state->total_pages)
+      panic("memviz user state");
+    snapshot->dynamic_resident_pages += state->resident_pages;
+    snapshot->dynamic_cow_pages += state->cow_pages;
+    snapshot->dynamic_lazy_pages += state->lazy_pages;
+    snapshot->dynamic_mmap_pages += state->mmap_pages;
+  }
+}
+
+/**
+ * fill_user_page_states 只读采集 dynamic_start 到 p->sz 的页级状态。
+ *
+ * @param p 当前进程；系统调用期间不会替换其页表或 VMA 数组。
+ * @param snapshot 已由 memviz_snapshot 清零并填写基本布局的快照。
+ *
+ * 本函数不调用 walkaddr()、cow_alloc() 或 mmap_fault()，因此不会分配物理页、
+ * 修改 PTE、复制 COW 页或读取 mmap 文件内容。
+ */
+static void
+fill_user_page_states(struct proc *p, struct memviz_snapshot *snapshot)
+{
+  initialize_dynamic_cells(snapshot);
+  if(snapshot->dynamic_page_count == 0)
+    return;
+  overlay_vma_ranges(p, snapshot);
+  scan_dynamic_leaves(p, snapshot, p->pagetable, 2, 0);
+  finish_dynamic_totals(snapshot);
+}
+
+/**
  * sys_memsnapshot 将当前进程可观察到的内存状态复制到用户空间。
  *
  * 系统调用参数 0 为 MEMVIZ_VIEW_*，参数 1 为用户态输出结构体地址。
@@ -165,6 +419,7 @@ sys_memsnapshot(void)
 
   struct proc *p = myproc();
   fill_user_top_snapshot(p, &memvizsys_snapshot);
+  fill_user_page_states(p, &memvizsys_snapshot);
   if(copyout(p->pagetable, address, (char *)&memvizsys_snapshot,
              sizeof(memvizsys_snapshot)) < 0){
     release(&memvizsys_lock);
