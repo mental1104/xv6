@@ -229,7 +229,7 @@ class RepositoryLayoutTests(unittest.TestCase):
 
 
 class HelperTests(unittest.TestCase):
-    """验证与日志路径相关的纯 Python helper。"""
+    """验证命令转换与日志路径相关的纯 Python helper。"""
 
     def test_safe_name_removes_path_and_shell_characters(self) -> None:
         safe = RUNNER._safe_name("lab 1/$(rm -rf)")
@@ -238,6 +238,22 @@ class HelperTests(unittest.TestCase):
         self.assertNotIn("$", safe)
         self.assertNotIn("(", safe)
         self.assertNotIn(")", safe)
+
+    def test_xv6test_command_is_sent_through_absolute_path(self) -> None:
+        """逻辑 suite 可读文本必须在发送前转换为镜像绝对入口。"""
+
+        self.assertEqual(
+            "/usr/bin/xv6test --group lab1",
+            RUNNER._absolute_guest_command("xv6test --group lab1"),
+        )
+
+    def test_unknown_guest_command_is_not_searched(self) -> None:
+        """未知程序保持原样，防止 helper 演变成隐式 PATH。"""
+
+        self.assertEqual(
+            "missing-program arg",
+            RUNNER._absolute_guest_command("missing-program arg"),
+        )
 
 
 if __name__ == "__main__":
