@@ -136,6 +136,19 @@ memcpy(void *dst, const void *src, uint n)
   return memmove(dst, src, n);
 }
 
+/** 判断一个 NAME=VALUE 项是否与给定变量名精确匹配。 */
+static int
+environment_name_matches(char *entry, const char *name)
+{
+  if(entry == 0 || name == 0 || name[0] == 0)
+    return 0;
+  while(*name != 0 && *entry == *name){
+    entry++;
+    name++;
+  }
+  return *name == 0 && *entry == '=';
+}
+
 /**
  * 在显式环境向量中查找 NAME=VALUE 项。
  *
@@ -146,16 +159,13 @@ memcpy(void *dst, const void *src, uint n)
 char *
 envget(char **envp, const char *name)
 {
-  uint name_length;
   char **entry;
 
-  if(envp == 0 || name == 0)
+  if(envp == 0)
     return 0;
-  name_length = strlen(name);
   for(entry = envp; *entry != 0; entry++){
-    if(memcmp(*entry, name, name_length) == 0 &&
-       (*entry)[name_length] == '=')
-      return *entry + name_length + 1;
+    if(environment_name_matches(*entry, name))
+      return strchr(*entry, '=') + 1;
   }
   return 0;
 }
