@@ -15,6 +15,10 @@
 #define DEFAULT_TIMEOUT_SECONDS 180
 #define READ_CHUNK_SIZE 4096
 
+/** 登录 Shell 根目录下的完整 ANSI 提示符，用作 QEMU 输入同步边界。 */
+static const char root_shell_prompt[] =
+  "\033[1;32mroot@xv6\033[0m:\033[1;34m/\033[0m# ";
+
 struct smoke_options {
   const char *policy;
   int cpus;
@@ -270,7 +274,6 @@ terminate_process_group(pid_t pid)
 static int
 run_smoke(const struct smoke_options *options)
 {
-  static const char shell_prompt[] = "$ ";
   static const char qemu_quit[] = {1, 'x'};
   struct output_buffer output = {0};
   char expected_banner[64];
@@ -350,7 +353,7 @@ run_smoke(const struct smoke_options *options)
         break;
       }
 
-      if(!command_sent && strstr(output.data, shell_prompt) != 0){
+      if(!command_sent && strstr(output.data, root_shell_prompt) != 0){
         if(strstr(output.data, expected_banner) == 0){
           fprintf(stderr, "scheduler_smoke: missing banner '%s'\n", expected_banner);
           break;
@@ -366,7 +369,7 @@ run_smoke(const struct smoke_options *options)
       if(command_sent && !quit_sent && output.length > command_output_offset){
         char *test_output = output.data + command_output_offset;
         char *success = strstr(test_output, expected_result);
-        if(success != 0 && strstr(success, shell_prompt) != 0){
+        if(success != 0 && strstr(success, root_shell_prompt) != 0){
           if(write_all(input_fd, qemu_quit, sizeof(qemu_quit)) < 0){
             perror("scheduler_smoke: quit qemu");
             break;
