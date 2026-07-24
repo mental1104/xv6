@@ -8,11 +8,16 @@
 #define ANSI_RED "\033[31m"
 #define ANSI_GREEN "\033[32m"
 #define ANSI_YELLOW "\033[33m"
+#define ANSI_BLUE "\033[34m"
 #define ANSI_CYAN "\033[36m"
+#define ANSI_ORANGE "\033[38;5;208m"
 #define ANSI_RESET "\033[0m"
 
 #define USER_BAR_CELLS 32
 #define USER_GAP_BREAK_MIN_PAGES 16
+
+_Static_assert(USER_BAR_CELLS == MEMVIZ_USER_STATE_CELLS,
+               "user renderer width must match snapshot cells");
 
 // 使用静态缓冲，避免扩展后的快照占满固定一页用户栈。
 static struct memviz_snapshot user_snapshot;
@@ -26,9 +31,14 @@ static char *trapframe_slot_names[MEMVIZ_TRAPFRAME_SLOT_COUNT] = {
   "t3", "t4", "t5", "t6",
 };
 
-/**
- * usage 输出 memviz 支持的视图和纯文本选项。
- */
+enum dynamic_display_kind {
+  DYNAMIC_RESIDENT = 1,
+  DYNAMIC_LAZY = 2,
+  DYNAMIC_MMAP = 3,
+  DYNAMIC_COW = 4,
+};
+
+/** 输出 memviz 支持的视图和纯文本选项。 */
 static void
 usage(void)
 {
@@ -36,7 +46,7 @@ usage(void)
 }
 
 /**
- * string_length 返回以 NUL 结尾字符串的字节数。
+ * 返回以 NUL 结尾字符串的字节数。
  *
  * @param text 非空字符串。
  * @return 不包含结尾 NUL 的字节数。
@@ -51,7 +61,7 @@ string_length(char *text)
 }
 
 /**
- * print_glyph 输出一个可选 ANSI 颜色的单字节字符。
+ * 输出一个可选 ANSI 颜色的单字节字符。
  *
  * @param glyph 要输出的字符。
  * @param color ANSI 颜色前缀。
@@ -66,23 +76,14 @@ print_glyph(char glyph, char *color, int plain)
     printf("%s%c%s", color, glyph, ANSI_RESET);
 }
 
-/**
- * print_line 输出带真实地址的字符图边界线。
- *
- * @param address 边界虚拟地址。
- * @param mark 边界标签与横线。
- */
+/** 输出带真实地址的字符图边界线。 */
 static void
 print_line(uint64 address, char *mark)
 {
   printf("%p %s\n", address, mark);
 }
 
-/**
- * print_box_text 输出地址空间框内的一行文本并补齐右边界。
- *
- * @param text 最长 34 字节的静态标签。
- */
+/** 输出地址空间框内的一行文本并补齐右边界。 */
 static void
 print_box_text(char *text)
 {
@@ -94,7 +95,7 @@ print_box_text(char *text)
 }
 
 /**
- * scaled_cells 将用量压缩为固定宽度字符数，非零用量至少占一个字符。
+ * 将用量压缩为固定宽度字符数，非零用量至少占一个字符。
  *
  * @param used 已使用字节或页数。
  * @param total 总字节或总页数。
@@ -112,14 +113,7 @@ scaled_cells(uint64 used, uint64 total, int cells)
   return (int)result;
 }
 
-/**
- * print_box_bar 输出低偏移到高偏移方向的页内用量条。
- *
- * @param used_cells 已使用字符数。
- * @param used 已使用区域字符。
- * @param free 未使用区域字符。
- * @param plain 非零时禁用 ANSI 颜色。
- */
+/** 输出低偏移到高偏移方向的页内用量条。 */
 static void
 print_box_bar(int used_cells, char used, char free, int plain)
 {
@@ -133,12 +127,7 @@ print_box_bar(int used_cells, char used, char free, int plain)
   printf("] |\n");
 }
 
-/**
- * print_box_reverse_bar 输出高地址侧已使用的向下增长栈用量条。
- *
- * @param used_cells 已使用字符数。
- * @param plain 非零时禁用 ANSI 颜色。
- */
+/** 输出高地址侧已使用的向下增长栈用量条。 */
 static void
 print_box_reverse_bar(int used_cells, int plain)
 {
@@ -152,11 +141,7 @@ print_box_reverse_bar(int used_cells, int plain)
   printf("] |\n");
 }
 
-/**
- * print_pte_flags 输出教学相关的 RISC-V PTE 权限位。
- *
- * @param flags PTE 低十位 flags。
- */
+/** 输出教学相关的 RISC-V PTE 权限位。 */
 static void
 print_pte_flags(uint64 flags)
 {
@@ -169,26 +154,7 @@ print_pte_flags(uint64 flags)
          (flags & PTE_COW) ? 'C' : '-');
 }
 
-/**
- * dynamic_pages 计算动态起点到 p->sz 已覆盖的页数。
- *
- * @param state 当前内存快照。
- * @return 动态区域向上取整后的页数。
- */
-static uint64
-dynamic_pages(struct memviz_snapshot *state)
-{
-  if(state->process_size <= state->dynamic_start)
-    return 0;
-  return (state->process_size - state->dynamic_start + PGSIZE - 1) / PGSIZE;
-}
-
-/**
- * remaining_pages 计算 p->sz 到 USERMAX 之间仍未使用的整页数。
- *
- * @param state 当前内存快照。
- * @return 普通用户 VA 的剩余整页数。
- */
+/** 计算 p->sz 到 USERMAX 之间仍未使用的整页数。 */
 static uint64
 remaining_pages(struct memviz_snapshot *state)
 {
@@ -198,12 +164,9 @@ remaining_pages(struct memviz_snapshot *state)
 }
 
 /**
- * print_user_gap 用明显的断裂线表现 p->sz 到 USERMAX 的巨大地址跨度。
+ * 用明显的断裂线表现 p->sz 到 USERMAX 的巨大地址跨度。
  *
  * @param state 当前内存快照。
- *
- * 小于阈值时保留紧凑布局；超过阈值时增加纵向留白、断裂符号和
- * not-drawn-to-scale 提示，避免字符图暗示上下边界物理相邻。
  */
 static void
 print_user_gap(struct memviz_snapshot *state)
@@ -227,10 +190,77 @@ print_user_gap(struct memviz_snapshot *state)
 }
 
 /**
- * print_trampoline_details 展示 trampoline 页的 VA、PA、权限和代码顺序。
+ * 返回压缩单元应显示的主状态。
+ *
+ * @param cell 一个连续动态页范围的精确分类计数。
+ * @return DYNAMIC_* 显示类型。
+ *
+ * 单元只覆盖一页时结果即该页状态。压缩单元混合多种状态时选择页数最多者；
+ * 数量相同按 COW > mmap > lazy > resident 决定，使高语义状态不会在平局中消失。
+ */
+static int
+dynamic_cell_kind(struct memviz_user_state_cell *cell)
+{
+  int kind = DYNAMIC_RESIDENT;
+  uint best = cell->resident_pages;
+  if(cell->lazy_pages >= best){
+    kind = DYNAMIC_LAZY;
+    best = cell->lazy_pages;
+  }
+  if(cell->mmap_pages >= best){
+    kind = DYNAMIC_MMAP;
+    best = cell->mmap_pages;
+  }
+  if(cell->cow_pages >= best)
+    kind = DYNAMIC_COW;
+  return kind;
+}
+
+/**
+ * 输出动态逻辑范围的页状态条。
  *
  * @param state 当前内存快照。
+ * @param plain 非零时用 #/C/L/M 替代颜色。
  */
+static void
+print_dynamic_state_bar(struct memviz_snapshot *state, int plain)
+{
+  printf("           | [");
+  for(int index = 0; index < USER_BAR_CELLS; index++){
+    if(index >= (int)state->dynamic_state_cell_count){
+      printf(" ");
+      continue;
+    }
+
+    int kind = dynamic_cell_kind(&state->dynamic_state[index]);
+    if(kind == DYNAMIC_COW)
+      print_glyph(plain ? 'C' : '.', ANSI_YELLOW, plain);
+    else if(kind == DYNAMIC_LAZY)
+      print_glyph(plain ? 'L' : '.', ANSI_BLUE, plain);
+    else if(kind == DYNAMIC_MMAP)
+      print_glyph(plain ? 'M' : '.', ANSI_ORANGE, plain);
+    else
+      print_glyph('#', ANSI_RED, plain);
+  }
+  printf("] |\n");
+}
+
+/** 输出动态页状态图例；正常模式中的三类特殊状态都使用彩色点。 */
+static void
+print_dynamic_legend(int plain)
+{
+  printf("           | legend: ");
+  print_glyph('#', ANSI_RED, plain);
+  printf(" resident ");
+  print_glyph(plain ? 'C' : '.', ANSI_YELLOW, plain);
+  printf(" COW ");
+  print_glyph(plain ? 'L' : '.', ANSI_BLUE, plain);
+  printf(" lazy ");
+  print_glyph(plain ? 'M' : '.', ANSI_ORANGE, plain);
+  printf(" mmap\n");
+}
+
+/** 展示 trampoline 页的 VA、PA、权限和代码顺序。 */
 static void
 print_trampoline_details(struct memviz_snapshot *state)
 {
@@ -266,14 +296,7 @@ print_trampoline_details(struct memviz_snapshot *state)
          state->trampoline_pa + PGSIZE);
 }
 
-/**
- * print_trapframe_details 按真实 ABI 顺序展开 trapframe 页内全部成员。
- *
- * @param state 当前内存快照。
- *
- * 每个槽位同时展示页内 offset、对应 VA、对应 PA 和 memsnapshot 系统调用
- * 入口时保存的值；该值不是任意时刻的实时寄存器。
- */
+/** 按真实 ABI 顺序展开 trapframe 页内全部成员。 */
 static void
 print_trapframe_details(struct memviz_snapshot *state)
 {
@@ -311,9 +334,9 @@ print_trapframe_details(struct memviz_snapshot *state)
 }
 
 /**
- * print_user_view 输出包含顶端固定页、巨大 VA 空洞和低地址进程区域的完整视图。
+ * 输出包含固定页、动态页状态、巨大 VA 空洞和低地址进程区域的完整视图。
  *
- * @param plain 非零时禁用 ANSI 颜色。
+ * @param plain 非零时禁用 ANSI 颜色并使用 #/C/L/M 状态字符。
  * @return 采样成功返回 0，系统调用失败返回 -1。
  */
 static int
@@ -322,10 +345,6 @@ print_user_view(int plain)
   if(memsnapshot(MEMVIZ_VIEW_USER, &user_snapshot) < 0)
     return -1;
 
-  uint64 used_pages = dynamic_pages(&user_snapshot);
-  int dynamic_cells = scaled_cells(used_pages,
-                                   remaining_pages(&user_snapshot) + used_pages,
-                                   USER_BAR_CELLS);
   int trampoline_cells = scaled_cells(user_snapshot.trampoline_used,
                                       PGSIZE, USER_BAR_CELLS);
   int trapframe_cells = scaled_cells(user_snapshot.trapframe_used,
@@ -346,9 +365,17 @@ print_user_view(int plain)
 
   print_user_gap(&user_snapshot);
   print_line(user_snapshot.process_size, "+--------------- p->sz ----------------+");
-  print_box_text("DYNAMIC EXTENT");
-  print_box_bar(dynamic_cells, '#', '.', plain);
-  printf("           | pages=%d\n", (int)used_pages);
+  print_box_text("DYNAMIC EXTENT / page states");
+  print_dynamic_state_bar(&user_snapshot, plain);
+  printf("           | pages=%d resident=%d cow=%d\n",
+         (int)user_snapshot.dynamic_page_count,
+         (int)user_snapshot.dynamic_resident_pages,
+         (int)user_snapshot.dynamic_cow_pages);
+  printf("           | lazy=%d mmap=%d cells=%d\n",
+         (int)user_snapshot.dynamic_lazy_pages,
+         (int)user_snapshot.dynamic_mmap_pages,
+         (int)user_snapshot.dynamic_state_cell_count);
+  print_dynamic_legend(plain);
   print_line(user_snapshot.dynamic_start, "+----------- dynamic start ------------+");
 
   if(user_snapshot.user_stack_valid){
@@ -391,7 +418,12 @@ print_user_view(int plain)
          user_snapshot.user_limit - user_snapshot.process_size);
   printf("  stack: used=%d free=%d\n",
          (int)user_snapshot.stack_used, (int)user_snapshot.stack_free);
-  printf("  dynamic pages: %d\n", (int)used_pages);
+  printf("  dynamic: pages=%d resident=%d cow=%d lazy=%d mmap=%d\n",
+         (int)user_snapshot.dynamic_page_count,
+         (int)user_snapshot.dynamic_resident_pages,
+         (int)user_snapshot.dynamic_cow_pages,
+         (int)user_snapshot.dynamic_lazy_pages,
+         (int)user_snapshot.dynamic_mmap_pages);
   printf("  physical pages: free=%d used=%d total=%d\n",
          (int)user_snapshot.free_pages, (int)user_snapshot.used_pages,
          (int)user_snapshot.total_pages);
@@ -401,12 +433,7 @@ print_user_view(int plain)
   return 0;
 }
 
-/**
- * print_all_views 依次输出增强用户视图和其余已有视图。
- *
- * @param plain 非零时禁用 ANSI 颜色。
- * @return 全部视图成功返回 0；任一采样失败返回 -1。
- */
+/** 依次输出增强用户视图和其余已有视图。 */
 static int
 print_all_views(int plain)
 {
@@ -420,7 +447,7 @@ print_all_views(int plain)
 }
 
 /**
- * main 解析命令行并打印指定的当前进程内存视图。
+ * 解析命令行并打印指定的当前进程内存视图。
  *
  * @param argc 参数数量。
  * @param argv 参数数组；第一个位置参数必须是视图名。

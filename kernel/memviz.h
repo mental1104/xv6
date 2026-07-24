@@ -5,6 +5,7 @@
 #define MEMVIZ_PTE_ENTRIES 24
 #define MEMVIZ_PT_USAGE_PAGES 16
 #define MEMVIZ_PT_USAGE_CELLS 64
+#define MEMVIZ_USER_STATE_CELLS 32
 
 // memsnapshot() 支持的只读视图类型。
 enum memviz_view {
@@ -86,6 +87,15 @@ struct memviz_cell {
   uint free_pages;
 };
 
+// 一个动态地址压缩单元记录连续逻辑页的最终可视状态分布。
+struct memviz_user_state_cell {
+  uint total_pages;
+  uint resident_pages;
+  uint cow_pages;
+  uint lazy_pages;
+  uint mmap_pages;
+};
+
 // 一个页表观察行记录一个代表性 VA 的叶子 PTE。
 struct memviz_pte_level {
   int level;
@@ -160,6 +170,15 @@ struct memviz_snapshot {
   uint64 stack_used;
   uint64 stack_free;
   uint64 dynamic_start;
+
+  // 动态逻辑范围的页级状态。小范围一页一格，大范围压缩到固定格数。
+  uint64 dynamic_page_count;
+  uint64 dynamic_resident_pages;
+  uint64 dynamic_cow_pages;
+  uint64 dynamic_lazy_pages;
+  uint64 dynamic_mmap_pages;
+  uint64 dynamic_state_cell_count;
+  struct memviz_user_state_cell dynamic_state[MEMVIZ_USER_STATE_CELLS];
 
   // 用户页表顶端两个 supervisor-only 固定页及其页内逻辑布局。
   uint64 maxva;
