@@ -2,10 +2,33 @@
 #include "kernel/param.h"
 #include "kernel/memviz.h"
 #include "kernel/sysinfo.h"
+#include "user/user.h"
+#include "user/paths.h"
+
+/**
+ * 将上游 usertests 中固定的裸程序名映射为当前镜像绝对路径。
+ *
+ * @param path usertests 传给 exec() 的路径。
+ * @param argv 子进程参数数组。
+ * @return exec() 的返回值；成功时不返回，失败时返回 -1。
+ *
+ * 仅 `echo` 和 `sh` 是旧测试写死的镜像程序名。动态构造的相对路径、非法指针
+ * 和故意不存在的文件均原样交给系统调用，避免改变 exec 错误路径覆盖。
+ */
+int
+usertests_exec_absolute(char *path, char **argv)
+{
+  if(strcmp(path, "echo") == 0)
+    return exec(XV6_BIN_PATH("echo"), argv);
+  if(strcmp(path, "sh") == 0)
+    return exec(XV6_BIN_PATH("sh"), argv);
+  return exec(path, argv);
+}
 
 // 复用原始 usertests 的全部测试函数，但把依赖固定物理容量或旧文件语义的入口
 // 重命名，再在本文件提供适配当前教学内核的确定性版本。原始源码保持可直接
 // 与上游对照，适配逻辑集中在单独的 C 翻译单元中。
+#define exec usertests_exec_absolute
 #define execout execout_capacity_dependent
 #define mem mem_capacity_dependent
 #define sbrkbasic sbrkbasic_capacity_dependent
@@ -21,6 +44,7 @@
 #undef sbrkbasic
 #undef mem
 #undef execout
+#undef exec
 
 #define EXECOUT_WORKING_SET (8 * 1024 * 1024)
 #define MEM_ALLOCATIONS 2048
@@ -153,7 +177,7 @@ execout(char *s)
       for(int i = 0; i <= MAXARG; i++)
         args[i] = "x";
       args[MAXARG + 1] = 0;
-      exec("sleep", args);
+      exec(XV6_BIN_PATH("sleep"), args);
       exit(0);
     }
 
@@ -227,7 +251,7 @@ mem(char *s)
 /**
  * reject_break_underflow 验证 sbrk 不允许把进程 break 缩到地址零以下。
  *
- * @param test_name 当前 usertests 名称，用于稳定错误输出。
+ * @param test_name 当前测试名称，用于稳定错误输出。
  *
  * 该失败条件来自地址空间不变量，与 QEMU 提供 128 MiB 还是 2 GiB 无关，
  * 因而替代“申请固定 1 GiB 必须 OOM”的容量相关断言。
@@ -499,9 +523,7 @@ run(void f(char *), char *s)
   return xstatus == 0 && cleanup_status == 0;
 }
 
-/**
- * main 使用非破坏式物理页快照执行原 usertests 注册表。
- */
+/** main 使用非破坏式物理页快照执行原 usertests 注册表。 */
 int
 main(int argc, char *argv[])
 {
