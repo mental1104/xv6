@@ -19,13 +19,6 @@ fail(char *message)
   exit(1);
 }
 
-/**
- * 判断完整输出中是否包含指定稳定片段。
- *
- * @param text 以 NUL 结尾的完整输出。
- * @param pattern 非空匹配片段。
- * @return 找到返回 1，否则返回 0。
- */
 static int
 text_contains(char *text, char *pattern)
 {
@@ -39,13 +32,21 @@ text_contains(char *text, char *pattern)
   return 0;
 }
 
-/**
- * 返回按 memviz 等比例压缩规则落入指定物理 cell 的页数。
- *
- * @param total_pages kalloc 管理的物理页总数。
- * @param cell 目标 cell 下标。
- * @return 该 cell 覆盖的连续物理页数量。
- */
+/** 将正整数 PID 写成十进制字符串。 */
+static void
+format_pid(int pid, char *buffer)
+{
+  char reversed[16];
+  int count = 0;
+  do {
+    reversed[count++] = '0' + pid % 10;
+    pid /= 10;
+  } while(pid > 0);
+  for(int i = 0; i < count; i++)
+    buffer[i] = reversed[count - 1 - i];
+  buffer[count] = 0;
+}
+
 static uint64
 cell_page_count(uint64 total_pages, int cell)
 {
@@ -56,11 +57,6 @@ cell_page_count(uint64 total_pages, int cell)
   return end - first;
 }
 
-/**
- * 校验动态页状态单元、全局计数和逻辑页总数相互一致。
- *
- * @param snapshot 已由 MEMVIZ_VIEW_USER 取得的快照。
- */
 static void
 check_dynamic_state_totals(struct memviz_snapshot *snapshot)
 {
@@ -102,12 +98,6 @@ check_dynamic_state_totals(struct memviz_snapshot *snapshot)
     fail("dynamic state partition");
 }
 
-/**
- * 执行真实 memviz user 命令并捕获其 stdout。
- *
- * @param plain 非零时传入 --plain。
- * @return 捕获字节数；执行失败时直接终止测试。
- */
 static int
 capture_user_render(int plain)
 {
@@ -151,7 +141,63 @@ capture_user_render(int plain)
   return total;
 }
 
-/** 验证用户栈、顶端固定页、动态状态和物理计数的基本不变量。 */
+/** 执行真实 memviz user --pid 命令并捕获其 stdout。 */
+static int
+capture_user_render_pid(int target_pid)
+{
+  int fds[2];
+  if(pipe(fds) < 0)
+    fail("pid render pipe");
+
+  int pid = fork();
+  if(pid < 0)
+    fail("pid render fork");
+  if(pid == 0){
+    char pid_text[16];
+    format_pid(target_pid, pid_text);
+    close(fds[0]);
+    close(1);
+    if(dup(fds[1]) != 1)
+      exit(1);
+    close(fds[1]);
+
+    char *argv[] = { "memviz", "user", "--pid", pid_text, "--plain", 0 };
+    exec("memviz", argv);
+    exit(1);
+  }
+
+  close(fds[1]);
+  int total = 0;
+  while(total < (int)sizeof(render_output) - 1){
+    int count = read(fds[0], render_output + total,
+                     sizeof(render_output) - 1 - total);
+    if(count < 0)
+      fail("pid render read");
+    if(count == 0)
+      break;
+    total += count;
+  }
+  close(fds[0]);
+  render_output[total] = 0;
+
+  int status = -1;
+  if(wait(&status) != pid || status != 0)
+    fail("memviz pid execution");
+  return total;
+}
+
+/** 多核下目标可能仍在收尾运行，短暂重试直到进入可稳定采样状态。 */
+static int
+snapshot_pid_retry(int pid, int view, struct memviz_snapshot *snapshot)
+{
+  for(int attempt = 0; attempt < 100; attempt++){
+    if(memsnapshot_pid(pid, view, snapshot) == 0)
+      return 0;
+    sleep(1);
+  }
+  return -1;
+}
+
 static void
 test_user_snapshot(void)
 {
@@ -159,6 +205,8 @@ test_user_snapshot(void)
     fail("invalid view accepted");
   if(memsnapshot(MEMVIZ_VIEW_USER, &before) < 0)
     fail("user snapshot syscall");
+  if(before.process_pid != getpid())
+    fail("current process pid missing");
   if(before.user_limit != USERMAX)
     fail("user limit mismatch");
   if(before.maxva != MAXVA)
@@ -227,7 +275,6 @@ test_user_snapshot(void)
   printf("memviztest: user invariants OK\n");
 }
 
-/** 验证增强字符图、纯文本降级和三种 ANSI 点颜色。 */
 static void
 test_user_render(void)
 {
@@ -256,6 +303,8 @@ test_user_render(void)
   if(!text_contains(render_output, "name=kernel_satp") ||
      !text_contains(render_output, "name=t6"))
     fail("render trapframe member boundaries missing");
+  if(!text_contains(render_output, "observed process pid="))
+    fail("render process pid missing");
 
   capture_user_render(0);
   if(!text_contains(render_output, "\033[33m.\033[0m"))
@@ -268,9 +317,88 @@ test_user_render(void)
   printf("memviztest: user renderer OK\n");
 }
 
-/**
- * 验证 lazy 未触页、普通驻留、mmap 区域和 fork 后 COW 的分类优先级。
- */
+static void
+test_target_pid_snapshot(void)
+{
+  if(memsnapshot_pid(0, MEMVIZ_VIEW_USER, &after_alloc) != -1 ||
+     memsnapshot_pid(-1, MEMVIZ_VIEW_USER, &after_alloc) != -1)
+    fail("invalid target pid accepted");
+  if(memsnapshot_pid(getpid(), MEMVIZ_VIEW_USER, &after_alloc) < 0 ||
+     after_alloc.process_pid != getpid())
+    fail("explicit self snapshot");
+
+  int ready[2];
+  int release_pipe[2];
+  if(pipe(ready) < 0 || pipe(release_pipe) < 0)
+    fail("target pipes");
+
+  int pid = fork();
+  if(pid < 0)
+    fail("target fork");
+  if(pid == 0){
+    close(ready[0]);
+    close(release_pipe[1]);
+    char *base = sbrk(2 * PGSIZE);
+    if(base == (char *)-1)
+      exit(1);
+    base[0] = 7;
+    if(write(ready[1], "R", 1) != 1)
+      exit(1);
+    close(ready[1]);
+    char token;
+    if(read(release_pipe[0], &token, 1) != 1)
+      exit(1);
+    close(release_pipe[0]);
+    exit(0);
+  }
+
+  close(ready[1]);
+  close(release_pipe[0]);
+  char token;
+  if(read(ready[0], &token, 1) != 1)
+    fail("target ready");
+  close(ready[0]);
+
+  if(memsnapshot(MEMVIZ_VIEW_USER, &before) < 0)
+    fail("target parent baseline");
+  if(snapshot_pid_retry(pid, MEMVIZ_VIEW_USER, &after_alloc) < 0)
+    fail("target pid snapshot");
+  if(after_alloc.process_pid != pid)
+    fail("target pid identity");
+  if(after_alloc.process_size != before.process_size + 2 * PGSIZE)
+    fail("target process size");
+  if(after_alloc.dynamic_page_count != before.dynamic_page_count + 2)
+    fail("target dynamic page count");
+  check_dynamic_state_totals(&after_alloc);
+
+  if(snapshot_pid_retry(pid, MEMVIZ_VIEW_KERNEL, &after_free) < 0)
+    fail("target kernel snapshot");
+  if(after_free.process_pid != pid || !after_free.kernel_stack_valid)
+    fail("target saved kernel stack");
+  if(snapshot_pid_retry(pid, MEMVIZ_VIEW_PAGETABLE, &after_free) < 0)
+    fail("target pagetable snapshot");
+  if(after_free.process_pid != pid || after_free.user_pagetable == 0)
+    fail("target pagetable identity");
+
+  capture_user_render_pid(pid);
+  char pid_text[16];
+  format_pid(pid, pid_text);
+  if(!text_contains(render_output, "observed process pid=") ||
+     !text_contains(render_output, pid_text))
+    fail("target CLI pid output");
+
+  if(write(release_pipe[1], "X", 1) != 1)
+    fail("target release");
+  close(release_pipe[1]);
+  int status = -1;
+  if(wait(&status) != pid || status != 0)
+    fail("target child exit");
+  if(memsnapshot_pid(pid, MEMVIZ_VIEW_USER, &after_free) != -1)
+    fail("reaped target remains observable");
+
+  printf("memviztest: target pid observation OK\n");
+}
+
 static void
 test_dynamic_page_states(void)
 {
@@ -361,7 +489,6 @@ test_dynamic_page_states(void)
   printf("memviztest: dynamic page states OK\n");
 }
 
-/** 验证 cell、CPU freelist 与全局页数相互一致。 */
 static void
 test_physical_snapshot(void)
 {
@@ -400,7 +527,6 @@ test_physical_snapshot(void)
   printf("memviztest: physical invariants OK\n");
 }
 
-/** 验证触页会消耗物理页，缩容后页面会归还 kalloc。 */
 static void
 test_allocate_and_release(void)
 {
@@ -429,7 +555,6 @@ test_allocate_and_release(void)
   printf("memviztest: allocate/release OK\n");
 }
 
-/** 验证当前内核栈、MMIO 和用户别名窗口可观察。 */
 static void
 test_kernel_snapshot(void)
 {
@@ -453,7 +578,6 @@ test_kernel_snapshot(void)
   printf("memviztest: kernel invariants OK\n");
 }
 
-/** 验证页表观察条目能连接用户 VA、别名 VA、PA 和 kalloc 池。 */
 static void
 test_pagetable_snapshot(void)
 {
@@ -559,7 +683,6 @@ test_pagetable_snapshot(void)
   printf("memviztest: pagetable invariants OK\n");
 }
 
-/** 运行一个具名检查，便于 CI 将失败定位到单一不变量组。 */
 static int
 run_named(char *name)
 {
@@ -567,7 +690,9 @@ run_named(char *name)
     test_user_snapshot();
     test_user_render();
     test_dynamic_page_states();
-  } else if(strcmp(name, "phys") == 0)
+  } else if(strcmp(name, "pid") == 0)
+    test_target_pid_snapshot();
+  else if(strcmp(name, "phys") == 0)
     test_physical_snapshot();
   else if(strcmp(name, "alloc") == 0)
     test_allocate_and_release();
@@ -580,19 +705,13 @@ run_named(char *name)
   return 0;
 }
 
-/**
- * 默认运行完整测试；传入一个名称时只运行对应检查。
- *
- * @param argc 参数数量。
- * @param argv 可选具名检查。
- * @return 所有断言通过时返回 0；失败路径由 fail 终止。
- */
 int
 main(int argc, char **argv)
 {
   if(argc == 1){
     test_user_snapshot();
     test_user_render();
+    test_target_pid_snapshot();
     test_dynamic_page_states();
     test_physical_snapshot();
     test_allocate_and_release();
@@ -600,11 +719,11 @@ main(int argc, char **argv)
     test_pagetable_snapshot();
   } else if(argc == 2){
     if(run_named(argv[1]) < 0){
-      fprintf(2, "usage: memviztest [user|phys|alloc|kernel|pagetable]\n");
+      fprintf(2, "usage: memviztest [user|pid|phys|alloc|kernel|pagetable]\n");
       exit(1);
     }
   } else {
-    fprintf(2, "usage: memviztest [user|phys|alloc|kernel|pagetable]\n");
+    fprintf(2, "usage: memviztest [user|pid|phys|alloc|kernel|pagetable]\n");
     exit(1);
   }
 
