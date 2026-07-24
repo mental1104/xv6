@@ -1,6 +1,7 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "kernel/fcntl.h"
+#include "kernel/param.h"
 #include "user/user.h"
 
 char*
@@ -133,4 +134,85 @@ void *
 memcpy(void *dst, const void *src, uint n)
 {
   return memmove(dst, src, n);
+}
+
+/**
+ * 在显式环境向量中查找 NAME=VALUE 项。
+ *
+ * @param envp 以空指针结尾的环境数组；0 等价于空环境。
+ * @param name 不含等号的变量名。
+ * @return 命中时返回 VALUE 首字符地址，否则返回 0。
+ */
+char *
+envget(char **envp, const char *name)
+{
+  uint name_length;
+  char **entry;
+
+  if(envp == 0 || name == 0)
+    return 0;
+  name_length = strlen(name);
+  for(entry = envp; *entry != 0; entry++){
+    if(memcmp(*entry, name, name_length) == 0 &&
+       (*entry)[name_length] == '=')
+      return *entry + name_length + 1;
+  }
+  return 0;
+}
+
+/**
+ * 使用 PATH 从左到右构造候选路径并调用 execve()。
+ *
+ * @param program 命令名或包含斜杠的显式路径。
+ * @param argv 传给目标程序的参数向量。
+ * @param envp 同时提供 PATH 和目标程序环境。
+ * @return 所有候选均执行失败时返回 -1；成功后由新程序替换当前进程。
+ *
+ * 空 PATH 分量表示当前目录。候选路径超过 MAXPATH 时只跳过该分量，避免一个无效
+ * 目录阻止后续合法目录继续参与搜索。
+ */
+int
+execvpe(char *program, char **argv, char **envp)
+{
+  char candidate[MAXPATH];
+  char *path;
+  char *cursor;
+  char *end;
+  uint directory_length;
+  uint program_length;
+  uint separator_length;
+
+  if(program == 0)
+    return -1;
+  if(strchr(program, '/') != 0)
+    return execve(program, argv, envp);
+
+  path = envget(envp, "PATH");
+  if(path == 0)
+    return -1;
+  program_length = strlen(program);
+  cursor = path;
+
+  for(;;){
+    end = cursor;
+    while(*end != 0 && *end != ':')
+      end++;
+    directory_length = end - cursor;
+    separator_length = directory_length > 0 && cursor[directory_length - 1] != '/';
+
+    if(directory_length + separator_length + program_length + 1 <= sizeof(candidate)){
+      if(directory_length > 0)
+        memmove(candidate, cursor, directory_length);
+      if(separator_length)
+        candidate[directory_length] = '/';
+      memmove(candidate + directory_length + separator_length,
+              program, program_length + 1);
+      execve(candidate, argv, envp);
+    }
+
+    if(*end == 0)
+      break;
+    cursor = end + 1;
+  }
+  return -1;
 }
