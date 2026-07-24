@@ -6,6 +6,7 @@
 
 #define LS_PATH_SIZE 512
 #define LS_SIZE_SIZE 32
+#define LS_TIME_SIZE 16
 
 /** 保存一次 ls 调用启用的展示选项。 */
 struct ls_options {
@@ -16,14 +17,36 @@ struct ls_options {
 };
 
 /**
- * 输出当前实现支持的命令行形式和长格式字段。
+ * 描述一种 inode 类型的 Linux 风格 mode 占位和名称样式。
+ *
+ * xv6 尚无权限、UID/GID 和 LS_COLORS；新增类型时只需扩展此表，而不必在
+ * 紧凑输出和长格式输出中分别增加条件分支。
  */
+struct entry_format {
+  short type;
+  char *mode;
+  char *prefix;
+  char *suffix;
+};
+
+static struct entry_format entry_formats[] = {
+  {T_DIR,     "drwxr-xr-x", "\033[1;34m", "\033[0m"},
+  {T_FILE,    "-rw-r--r--", "", ""},
+  {T_DEVICE,  "crw-rw-rw-", "", ""},
+  {T_SYMLINK, "lrwxrwxrwx", "", ""},
+};
+
+static struct entry_format unknown_format = {
+  0, "?---------", "", ""
+};
+
+/** 输出当前实现支持的命令行形式和长格式字段。 */
 static void
 usage(void)
 {
   printf("Usage: ls [-alh] [--help] [--] [FILE ...]\n");
   printf("  -a  show entries starting with .\n");
-  printf("  -l  long format: TYPE NLINK INODE SIZE NAME\n");
+  printf("  -l  long format: MODE NLINK OWNER GROUP SIZE MTIME NAME\n");
   printf("  -h  human-readable sizes with -l\n");
 }
 
@@ -88,8 +111,8 @@ parse_options(int argc, char **argv, struct ls_options *options, int *first_path
  * 从路径中提取用于显示的最后一个名称组件。
  *
  * @param path 输入路径，不会被修改。
- * @param name 输出缓冲区，至少需要 DIRSIZ + 2 字节；过长名称按完整路径
- *             现有上限截断到 DIRSIZ 字节。
+ * @param name 输出缓冲区，至少需要 DIRSIZ + 2 字节；过长名称按 xv6 的
+ *             DIRSIZ 上限截断。
  * @return name 缓冲区首地址。
  */
 static char*
@@ -148,26 +171,35 @@ is_hidden(char *name)
 }
 
 /**
- * 将 xv6 inode 类型映射为简短且可读的类型字符。
+ * 查找 inode 类型对应的 mode 和 ANSI 名称样式。
  *
  * @param type struct stat 中的 T_* 类型。
- * @return 目录、普通文件、设备、符号链接分别返回 d、-、c、l；未知类型返回 ?。
+ * @return 指向静态格式项的指针；未知类型返回固定后备格式。
  */
-static char
-file_type(short type)
+static struct entry_format*
+find_entry_format(short type)
 {
-  switch(type){
-  case T_DIR:
-    return 'd';
-  case T_FILE:
-    return '-';
-  case T_DEVICE:
-    return 'c';
-  case T_SYMLINK:
-    return 'l';
-  default:
-    return '?';
+  int i;
+
+  for(i = 0; i < sizeof(entry_formats) / sizeof(entry_formats[0]); i++){
+    if(entry_formats[i].type == type)
+      return &entry_formats[i];
   }
+  return &unknown_format;
+}
+
+/**
+ * 输出带类型样式的名称，并立即复位 ANSI 状态以免污染 shell 提示符。
+ *
+ * @param name 待展示名称。
+ * @param type inode 类型。
+ */
+static void
+print_styled_name(char *name, short type)
+{
+  struct entry_format *format = find_entry_format(type);
+
+  printf("%s%s%s", format->prefix, name, format->suffix);
 }
 
 /**
@@ -256,6 +288,81 @@ format_size(uint64 size, int human_readable, char *buffer)
 }
 
 /**
+ * 判断公历年份是否为闰年。
+ *
+ * @param year 完整年份。
+ * @return 闰年返回 1，否则返回 0。
+ */
+static int
+is_leap_year(uint year)
+{
+  return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+}
+
+/**
+ * 返回指定公历月份的天数。
+ *
+ * @param year 完整年份。
+ * @param month 从 0 开始的月份下标。
+ * @return 该月天数。
+ */
+static int
+days_in_month(uint year, int month)
+{
+  static char month_days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+
+  if(month == 1 && is_leap_year(year))
+    return 29;
+  return month_days[month];
+}
+
+/**
+ * 将 32 位 Unix 秒数格式化为固定宽度 UTC 时间。
+ *
+ * @param timestamp 自 1970-01-01 起的秒数。
+ * @param buffer 输出 `Mon DD HH:MM`，至少需要 LS_TIME_SIZE 字节。
+ */
+static void
+format_mtime(uint timestamp, char *buffer)
+{
+  static char *months[] = {
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+  };
+  uint64 days = timestamp / 86400;
+  uint seconds = timestamp % 86400;
+  uint year = 1970;
+  int month = 0;
+  int day;
+  int hour;
+  int minute;
+
+  while(days >= (uint64)(is_leap_year(year) ? 366 : 365)){
+    days -= is_leap_year(year) ? 366 : 365;
+    year++;
+  }
+  while(days >= (uint64)days_in_month(year, month)){
+    days -= days_in_month(year, month);
+    month++;
+  }
+
+  day = days + 1;
+  hour = seconds / 3600;
+  minute = (seconds % 3600) / 60;
+  memmove(buffer, months[month], 3);
+  buffer[3] = ' ';
+  buffer[4] = day >= 10 ? '0' + day / 10 : ' ';
+  buffer[5] = '0' + day % 10;
+  buffer[6] = ' ';
+  buffer[7] = '0' + hour / 10;
+  buffer[8] = '0' + hour % 10;
+  buffer[9] = ':';
+  buffer[10] = '0' + minute / 10;
+  buffer[11] = '0' + minute % 10;
+  buffer[12] = 0;
+}
+
+/**
  * 在字段内容前输出空格，使其至少达到指定宽度。
  *
  * @param text 待输出字符串。
@@ -273,34 +380,33 @@ print_right_aligned(char *text, int width)
 }
 
 /**
- * 输出一个目录项或文件参数。
+ * 按 Linux 风格字段顺序输出一个长格式条目。
  *
- * @param name 只用于展示的名称，不包含父目录前缀。
+ * 权限和 root owner/group 是 xv6 尚未实现对应模型时的稳定展示占位；mtime、
+ * nlink 和 size 来自真实 inode 元数据。
+ *
+ * @param name 只用于展示的名称。
  * @param st 通过 O_NOFOLLOW 获取的真实 xv6 元数据。
  * @param options 当前展示选项。
  */
 static void
-print_entry(char *name, struct stat *st, struct ls_options *options)
+print_long_entry(char *name, struct stat *st, struct ls_options *options)
 {
   char nlink[LS_SIZE_SIZE];
-  char inode[LS_SIZE_SIZE];
   char size[LS_SIZE_SIZE];
-
-  if(!options->long_format){
-    printf("%s\n", name);
-    return;
-  }
+  char mtime[LS_TIME_SIZE];
+  struct entry_format *format = find_entry_format(st->type);
 
   format_uint64(st->nlink, nlink);
-  format_uint64(st->ino, inode);
   format_size(st->size, options->human_readable, size);
-  printf("%c ", file_type(st->type));
+  format_mtime(st->mtime, mtime);
+  printf("%s ", format->mode);
   print_right_aligned(nlink, 3);
-  printf(" ");
-  print_right_aligned(inode, 5);
-  printf(" ");
+  printf(" root root ");
   print_right_aligned(size, 6);
-  printf(" %s\n", name);
+  printf(" %s ", mtime);
+  print_styled_name(name, st->type);
+  printf("\n");
 }
 
 /**
@@ -366,19 +472,103 @@ join_path(char *directory, char *name, char *path, int capacity)
 }
 
 /**
+ * 将一个原始 dirent 解析为可展示名称、完整路径和 stat。
+ *
+ * @param directory 父目录路径。
+ * @param entry 当前磁盘目录项。
+ * @param options 当前展示选项。
+ * @param name 输出名称缓冲区，容量至少 DIRSIZ + 1。
+ * @param full_path 输出完整路径缓冲区。
+ * @param st 输出 inode 元数据。
+ * @param report_errors 非零时输出路径过长或 stat 失败诊断。
+ * @return 1 表示可展示；0 表示空目录项或被隐藏；-1 表示处理失败。
+ */
+static int
+load_directory_entry(char *directory, struct dirent *entry,
+                     struct ls_options *options, char *name, char *full_path,
+                     struct stat *st, int report_errors)
+{
+  if(entry->inum == 0)
+    return 0;
+  copy_dirent_name(entry->name, name);
+  if(!options->show_all && is_hidden(name))
+    return 0;
+  if(join_path(directory, name, full_path, LS_PATH_SIZE) < 0){
+    if(report_errors)
+      fprintf(2, "ls: path too long: '%s/%s'\n", directory, name);
+    return -1;
+  }
+  if(stat_no_follow(full_path, st) < 0){
+    if(report_errors)
+      fprintf(2, "ls: cannot stat '%s'\n", full_path);
+    return -1;
+  }
+  return 1;
+}
+
+/**
+ * 汇总当前选项实际展示条目的 apparent size。
+ *
+ * xv6 尚未向 stat 暴露已分配块数，因此该值不是 GNU ls 的 st_blocks 汇总；
+ * 稀疏文件和目录会体现这一教学边界。
+ *
+ * @param path 目录路径。
+ * @param options 当前展示选项。
+ * @param total 输出字节总数。
+ * @return 扫描成功返回 0；打开或任一条目读取失败返回 1。
+ */
+static int
+directory_total(char *path, struct ls_options *options, uint64 *total)
+{
+  char full_path[LS_PATH_SIZE];
+  char name[DIRSIZ + 1];
+  int fd;
+  int failed;
+  int status;
+  int count;
+  struct dirent entry;
+  struct stat st;
+
+  *total = 0;
+  fd = open(path, O_RDONLY);
+  if(fd < 0){
+    fprintf(2, "ls: cannot reopen '%s' for total\n", path);
+    return 1;
+  }
+
+  failed = 0;
+  while((count = read(fd, &entry, sizeof(entry))) == sizeof(entry)){
+    status = load_directory_entry(path, &entry, options, name, full_path, &st, 0);
+    if(status > 0)
+      *total += st.size;
+    else if(status < 0)
+      failed = 1;
+  }
+  if(count != 0)
+    failed = 1;
+  close(fd);
+  return failed;
+}
+
+/**
  * 遍历并输出一个真实目录，不跟随目录中的符号链接。
  *
  * @param path 目录路径。
  * @param options 当前展示选项。
- * @return 全部条目成功时返回 0；任一条目路径过长或 stat 失败时返回 1。
+ * @return 全部条目成功时返回 0；任一条目路径过长、stat 或读取失败时返回 1。
  */
 static int
 list_directory(char *path, struct ls_options *options)
 {
   char full_path[LS_PATH_SIZE];
   char name[DIRSIZ + 1];
+  char total_text[LS_SIZE_SIZE];
   int fd;
   int failed;
+  int printed;
+  int status;
+  int count;
+  uint64 total;
   struct dirent entry;
   struct stat st;
 
@@ -389,24 +579,35 @@ list_directory(char *path, struct ls_options *options)
   }
 
   failed = 0;
-  while(read(fd, &entry, sizeof(entry)) == sizeof(entry)){
-    if(entry.inum == 0)
-      continue;
-    copy_dirent_name(entry.name, name);
-    if(!options->show_all && is_hidden(name))
-      continue;
-    if(join_path(path, name, full_path, sizeof(full_path)) < 0){
-      fprintf(2, "ls: path too long: '%s/%s'\n", path, name);
+  if(options->long_format){
+    if(directory_total(path, options, &total) != 0)
       failed = 1;
-      continue;
-    }
-    if(stat_no_follow(full_path, &st) < 0){
-      fprintf(2, "ls: cannot stat '%s'\n", full_path);
-      failed = 1;
-      continue;
-    }
-    print_entry(name, &st, options);
+    format_size(total, options->human_readable, total_text);
+    printf("total %s\n", total_text);
   }
+
+  printed = 0;
+  while((count = read(fd, &entry, sizeof(entry))) == sizeof(entry)){
+    status = load_directory_entry(path, &entry, options, name, full_path, &st, 1);
+    if(status == 0)
+      continue;
+    if(status < 0){
+      failed = 1;
+      continue;
+    }
+    if(options->long_format){
+      print_long_entry(name, &st, options);
+    } else {
+      if(printed)
+        printf(" ");
+      print_styled_name(name, st.type);
+      printed = 1;
+    }
+  }
+  if(count != 0)
+    failed = 1;
+  if(!options->long_format)
+    printf("\n");
   close(fd);
   return failed;
 }
@@ -431,7 +632,12 @@ list_path(char *path, struct ls_options *options)
   if(st.type == T_DIR)
     return list_directory(path, options);
 
-  print_entry(display_name(path, name), &st, options);
+  if(options->long_format)
+    print_long_entry(display_name(path, name), &st, options);
+  else {
+    print_styled_name(display_name(path, name), st.type);
+    printf("\n");
+  }
   return 0;
 }
 
