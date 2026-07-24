@@ -43,3 +43,4 @@
 #define SYS_tcsetpgrp        42
 #define SYS_lseek            43
 #define SYS_execve           44
+#define SYS_memsnapshot_pid  45
