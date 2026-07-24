@@ -30,6 +30,7 @@ void            console_apply_pending_control(void);
 
 // exec.c
 int             exec(char*, char**);
+int             execve(char*, char**, char**);
 
 // file.c
 struct file*    filealloc(void);
@@ -64,7 +65,7 @@ void            itrunc(struct inode*);
 // ramdisk.c
 void            ramdiskinit(void);
 void            ramdiskintr(void);
-void            ramdiskrw(struct buf*);
+void            ramdiskrw(struct buf*, int);
 
 // kalloc.c
 void*           kalloc(void);
@@ -82,8 +83,8 @@ void            end_op(void);
 // pipe.c
 int             pipealloc(struct file**, struct file**);
 void            pipeclose(struct pipe*, int);
-int             piperead(struct pipe*, uint64, int);
-int             pipewrite(struct pipe*, uint64, int);
+int             piperead(struct pipe*, uint64, int n);
+int             pipewrite(struct pipe*, uint64, int n);
 
 // printf.c
 void            printf(char*, ...);
@@ -203,7 +204,7 @@ int             uvmlazyalloc(struct proc*, uint64);
 
 // plic.c
 void            plicinit(void);
-void            plicinithart(void);
+void            plic_complete(int);
 int             plic_claim(void);
 void            plic_complete(int);
 
