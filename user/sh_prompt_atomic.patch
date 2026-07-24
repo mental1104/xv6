@@ -1,0 +1,26 @@
+*** Begin Patch
+*** Update File: user/sh.c
+@@
+-/** 输出带固定 root 身份和当前逻辑目录的 Bash 风格彩色提示符。 */
++/**
++ * 通过一次 console write 输出完整提示符，避免后台作业逐字符穿插 ANSI 序列。
++ *
++ * 用户态 printf() 会为每个字符单独调用 write()；若后台进程同时打印错误，提示符
++ * 的颜色控制序列和路径可能被拆散。这里先构造固定上限缓冲区，再以一次系统调用
++ * 提交，使 console 锁覆盖完整提示符。
++ */
+ static void
+ printprompt(void)
+ {
+-  fprintf(2, ANSI_GREEN_BOLD "root@xv6" ANSI_RESET ":");
+-  fprintf(2, ANSI_BLUE_BOLD "%s" ANSI_RESET "# ", shell_cwd);
++  char prompt[SHELL_CWD_SIZE + 64] = {0};
++  int length = 0;
++
++  appendtext(prompt, &length, sizeof(prompt),
++             ANSI_GREEN_BOLD "root@xv6" ANSI_RESET ":" ANSI_BLUE_BOLD);
++  appendtext(prompt, &length, sizeof(prompt), shell_cwd);
++  appendtext(prompt, &length, sizeof(prompt), ANSI_RESET "# ");
++  write(2, prompt, length);
+ }
+*** End Patch
