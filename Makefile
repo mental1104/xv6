@@ -258,6 +258,7 @@ UPROGS=\
 	$U/_vawrite\
 	$U/_vaprobe\
 	$U/_memviztest\
+	$U/_pgtbltest\
 	$U/_vaaccesstest\
 	$U/_addresswindowtest\
 	$U/_wc\
