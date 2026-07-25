@@ -21,6 +21,7 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "fsinspect.h"
 #include "buf.h"
 
 #define NBUCKET 13
@@ -32,16 +33,73 @@ struct {
   struct spinlock steal_lock;
 } bcache;
 
+struct {
+  struct spinlock lock;
+  struct fsinspect_cache_stats value;
+} bcache_stats;
+
 uint ihash(uint blockno){
   return blockno % NBUCKET;
 }
 
 char buf[NBUCKET][20];
 
+/** 记录一次已经完成归类的缓存查找。 */
+static void
+record_cache_lookup(int hit)
+{
+  acquire(&bcache_stats.lock);
+  bcache_stats.value.requests++;
+  if(hit)
+    bcache_stats.value.hits++;
+  else
+    bcache_stats.value.misses++;
+  release(&bcache_stats.lock);
+}
+
+/** 记录一次从其他哈希桶迁移空闲 buffer 的慢路径。 */
+static void
+record_cache_steal(void)
+{
+  acquire(&bcache_stats.lock);
+  bcache_stats.value.steals++;
+  release(&bcache_stats.lock);
+}
+
+/** 记录一次真实设备读取。 */
+static void
+record_disk_read(void)
+{
+  acquire(&bcache_stats.lock);
+  bcache_stats.value.disk_reads++;
+  release(&bcache_stats.lock);
+}
+
+/** 记录一次真实设备写入。 */
+static void
+record_disk_write(void)
+{
+  acquire(&bcache_stats.lock);
+  bcache_stats.value.disk_writes++;
+  release(&bcache_stats.lock);
+}
+
+/** 把累计 buffer cache 计数复制到调用者持有的快照。 */
+void
+bcache_stats_snapshot(struct fsinspect_cache_stats *out)
+{
+  acquire(&bcache_stats.lock);
+  *out = bcache_stats.value;
+  release(&bcache_stats.lock);
+}
+
 void
 binit(void)
 {
   struct buf *b;
+
+  initlock(&bcache_stats.lock, "bcache.stats");
+  memset(&bcache_stats.value, 0, sizeof(bcache_stats.value));
 
   for(int i = 0; i < NBUCKET; i++) {
     snprintf(buf[i], 20, "bcache.bucket%d", i);//13 BUCKETS  
@@ -98,6 +156,7 @@ find_unused_locked(uint idx)
   return 0;
 }
 
+/** 初始化一个准备承载指定磁盘块的空闲 buffer。 */
 static void
 prepare_buf(struct buf *b, uint dev, uint blockno)
 {
@@ -107,6 +166,7 @@ prepare_buf(struct buf *b, uint dev, uint blockno)
   b->refcnt = 1;
 }
 
+/** 从当前哈希链摘除一个调用者已锁定所在桶的 buffer。 */
 static void
 unlink_buf(struct buf *b)
 {
@@ -114,6 +174,7 @@ unlink_buf(struct buf *b)
   b->next->prev = b->prev;
 }
 
+/** 把 buffer 插入目标桶的最近使用端；调用者持有目标桶锁。 */
 static void
 insert_buf_front(uint idx, struct buf *b)
 {
@@ -125,22 +186,31 @@ insert_buf_front(uint idx, struct buf *b)
   head->next = b;
 }
 
-// Try to find the requested block or recycle an unused local buffer.
-// Caller must hold bcache.lock[idx].
+/**
+ * 在目标桶中查找已有副本，或复用一个本地空闲 buffer。
+ *
+ * @param idx 调用者已锁定的目标桶。
+ * @param dev 设备号。
+ * @param blockno 磁盘块号。
+ * @param hit 找到已有副本时写入 1；复用空闲 buffer 时写入 0。
+ * @return 已增加引用或重新初始化的 buffer；没有本地候选时返回 0。
+ */
 static struct buf *
-try_get_local_locked(uint idx, uint dev, uint blockno)
+try_get_local_locked(uint idx, uint dev, uint blockno, int *hit)
 {
   struct buf *b;
 
   b = find_cached_locked(idx, dev, blockno);
   if(b != 0){
     b->refcnt++;
+    *hit = 1;
     return b;
   }
 
   b = find_unused_locked(idx);
   if(b != 0){
     prepare_buf(b, dev, blockno);
+    *hit = 0;
     return b;
   }
 
@@ -155,6 +225,7 @@ bget(uint dev, uint blockno)
 {
   uint home_idx = ihash(blockno);
   int holding_steal_lock = 0;
+  int cache_hit = 0;
   struct buf *b;
 
   /*
@@ -163,9 +234,11 @@ bget(uint dev, uint blockno)
    */
   acquire(&bcache.lock[home_idx]);
 
-  b = try_get_local_locked(home_idx, dev, blockno);
-  if(b != 0)
+  b = try_get_local_locked(home_idx, dev, blockno, &cache_hit);
+  if(b != 0){
+    record_cache_lookup(cache_hit);
     goto found;
+  }
 
   release(&bcache.lock[home_idx]);
 
@@ -182,9 +255,11 @@ bget(uint dev, uint blockno)
    * The target bucket may have changed while its lock was released.
    * Recheck it to avoid creating duplicate buffers for one disk block.
    */
-  b = try_get_local_locked(home_idx, dev, blockno);
-  if(b != 0)
+  b = try_get_local_locked(home_idx, dev, blockno, &cache_hit);
+  if(b != 0){
+    record_cache_lookup(cache_hit);
     goto found;
+  }
 
   /*
    * Keep the target bucket locked while moving a buffer into it.
@@ -207,6 +282,8 @@ bget(uint dev, uint blockno)
     release(&bcache.lock[victim_idx]);
 
     insert_buf_front(home_idx, b);
+    record_cache_lookup(0);
+    record_cache_steal();
     goto found;
   }
 
@@ -238,6 +315,7 @@ bread(uint dev, uint blockno)
   if(!b->valid) {
     virtio_disk_rw(b, 0);
     b->valid = 1;
+    record_disk_read();
   }
   return b;
 }
@@ -249,6 +327,7 @@ bwrite(struct buf *b)
   if(!holdingsleep(&b->lock))
     panic("bwrite");
   virtio_disk_rw(b, 1);
+  record_disk_write();
 }
 
 // Release a locked buffer.
@@ -292,5 +371,3 @@ bunpin(struct buf *b) {
   b->refcnt--;
   release(&bcache.lock[idx]);
 }
-
-
