@@ -734,7 +734,7 @@ verify_condition_wait_protocol(void)
 /**
  * main 执行 schedtrace、schedviz 或聚焦条件等待的 guest-first 回归。
  *
- * @param argc 参数数量；无参数运行原 schedtrace 回归，`condvar` 只运行条件等待闭环。
+ * @param argc 参数数量；无参数运行完整核心回归，`condvar` 只运行条件等待闭环。
  * @param argv 参数数组。
  * @return 成功 exit(0)，任一断言失败 exit(1)。
  */
@@ -756,6 +756,7 @@ main(int argc, char **argv)
   verify_repeat_reset();
   verify_invalid_inputs();
   verify_schedviz_args();
+  verify_condition_wait_protocol();
   printf("schedtracetest: OK\n");
   exit(0);
 }
