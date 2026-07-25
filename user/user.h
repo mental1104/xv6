@@ -95,6 +95,15 @@ int swapout(void *address);
 int swapinfo(void *address, struct swap_info *info);
 
 /**
+ * 执行 kernel/locklab.h 定义的可重复锁实验操作。
+ *
+ * @param operation LOCKLAB_* 操作编号。
+ * @param value 操作参数；当前仅 LOCKLAB_SPLIT_WRITE 使用。
+ * @return 操作结果；未知操作或前置状态不满足时返回 -1。
+ */
+int locklab(int operation, int value);
+
+/**
  * 将当前进程表复制到用户提供的结构化快照数组。
  *
  * @param entries 接收最多 max_entries 个 struct procinfo；结构定义在 kernel/procinfo.h。

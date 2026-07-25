@@ -53,6 +53,7 @@ static const char *const syscall_names[] = {
 [SYS_swapout]          = "swapout",
 [SYS_swapinfo]         = "swapinfo",
 [SYS_concurrencylab]   = "concurrencylab",
+[SYS_locklab]          = "locklab",
 };
 
 // 名称表中可访问的元素数量（包含下标 0），用于限制遍历和查找范围。

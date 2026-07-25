@@ -47,3 +47,4 @@
 #define SYS_swapout          46
 #define SYS_swapinfo         47
 #define SYS_concurrencylab   48
+#define SYS_locklab          49
