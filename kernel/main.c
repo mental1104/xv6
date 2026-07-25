@@ -4,6 +4,8 @@
 #include "riscv.h"
 #include "defs.h"
 
+extern void seminit(void);
+
 volatile static int started = 0;
 
 // start() jumps here in supervisor mode on all CPUs.
@@ -23,6 +25,7 @@ main()
     kvmmap(RTC, RTC, PGSIZE, PTE_R | PTE_W);
     kvminithart();   // turn on paging
     procinit();      // process table
+    seminit();       // teaching semaphore table
     trapinit();      // trap vectors
     trapinithart();  // install kernel trap vector
     plicinit();      // set up interrupt controller
