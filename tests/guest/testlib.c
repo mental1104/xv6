@@ -26,6 +26,7 @@ static struct test_program_path test_program_paths[] = {
   {"uthread", XV6_USR_BIN_PATH("uthread")},
   {"varead", XV6_USR_BIN_PATH("varead")},
   {"vawrite", XV6_USR_BIN_PATH("vawrite")},
+  {"eventloop", XV6_USR_BIN_PATH("eventloop")},
   {0, 0},
 };
 
