@@ -89,6 +89,7 @@ static struct image_file image_files[] = {
   {"/alarmtest", XV6_TEST_PATH("alarmtest")},
   {"/lazytests", XV6_TEST_PATH("lazytests")},
   {"/cowtest", XV6_TEST_PATH("cowtest")},
+  {"/fileapitest", XV6_TEST_PATH("fileapitest")},
   {"/bigfile", XV6_TEST_PATH("bigfile")},
   {"/largefile", XV6_TEST_PATH("largefile")},
   {"/symlinktest", XV6_TEST_PATH("symlinktest")},
