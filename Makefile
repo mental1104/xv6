@@ -36,8 +36,10 @@ OBJS = \
   $K/sleeplock.o \
   $K/file.o \
   $K/pipe.o \
+  $K/poll.o \
   $K/exec.o \
   $K/sysfile.o \
+  $K/syspoll.o \
   $K/sysseek.o \
   $K/kernelvec.o \
   $K/plic.o \
@@ -223,6 +225,11 @@ $U/_uthreadtest: $T/uthreadtest.o $T/testlib.o $(ULIB)
 	$(OBJDUMP) -S $@ > $T/uthreadtest.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/uthreadtest.sym
 
+$U/_eventlooptest: $T/eventlooptest.o $T/testlib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $T/eventlooptest.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/eventlooptest.sym
+
 $U/_uthread: $U/uthread.o $U/uthreadlib.o $(ULIB)
 	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
 	$(OBJDUMP) -S $U/_uthread > $U/uthread.asm
@@ -257,6 +264,7 @@ UPROGS=\
 	$U/_varead\
 	$U/_vawrite\
 	$U/_vaprobe\
+	$U/_eventloop\
 	$U/_memviztest\
 	$U/_pgtbltest\
 	$U/_vaaccesstest\
@@ -290,6 +298,7 @@ UPROGS=\
 	$U/_lab1test\
 	$U/_tracesmoke\
 	$U/_uthreadtest\
+	$U/_eventlooptest\
 	$U/_historytest\
 	$U/_consolelinetest\
 	$U/_lstest\
