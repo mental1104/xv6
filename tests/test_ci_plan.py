@@ -36,6 +36,12 @@ class CiPlanSelectionTests(unittest.TestCase):
         self.assertNotIn("lab9-bigfile", plan.suites)
         self.assertFalse(plan.run_shell_history)
 
+    def test_address_space_lifecycle_runs_vm_regression(self) -> None:
+        plan = PLANNER.build_ci_plan(("tests/guest/addressspacelifecycle.c",))
+
+        self.assertEqual(PLANNER.VM_SUITES, plan.suites)
+        self.assertFalse(plan.run_shell_history)
+
     def test_filesystem_change_keeps_bigfile_boundary_test(self) -> None:
         plan = PLANNER.build_ci_plan(("kernel/fs.c",))
 

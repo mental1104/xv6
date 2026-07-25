@@ -72,6 +72,7 @@ VM_PATHS = {
     "kernel/trap.c",
     "kernel/vm.c",
     "kernel/vmcopyin.c",
+    "tests/guest/addressspacelifecycle.c",
     "tests/guest/cowtest.c",
     "tests/guest/lazytests.c",
     "tests/guest/memviztest.c",
