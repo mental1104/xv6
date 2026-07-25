@@ -46,4 +46,5 @@
 #define SYS_getprocs         45
 #define SYS_swapout          46
 #define SYS_swapinfo         47
-#define SYS_pollread         48
+#define SYS_concurrencylab   48
+#define SYS_pollread         49
