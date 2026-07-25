@@ -121,12 +121,14 @@ struct memviz_pte_entry {
 
 // 对单个用户虚拟地址执行只读页表查询的结果。
 struct memviz_va_query {
+  // va 和 pa 都是页对齐基址；调用者保留原始 VA 才能恢复页内偏移。
   uint64 va;
   int present;
   int kalloc_cell;
   int reserved;
   uint64 pte;
   uint64 flags;
+  // 映射存在时，字节物理地址等于 pa + (original_va & (PGSIZE - 1))。
   uint64 pa;
   struct memviz_pte_level levels[3];
 };
