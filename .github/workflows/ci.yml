@@ -75,6 +75,11 @@ jobs:
           else
             echo 'job_control=false' >> "$GITHUB_OUTPUT"
           fi
+          if grep -Eq '^(kernel/(pipe\.c|poll\.c|syspoll\.c)|user/eventloop\.c|tests/guest/eventlooptest\.c)$' /tmp/changed-files.txt; then
+            echo 'eventloop=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'eventloop=false' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run shell history interaction regression
         if: >-
@@ -138,6 +143,17 @@ jobs:
           # 逐项 runner 为每个测试设置独立看门狗，并有意跳过旧 writebig 的
           # MAXFILE 密集写。三级间接和文件上界由已选中的 lab9-bigfile 专项覆盖。
           python3 tests/run_usertests.py --cpus 3 || { dump_usertests_log; exit 1; }
+
+      - name: Run event-loop regression single-core
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.plan.outputs.eventloop == 'true'
+        run: |
+          set -o pipefail
+          mkdir -p test-results/infrastructure
+          make clean
+          make -j2 CPUS=1 2>&1 | tee test-results/infrastructure/eventloop-single-core-build.log
+          make test-suite SUITE=usertests-core CPUS=1 2>&1 | tee test-results/infrastructure/eventloop-single-core-run.log
 
       - name: Run scheduled or manual full regression
         if: github.event_name != 'pull_request'
