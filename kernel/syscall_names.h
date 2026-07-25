@@ -52,6 +52,7 @@ static const char *const syscall_names[] = {
 [SYS_getprocs]         = "getprocs",
 [SYS_swapout]          = "swapout",
 [SYS_swapinfo]         = "swapinfo",
+[SYS_concurrencylab]   = "concurrencylab",
 [SYS_pollread]         = "pollread",
 };
 
