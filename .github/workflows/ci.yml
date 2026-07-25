@@ -109,7 +109,12 @@ jobs:
         if: >-
           github.event_name == 'pull_request' &&
           contains(steps.plan.outputs.suites, 'lab-vm')
-        run: make test-suite SUITE=lab-vm CPUS=1
+        run: |
+          # CPUS changes a compile-time kernel constant. Rebuild after the
+          # default three-CPU suite instead of reusing its stale kernel image.
+          make clean
+          make -j2 CPUS=1
+          make test-suite SUITE=lab-vm CPUS=1
 
       - name: Run complete usertests for lifecycle-sensitive changes
         if: >-
