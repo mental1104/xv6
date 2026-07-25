@@ -2,12 +2,13 @@
 #define XV6_MEMVIZTEST_SWAP_H
 
 #include "kernel/types.h"
-#include "kernel/param.h"
-#include "kernel/memlayout.h"
-#include "kernel/riscv.h"
 #include "kernel/memviz.h"
 #include "kernel/swap.h"
 #include "user/user.h"
+
+#define SWAP_TEST_PGSIZE 4096L
+#define SWAP_TEST_PGROUNDUP(value) \
+  (((value) + SWAP_TEST_PGSIZE - 1) & ~(SWAP_TEST_PGSIZE - 1))
 
 static struct swap_info swap_before;
 static struct swap_info swap_swapped;
@@ -35,8 +36,8 @@ static char *
 swap_test_allocate(uint64 *old_break, int *growth)
 {
   *old_break = (uint64)sbrk(0);
-  uint64 page_va = PGROUNDUP(*old_break);
-  uint64 growth64 = page_va + PGSIZE - *old_break;
+  uint64 page_va = SWAP_TEST_PGROUNDUP(*old_break);
+  uint64 growth64 = page_va + SWAP_TEST_PGSIZE - *old_break;
   if(growth64 > 0x7fffffffULL)
     swap_test_fail("growth exceeds sbrk ABI");
 
@@ -50,14 +51,14 @@ swap_test_allocate(uint64 *old_break, int *growth)
 static void
 swap_test_fill(char *page)
 {
-  for(int offset = 0; offset < PGSIZE; offset++)
+  for(int offset = 0; offset < SWAP_TEST_PGSIZE; offset++)
     page[offset] = swap_test_byte(offset);
 }
 
 static void
 swap_test_verify(char *page)
 {
-  for(int offset = 0; offset < PGSIZE; offset++){
+  for(int offset = 0; offset < SWAP_TEST_PGSIZE; offset++){
     if(page[offset] != swap_test_byte(offset))
       swap_test_fail("data preservation");
   }
@@ -101,7 +102,7 @@ swap_test_cycle(void)
 
   if(swapout(page) < 0)
     swap_test_fail("second swapout");
-  if((uint64)sbrk(-growth) != (uint64)page + PGSIZE)
+  if((uint64)sbrk(-growth) != (uint64)page + SWAP_TEST_PGSIZE)
     swap_test_fail("sbrk release");
   if((uint64)sbrk(0) != old_break)
     swap_test_fail("break not restored");
@@ -167,7 +168,7 @@ swap_test_fork_ownership(void)
      parent_resident.page_state != SWAP_PAGE_RESIDENT ||
      parent_resident.used_slots != baseline.used_slots)
     swap_test_fail("parent page-in cleanup");
-  if((uint64)sbrk(-growth) != (uint64)page + PGSIZE ||
+  if((uint64)sbrk(-growth) != (uint64)page + SWAP_TEST_PGSIZE ||
      (uint64)sbrk(0) != old_break)
     swap_test_fail("fork test break cleanup");
 
@@ -218,5 +219,8 @@ memviztest_swap(void)
   printf("SWAP policy=explicit teaching trigger automatic_replacement=absent\n");
   printf("swaptest: OK\n");
 }
+
+#undef SWAP_TEST_PGROUNDUP
+#undef SWAP_TEST_PGSIZE
 
 #endif
