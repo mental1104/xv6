@@ -102,6 +102,14 @@ jobs:
           steps.plan.outputs.job_control == 'true'
         run: python3 tests/run.py --suite usertests-core --cpus 1
 
+      - name: Restore three-core build after single-core job-control
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.plan.outputs.job_control == 'true'
+        run: |
+          make clean
+          make -j2 CPUS=3
+
       - name: Run selected PR QEMU regression
         if: >-
           github.event_name == 'pull_request' &&
