@@ -44,3 +44,4 @@
 #define SYS_lseek            43
 #define SYS_execve           44
 #define SYS_getprocs         45
+#define SYS_locklab          46
