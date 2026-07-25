@@ -62,3 +62,4 @@ entry("getprocs");
 entry("swapout");
 entry("swapinfo");
 entry("concurrencylab");
+entry("fsinspect");

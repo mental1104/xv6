@@ -32,12 +32,14 @@ OBJS = \
   $K/sysmemviz.o \
   $K/bio.o \
   $K/fs.o \
+  $K/fsinspect.o \
   $K/log.o \
   $K/sleeplock.o \
   $K/file.o \
   $K/pipe.o \
   $K/exec.o \
   $K/sysfile.o \
+  $K/sysfsinspect.o \
   $K/sysseek.o \
   $K/kernelvec.o \
   $K/plic.o \
