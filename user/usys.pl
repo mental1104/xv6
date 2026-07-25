@@ -61,3 +61,4 @@ entry("tcsetpgrp");
 entry("getprocs");
 entry("swapout");
 entry("swapinfo");
+entry("concurrencylab");
