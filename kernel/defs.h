@@ -74,6 +74,10 @@ void            kinit(void);
 void            increase_rc(uint64);
 int             cow_alloc(pagetable_t, uint64);
 
+// locklab.c
+void            locklabinit(void);
+int             locklab_run(int, int);
+
 // log.c
 void            initlog(int, struct superblock*);
 void            log_write(struct buf*);
