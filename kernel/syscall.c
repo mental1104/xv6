@@ -143,6 +143,7 @@ extern uint64 sys_getpgid(void);
 extern uint64 sys_procctl(void);
 extern uint64 sys_tcsetpgrp(void);
 extern uint64 sys_getprocs(void);
+extern uint64 sys_locklab(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -190,6 +191,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_lseek]            sys_lseek,
 [SYS_execve]           sys_execve,
 [SYS_getprocs]         sys_getprocs,
+[SYS_locklab]          sys_locklab,
 };
 
 void
