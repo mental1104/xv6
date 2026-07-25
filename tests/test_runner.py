@@ -132,16 +132,20 @@ class SuiteCompositionTests(unittest.TestCase):
         expanded = RUNNER._deduplicate(RUNNER._expand_suite("pr"))
         self.assertNotIn("largefs-4gib", expanded)
 
-    def test_lab8_pr_suite_excludes_slow_usertests(self) -> None:
-        commands = [test.commands for test in RUNNER.SUITES["lab8-locks"].tests]
+    def test_lab8_pr_suite_runs_single_and_multi_core_lock_regression(self) -> None:
+        tests = RUNNER.SUITES["lab8-locks"].tests
+        commands = [test.commands for test in tests]
         self.assertEqual(
             [
+                ("python3 tests/run.py --suite lock-model-cpu1 --cpus 1",),
                 ("xv6test --run lab8-lock-model",),
                 ("xv6test --run lab8-createdelete",),
                 ("xv6test --run lab8-fourfiles",),
             ],
             commands,
         )
+        self.assertTrue(tests[0].host)
+        self.assertFalse(any(test.host for test in tests[1:]))
 
     def test_full_suite_uses_complete_usertests(self) -> None:
         expanded = RUNNER._deduplicate(RUNNER._expand_suite("full"))
@@ -162,6 +166,7 @@ class SuiteCompositionTests(unittest.TestCase):
             "lab-basic",
             "lab-vm",
             "lab7-thread",
+            "lock-model-cpu1",
             "lab8-locks",
             "lab9-bigfile",
             "lab9-symlink",
