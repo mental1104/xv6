@@ -63,3 +63,8 @@ entry("swapout");
 entry("swapinfo");
 entry("concurrencylab");
 entry("fsinspect");
+entry("semcreate");
+entry("semwait");
+entry("sempost");
+entry("semdestroy");
+entry("seminfo");

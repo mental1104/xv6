@@ -147,6 +147,11 @@ extern uint64 sys_getprocs(void);
 extern uint64 sys_swapout(void);
 extern uint64 sys_swapinfo(void);
 extern uint64 sys_concurrencylab(void);
+extern uint64 sys_semcreate(void);
+extern uint64 sys_semwait(void);
+extern uint64 sys_sempost(void);
+extern uint64 sys_semdestroy(void);
+extern uint64 sys_seminfo(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -198,6 +203,11 @@ static uint64 (*syscalls[])(void) = {
 [SYS_swapinfo]         sys_swapinfo,
 [SYS_concurrencylab]   sys_concurrencylab,
 [SYS_fsinspect]        sys_fsinspect,
+[SYS_semcreate]        sys_semcreate,
+[SYS_semwait]          sys_semwait,
+[SYS_sempost]          sys_sempost,
+[SYS_semdestroy]       sys_semdestroy,
+[SYS_seminfo]          sys_seminfo,
 };
 
 void
