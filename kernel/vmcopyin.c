@@ -30,7 +30,7 @@ static struct stats {
 
 struct swap_state {
   struct spinlock lock;
-  uchar used[NSWAP];
+  uint refs[NSWAP];
   uint64 page_outs;
   uint64 page_ins;
 };
@@ -57,15 +57,15 @@ ensure_swap_state(void)
   __sync_synchronize();
 }
 
-/** Reserve one private backing-file slot before publishing a swapped PTE. */
+/** Reserve one backing-file slot before publishing a swapped PTE. */
 static int
 swap_slot_alloc(void)
 {
   ensure_swap_state();
   acquire(&swap_state.lock);
   for(int slot = 0; slot < NSWAP; slot++){
-    if(swap_state.used[slot] == 0){
-      swap_state.used[slot] = 1;
+    if(swap_state.refs[slot] == 0){
+      swap_state.refs[slot] = 1;
       release(&swap_state.lock);
       return slot;
     }
@@ -74,7 +74,25 @@ swap_slot_alloc(void)
   return -1;
 }
 
-/** Release a slot after page-in, unmap, process exit, or rollback. */
+/** Retain immutable backing data when fork duplicates a non-resident PTE. */
+static int
+swap_slot_retain(int slot)
+{
+  if(slot < 0 || slot >= NSWAP)
+    return -1;
+
+  ensure_swap_state();
+  acquire(&swap_state.lock);
+  if(swap_state.refs[slot] == 0 || swap_state.refs[slot] == (uint)-1){
+    release(&swap_state.lock);
+    return -1;
+  }
+  swap_state.refs[slot]++;
+  release(&swap_state.lock);
+  return 0;
+}
+
+/** Release one PTE's ownership after page-in, unmap, exit, or rollback. */
 static void
 swap_slot_free(int slot)
 {
@@ -83,9 +101,9 @@ swap_slot_free(int slot)
 
   ensure_swap_state();
   acquire(&swap_state.lock);
-  if(swap_state.used[slot] == 0)
+  if(swap_state.refs[slot] == 0)
     panic("swap double free");
-  swap_state.used[slot] = 0;
+  swap_state.refs[slot]--;
   release(&swap_state.lock);
 }
 
@@ -127,7 +145,7 @@ swap_file_io(int write_page, int slot, char *page)
   return result;
 }
 
-/** Count currently reserved slots while holding only the slot bitmap lock. */
+/** Count slots with at least one owning swapped PTE. */
 static uint
 swap_used_slots(void)
 {
@@ -136,12 +154,12 @@ swap_used_slots(void)
   ensure_swap_state();
   acquire(&swap_state.lock);
   for(int slot = 0; slot < NSWAP; slot++)
-    used += swap_state.used[slot] != 0;
+    used += swap_state.refs[slot] != 0;
   release(&swap_state.lock);
   return used;
 }
 
-/** Free the backing slot encoded in a non-resident leaf PTE. */
+/** Free the backing-slot reference encoded in a non-resident leaf PTE. */
 static void
 swap_pte_release(pte_t pte)
 {
@@ -237,32 +255,17 @@ swap_in_page(struct proc *p, uint64 va)
   return 0;
 }
 
-/** Duplicate a swapped page into a child-owned slot during fork(). */
+/** Share immutable swap data across fork without sleeping under child proc lock. */
 static int
 swap_pte_clone(pte_t source, pte_t *destination)
 {
   if(!PTE_IS_SWAPPED(source) || destination == 0 || *destination != 0)
     return -1;
 
-  int source_slot = PTE_TO_SWAP_SLOT(source);
-  int destination_slot = swap_slot_alloc();
-  if(destination_slot < 0)
+  int slot = PTE_TO_SWAP_SLOT(source);
+  if(swap_slot_retain(slot) < 0)
     return -1;
-
-  char *page = kalloc();
-  if(page == 0){
-    swap_slot_free(destination_slot);
-    return -1;
-  }
-  if(swap_file_io(0, source_slot, page) < 0 ||
-     swap_file_io(1, destination_slot, page) < 0){
-    kfree(page);
-    swap_slot_free(destination_slot);
-    return -1;
-  }
-  kfree(page);
-
-  *destination = SWAP_SLOT_TO_PTE(destination_slot) | PTE_FLAGS(source);
+  *destination = SWAP_SLOT_TO_PTE(slot) | PTE_FLAGS(source);
   return 0;
 }
 
@@ -365,7 +368,7 @@ uvmfree(pagetable_t pagetable, uint64 sz)
   vm_legacy_uvmfree(pagetable, 0);
 }
 
-/** Preserve swapped private pages across fork using child-owned disk slots. */
+/** Preserve swapped pages across fork by retaining immutable backing slots. */
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
