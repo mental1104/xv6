@@ -40,6 +40,7 @@ GUEST_SOURCE_NAMES = (
     "lab1test.c",
     "tracesmoke.c",
     "uthreadtest.c",
+    "eventlooptest.c",
     "vaaccesstest.c",
     "addresswindowtest.c",
     "testlib.c",
