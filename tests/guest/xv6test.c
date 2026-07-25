@@ -42,6 +42,7 @@ static char *lab8_kalloc_argv[] = {XV6_TEST_PATH("usertests"), "sbrkmuch", 0};
 static char *lab8_createdelete_argv[] = {XV6_TEST_PATH("usertests"), "createdelete", 0};
 static char *lab8_fourfiles_argv[] = {XV6_TEST_PATH("usertests"), "fourfiles", 0};
 static char *lab8_bigwrite_argv[] = {XV6_TEST_PATH("usertests"), "bigwrite", 0};
+static char *lab8_lock_model_argv[] = {XV6_TEST_PATH("locktest"), "positive", 0};
 static char *lab9_bigfile_argv[] = {XV6_TEST_PATH("bigfile"), 0};
 static char *lab9_symlink_argv[] = {XV6_TEST_PATH("symlinktest"), 0};
 static char *largefs_4gib_argv[] = {XV6_TEST_PATH("largefile"), 0};
@@ -101,6 +102,7 @@ static struct xv6_test_case tests[] = {
   {"lab8", "lab8-createdelete", lab8_createdelete_argv},
   {"lab8", "lab8-fourfiles", lab8_fourfiles_argv},
   {"lab8", "lab8-bigwrite", lab8_bigwrite_argv},
+  {"lab8", "lab8-lock-model", lab8_lock_model_argv},
   {"lab9", "lab9-bigfile", lab9_bigfile_argv},
   {"lab9", "lab9-symlink", lab9_symlink_argv},
   {"largefs", "largefs-4gib", largefs_4gib_argv},
