@@ -6,6 +6,8 @@
 #include "kernel/sleeplock.h"
 #include "kernel/fs.h"
 #include "kernel/file.h"
+#include "kernel/riscv.h"
+#include "kernel/swap.h"
 #include "user/user.h"
 #include "user/paths.h"
 #include "kernel/fcntl.h"
@@ -105,6 +107,8 @@ static struct image_file image_files[] = {
   {0, 0},
 };
 
+static char swap_zero_page[PGSIZE];
+
 /**
  * 打印不可恢复的启动布局错误并停止 PID 1 继续破坏文件系统。
  *
@@ -196,6 +200,24 @@ ensure_file_link(char *source, char *destination)
     layout_fail("link data", destination);
 }
 
+/** Create and fully preallocate the fixed-size backing store before user tests. */
+static void
+setup_swap_backing(void)
+{
+  int fd = open(SWAPFILE_PATH, O_CREATE | O_RDWR | O_TRUNC);
+  if(fd < 0)
+    layout_fail("create swap backing", SWAPFILE_PATH);
+
+  for(int slot = 0; slot < NSWAP; slot++){
+    if(write(fd, swap_zero_page, (int)sizeof(swap_zero_page)) !=
+       (int)sizeof(swap_zero_page)){
+      close(fd);
+      layout_fail("preallocate swap backing", SWAPFILE_PATH);
+    }
+  }
+  close(fd);
+}
+
 /** 在首个 Shell 启动前建立并验证教学版目录布局。 */
 static void
 setup_image_layout(void)
@@ -207,6 +229,7 @@ setup_image_layout(void)
 
   // 原始 usertests 的 copyout 用例读取相对路径 README；它不是可执行文件搜索。
   ensure_file_link("/README", "/root/README");
+  setup_swap_backing();
 }
 
 int

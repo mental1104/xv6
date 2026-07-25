@@ -44,3 +44,5 @@
 #define SYS_lseek            43
 #define SYS_execve           44
 #define SYS_getprocs         45
+#define SYS_swapout          46
+#define SYS_swapinfo         47

@@ -10,6 +10,7 @@ struct memviz_va_query;
 struct sched_stats;
 struct schedtrace_snapshot;
 struct user_context;
+struct swap_info;
 
 // system calls
 int fork(void);
@@ -71,6 +72,16 @@ int sched_set_hint(int ticks);
 int sched_set_weight(int weight);
 int sched_get_stats(struct sched_stats *stats);
 int schedtrace(int op, struct schedtrace_snapshot *snapshot, int arg);
+
+/**
+ * Explicitly move one current-process anonymous user page to the teaching
+ * swap backing file. This exposes mechanism only; no automatic replacement
+ * policy is implied.
+ */
+int swapout(void *address);
+
+/** Return global swap counters and the non-faulting state of one virtual page. */
+int swapinfo(void *address, struct swap_info *info);
 
 /**
  * 将当前进程表复制到用户提供的结构化快照数组。
