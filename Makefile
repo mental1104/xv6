@@ -282,6 +282,7 @@ UPROGS=\
 	$U/_alarmtest\
 	$U/_lazytests\
 	$U/_cowtest\
+	$U/_fileapitest\
 	$U/_bigfile\
 	$U/_largefile\
 	$U/_symlinktest\
