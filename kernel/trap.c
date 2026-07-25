@@ -201,18 +201,18 @@ usertrapret(void)
 
   // set up trapframe values that uservec will need when
   // the process next re-enters the kernel.
-  p->trapframe->kernel_satp = r_satp();         // kernel page table
-  p->trapframe->kernel_sp = p->kstack + PGSIZE; // process's kernel stack
+  p->trapframe->kernel_satp = r_satp();
+  p->trapframe->kernel_sp = p->kstack + PGSIZE;
   p->trapframe->kernel_trap = (uint64)usertrap;
-  p->trapframe->kernel_hartid = r_tp();         // hartid for cpuid()
+  p->trapframe->kernel_hartid = r_tp();
 
   // set up the registers that the trampoline.S's sret will use
   // to get to user space.
 
   // set S Previous Privilege mode to User.
   unsigned long x = r_sstatus();
-  x &= ~SSTATUS_SPP; // clear SPP to 0 for user mode
-  x |= SSTATUS_SPIE; // enable interrupts in user mode
+  x &= ~SSTATUS_SPP;
+  x |= SSTATUS_SPIE;
   w_sstatus(x);
 
   // set S Exception Program Counter to the saved user pc.
@@ -290,8 +290,9 @@ devintr()
 
     if(irq == UART0_IRQ){
       uartintr();
-    } else if(irq == VIRTIO0_IRQ){
-      virtio_disk_intr();
+    } else if(irq >= VIRTIO0_IRQ && irq <= VIRTIO2_IRQ){
+      // QEMU 的三个连续 virtio-mmio 插槽分别使用 IRQ 1、2、3。
+      virtio_disk_intr(irq - VIRTIO0_IRQ);
     } else if(irq){
       printf("unexpected interrupt irq=%d\n", irq);
     }

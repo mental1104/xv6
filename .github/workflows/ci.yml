@@ -43,6 +43,8 @@ jobs:
             tests/run.py \
             tests/run_usertests.py \
             tests/shell_history_interactive.py \
+            tests/raid1_experiment.py \
+            tests/test_raid1_experiment.py \
             tests/test_runner.py \
             tests/ci_plan.py \
             tests/test_ci_plan.py
@@ -51,8 +53,10 @@ jobs:
 
       - name: Build xv6
         run: |
+          set -o pipefail
+          mkdir -p test-results/build
           make clean
-          make -j2
+          make -j2 2>&1 | tee test-results/build/xv6-build.log
 
       - name: Select PR regression suites
         if: github.event_name == 'pull_request'
@@ -79,6 +83,11 @@ jobs:
             echo 'concurrency_single_core=true' >> "$GITHUB_OUTPUT"
           else
             echo 'concurrency_single_core=false' >> "$GITHUB_OUTPUT"
+          fi
+          if grep -Eq '^(Makefile|kernel/(defs\.h|main\.c|memlayout\.h|plic\.c|raid1\.(c|h)|syscall\.c|syscall\.h|syscall_names\.h|sysraid1\.c|trap\.c|virtio\.h|virtio_disk\.c)|user/(init\.c|user\.h|usys\.pl)|tests/(guest/raid1test\.c|raid1_experiment\.py|test_raid1_experiment\.py))$' /tmp/changed-files.txt; then
+            echo 'raid1=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'raid1=false' >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run shell history interaction regression
@@ -109,6 +118,18 @@ jobs:
           done
           printf 'Selected PR suites: %s\n' "${suites[*]}"
           python3 tests/run.py "${args[@]}" --cpus 3
+
+      - name: Run RAID1 fault-recovery experiment
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.plan.outputs.raid1 == 'true'
+        run: |
+          make clean
+          make -j2 CPUS=1
+          make raid1test CPUS=1
+          make clean
+          make -j2 CPUS=3
+          make raid1test CPUS=3
 
       - name: Run concurrency regression single-core
         if: >-
@@ -178,5 +199,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: xv6-test-results-${{ github.run_id }}
-          path: test-results/
+          path: |
+            test-results/
+            artifacts/raid1*/
           if-no-files-found: ignore

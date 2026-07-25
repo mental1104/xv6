@@ -4,6 +4,8 @@ struct file;
 struct inode;
 struct pipe;
 struct proc;
+struct raid1_info;
+struct raid1_result;
 struct spinlock;
 struct sleeplock;
 struct stat;
@@ -123,6 +125,11 @@ int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
 int             lazy_grow_proc(int);
 
+// raid1.c
+void            raid1_init(void);
+int             raid1_get_info(struct raid1_info*);
+int             raid1_rw(int, uint, uchar*, struct raid1_result*);
+
 // swtch.S
 void            swtch(struct context*, struct context*);
 
@@ -210,8 +217,11 @@ void            plic_complete(int);
 
 // virtio_disk.c
 void            virtio_disk_init(void);
+int             virtio_disk_present(int);
+uint64          virtio_disk_capacity(int);
+int             virtio_disk_rw_device(int, struct buf *, int);
 void            virtio_disk_rw(struct buf *, int);
-void            virtio_disk_intr(void);
+void            virtio_disk_intr(int);
 
 uint64          free_proc(void);
 uint64          free_mem(void);

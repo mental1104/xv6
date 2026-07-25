@@ -30,6 +30,7 @@ OBJS = \
   $K/sysps.o \
   $K/memviz.o \
   $K/sysmemviz.o \
+  $K/sysraid1.o \
   $K/bio.o \
   $K/fs.o \
   $K/log.o \
@@ -42,6 +43,7 @@ OBJS = \
   $K/kernelvec.o \
   $K/plic.o \
   $K/virtio_disk.o \
+  $K/raid1.o \
   $K/sprintf.o \
   $K/vma.o
 
@@ -259,6 +261,7 @@ UPROGS=\
 	$U/_vaprobe\
 	$U/_memviztest\
 	$U/_pgtbltest\
+	$U/_raid1test\
 	$U/_vaaccesstest\
 	$U/_addresswindowtest\
 	$U/_wc\
@@ -315,6 +318,7 @@ clean:
 		$U/initcode $U/initcode.out $K/kernel fs.img fs-large.img \
 		mkfs/mkfs mkfs/mkfs-large .gdbinit $U/usys.S $(UPROGS) $(UEXTRA) ph barrier rbtree_test scheduler_visualizer
 	$(CLEAN_SCHEDVIZ_ARTIFACTS)
+	rm -rf artifacts/raid1*
 
 GDBPORT = $(shell expr `id -u` % 5000 + 25000)
 QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
@@ -328,6 +332,14 @@ CFLAGS += -DXV6_CPUS=$(CPUS)
 QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 2G -smp $(CPUS) -nographic
 QEMUOPTS += -drive file=$(FSIMG),if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
+ifneq ($(strip $(RAID1_MEMBER0)),)
+QEMUOPTS += -drive file=$(RAID1_MEMBER0),if=none,format=raw,id=raid10
+QEMUOPTS += -device virtio-blk-device,drive=raid10,bus=virtio-mmio-bus.1
+endif
+ifneq ($(strip $(RAID1_MEMBER1)),)
+QEMUOPTS += -drive file=$(RAID1_MEMBER1),if=none,format=raw,id=raid11
+QEMUOPTS += -device virtio-blk-device,drive=raid11,bus=virtio-mmio-bus.2
+endif
 QEMUOPTS += $(QEMUEXTRA)
 
 qemu: $K/kernel $(FSIMG)
@@ -387,6 +399,10 @@ test-suite: $K/kernel fs.img
 	@test -n "$(SUITE)" || (echo "usage: make test-suite SUITE=<suite> [CPUS=<n>]"; exit 2)
 	$(PYTHON) tests/run.py --suite $(SUITE) --cpus $(CPUS)
 
+# 创建两个真实 raw 成员镜像，并跨四次 QEMU 启动验证降级、损坏、自愈与重启一致性。
+raid1test: $K/kernel fs.img
+	$(PYTHON) tests/raid1_experiment.py --cpus $(CPUS) --artifacts artifacts/raid1-cpu$(CPUS)
+
 schedviz:
 	$(MAKE) clean KEEP_ARTIFACTS=1
 	$(MAKE) $K/kernel fs.img scheduler_visualizer SCHED_POLICY=$(SCHED_POLICY) CPUS=$(CPUS)
@@ -402,4 +418,4 @@ largefiletest: $K/kernel fs-large.img
 	FSIMG=fs-large.img $(PYTHON) tests/run_largefile.py --suite largefs-4gib --cpus $(CPUS)
 
 .PHONY: clean qemu qemu-gdb gdb ph barrier scheduler_visualizer test-rbtree test test-unit test-grader \
-	test-integration test-labs test-usertests test-full test-suite schedviz largefiletest
+	test-integration test-labs test-usertests test-full test-suite raid1test schedviz largefiletest

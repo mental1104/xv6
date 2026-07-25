@@ -88,7 +88,7 @@ argaddr(int n, uint64 *ip)
 
 // Fetch the nth word-sized system call argument as a null-terminated string.
 // Copies into buf, at most max.
-// Returns string length if OK (including nul), -1 for error.
+// Returns string length if OK (including nul), -1 if error.
 int
 argstr(int n, char *buf, int max)
 {
@@ -146,6 +146,8 @@ extern uint64 sys_getprocs(void);
 extern uint64 sys_swapout(void);
 extern uint64 sys_swapinfo(void);
 extern uint64 sys_concurrencylab(void);
+extern uint64 sys_raid1info(void);
+extern uint64 sys_raid1rw(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -196,6 +198,8 @@ static uint64 (*syscalls[])(void) = {
 [SYS_swapout]          sys_swapout,
 [SYS_swapinfo]         sys_swapinfo,
 [SYS_concurrencylab]   sys_concurrencylab,
+[SYS_raid1info]        sys_raid1info,
+[SYS_raid1rw]          sys_raid1rw,
 };
 
 void

@@ -62,3 +62,5 @@ entry("getprocs");
 entry("swapout");
 entry("swapinfo");
 entry("concurrencylab");
+entry("raid1info");
+entry("raid1rw");
