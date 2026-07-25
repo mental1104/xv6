@@ -74,6 +74,17 @@ int sched_get_stats(struct sched_stats *stats);
 int schedtrace(int op, struct schedtrace_snapshot *snapshot, int arg);
 
 /**
+ * 驱动显式启用的并发入门教学会话。
+ *
+ * @param op kernel/concurrencylab.h 定义的 RESET、RUN、SNAPSHOT 或 CLOSE。
+ * @param arg0 RESET 时为模式，其他操作时为会话编号。
+ * @param arg1 RUN 时为唯一参与者角色，其他操作忽略。
+ * @param result RUN 或 SNAPSHOT 的用户态输出缓冲区；其他操作可传 0。
+ * @return RESET 成功返回正会话编号；其他操作成功返回 0；失败返回 -1。
+ */
+int concurrencylab(int op, int arg0, int arg1, void *result);
+
+/**
  * 返回一组 pipe 读端的当前就绪位图，或等待其中任一读端就绪。
  *
  * @param fds 文件描述符数组；每项必须是当前进程打开的可读 pipe，数组不被修改。
