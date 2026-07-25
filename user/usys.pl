@@ -61,3 +61,8 @@ entry("tcsetpgrp");
 entry("getprocs");
 entry("swapout");
 entry("swapinfo");
+entry("semcreate");
+entry("semwait");
+entry("sempost");
+entry("semdestroy");
+entry("seminfo");
