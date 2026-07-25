@@ -472,6 +472,7 @@ verify_mlfq_trace(int cpu_pid, int interactive_pid)
            saw_interactive_resume, saw_boost);
     return -1;
   }
+  (void)saw_higher_queue;
 #if defined(XV6_CPUS) && XV6_CPUS == 1
   if(!saw_higher_queue){
     printf("schedtest: mlfq trace missing higher-queue preemption\n");
