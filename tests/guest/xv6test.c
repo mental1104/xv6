@@ -30,6 +30,7 @@ static char *lab3_copyout_argv[] = {XV6_TEST_PATH("usertests"), "copyout", 0};
 static char *lab3_copyinstr_argv[] = {XV6_TEST_PATH("usertests"), "copyinstr1", 0};
 static char *lab3_sbrkmuch_argv[] = {XV6_TEST_PATH("usertests"), "sbrkmuch", 0};
 static char *lab3_memviz_argv[] = {XV6_TEST_PATH("memviztest"), 0};
+static char *lab3_pgtbl_argv[] = {XV6_TEST_PATH("pgtbltest"), 0};
 static char *lab3_vaaccess_argv[] = {XV6_TEST_PATH("vaaccesstest"), 0};
 static char *lab3_address_window_argv[] = {XV6_TEST_PATH("addresswindowtest"), 0};
 static char *lab4_backtrace_argv[] = {XV6_TEST_PATH("bttest"), 0};
@@ -87,6 +88,7 @@ static struct xv6_test_case tests[] = {
   {"lab3", "lab3-copyinstr1", lab3_copyinstr_argv},
   {"lab3", "lab3-sbrkmuch", lab3_sbrkmuch_argv},
   {"lab3", "lab3-memviz", lab3_memviz_argv},
+  {"lab3", "lab3-pgtbl", lab3_pgtbl_argv},
   {"lab3", "lab3-vaaccess", lab3_vaaccess_argv},
   {"lab3", "lab3-address-window", lab3_address_window_argv},
   {"lab4", "lab4-backtrace", lab4_backtrace_argv},

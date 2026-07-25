@@ -144,6 +144,13 @@ $T/usertests_2g.o: CFLAGS += -DXV6_USERTESTS_EXEC_ADAPTER
 # memviztest 主体跟随主线，编译时单独注入绝对程序路径适配。
 $T/memviztest.o: CFLAGS += -include $T/memviztest_exec.h
 
+# 地址窗口测试保留既有实现；单独的生命周期入口先验证地址空间，再委托原 main。
+$T/addresswindowtest.o: CFLAGS += -Dmain=addresswindowtest_original_main
+$U/_addresswindowtest: $T/addressspacelifecycle.o $T/addresswindowtest.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $T/addresswindowtest.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/addresswindowtest.sym
+
 # 2 GiB 配置使用容量无关的 C 适配入口；它复用原 usertests.c 的测试全集，
 # 仅替换固定 OOM 假设和破坏式空闲页计数。
 $U/_usertests: $T/usertests_2g.o $(ULIB)
@@ -251,6 +258,7 @@ UPROGS=\
 	$U/_vawrite\
 	$U/_vaprobe\
 	$U/_memviztest\
+	$U/_pgtbltest\
 	$U/_vaaccesstest\
 	$U/_addresswindowtest\
 	$U/_wc\
