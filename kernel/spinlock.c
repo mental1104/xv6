@@ -22,10 +22,8 @@ void
 acquire(struct spinlock *lk)
 {
   push_off(); // disable interrupts to avoid deadlock.
-  if(holding(lk)){
-    printf("acquire: recursive lock %s\n", lk->name);
+  if(holding(lk))
     panic("acquire");
-  }
 
   // On RISC-V, sync_lock_test_and_set turns into an atomic swap:
   //   a5 = 1
@@ -57,7 +55,8 @@ release(struct spinlock *lk)
   // past this point, to ensure that all the stores in the critical
   // section are visible to other CPUs before the lock is released,
   // and that loads in the critical section occur strictly before
-  // past this point.
+  // the lock is released.
+  // On RISC-V, this emits a fence instruction.
   __sync_synchronize();
 
   // Release the lock, equivalent to lk->locked = 0.
