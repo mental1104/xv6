@@ -6,6 +6,9 @@
 
 volatile static int started = 0;
 
+// 并发入门探针由 spinlock.c 持有，只在启动 CPU 上初始化一次。
+extern void concurrencylab_init(void);
+
 // start() jumps here in supervisor mode on all CPUs.
 void
 main()
@@ -30,6 +33,7 @@ main()
     binit();         // buffer cache
     iinit();         // inode cache
     fileinit();      // file table
+    concurrencylab_init(); // explicit, inactive teaching probe
     virtio_disk_init(); // emulated hard disk
     userinit();      // first user process
     vma_init();
