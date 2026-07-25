@@ -154,12 +154,31 @@ SUITES: dict[str, Suite] = {
             ),
         ),
     ),
+    "lock-model-cpu1": Suite(
+        name="lock-model-cpu1",
+        description="Lock model regression forced to one QEMU CPU",
+        tests=(
+            TestCase(
+                "lab8-lock-model-cpu1",
+                ("xv6test --run lab8-lock-model",),
+                expected=GUEST_SUCCESS,
+                timeout=180,
+            ),
+        ),
+    ),
     "lab8-locks": Suite(
         name="lab8-locks",
         description="Fast Lab8 lock and buffer-cache guest regression",
         tests=(
-            # 三个快速项仍在同一个 QEMU snapshot 中顺序执行。拆开看门狗和日志
-            # 只为精确定位慢路径或阻塞点，不通过重启 guest 隐藏跨测试状态问题。
+            # 先由 host 子 runner 固定以 CPUS=1 执行同一个锁模型；随后三个 guest
+            # 用例在调用者指定的（PR 默认 CPUS=3）同一 snapshot 中顺序执行。
+            TestCase(
+                "lab8-lock-model-single-core",
+                ("python3 tests/run.py --suite lock-model-cpu1 --cpus 1",),
+                expected=(r"^All requested suites passed\.$",),
+                timeout=240,
+                host=True,
+            ),
             TestCase(
                 "lab8-lock-model",
                 ("xv6test --run lab8-lock-model",),
