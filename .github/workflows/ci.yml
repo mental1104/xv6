@@ -110,11 +110,14 @@ jobs:
           github.event_name == 'pull_request' &&
           contains(steps.plan.outputs.suites, 'lab-vm')
         run: |
+          set -o pipefail
+          mkdir -p test-results/infrastructure
+          rm -rf test-results/lab-vm
           # CPUS changes a compile-time kernel constant. Rebuild after the
           # default three-CPU suite instead of reusing its stale kernel image.
           make clean
-          make -j2 CPUS=1
-          make test-suite SUITE=lab-vm CPUS=1
+          make -j2 CPUS=1 2>&1 | tee test-results/infrastructure/vm-single-core-build.log
+          make test-suite SUITE=lab-vm CPUS=1 2>&1 | tee test-results/infrastructure/vm-single-core-run.log
 
       - name: Run complete usertests for lifecycle-sensitive changes
         if: >-
