@@ -201,6 +201,14 @@ struct memviz_snapshot {
   uint64 cpu_free_pages[NCPU];
   struct memviz_cell physical[MEMVIZ_CELLS];
 
+  // kalloc 元数据审计结果。listed free pages 来自实际链表遍历，counter free
+  // pages 来自每 CPU 独立计数器；其余字段非零即为负向 oracle 命中。
+  uint64 allocator_counter_free_pages;
+  uint64 allocator_duplicate_pages;
+  uint64 allocator_invalid_nodes;
+  uint64 allocator_count_mismatches;
+  uint64 allocator_invariant_ok;
+
   uint64 kernel_pagetable;
   uint64 kernel_sp;
   uint64 kernel_stack_guard_start;
