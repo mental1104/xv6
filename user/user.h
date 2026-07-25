@@ -74,6 +74,19 @@ int sched_get_stats(struct sched_stats *stats);
 int schedtrace(int op, struct schedtrace_snapshot *snapshot, int arg);
 
 /**
+ * 返回一组 pipe 读端的当前就绪位图，或等待其中任一读端就绪。
+ *
+ * @param fds 文件描述符数组；每项必须是当前进程打开的可读 pipe，数组不被修改。
+ * @param count fds 元素数量，范围为 1 到 NOFILE。
+ * @param wait 0 表示只取当前快照，1 表示等待任一来源出现数据或 EOF。
+ * @return 成功返回按数组槽位编码的非负位图；参数、地址或对象非法时返回 -1。
+ *
+ * 当前接口只用于教学型 pipe 读就绪观察，不支持普通文件、设备、写就绪、超时或
+ * 信号掩码，也不承诺 poll/epoll 的生产扩展性。
+ */
+int pollread(const int *fds, int count, int wait);
+
+/**
  * Explicitly move one current-process anonymous user page to the teaching
  * swap backing file. This exposes mechanism only; no automatic replacement
  * policy is implied.
