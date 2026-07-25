@@ -60,3 +60,4 @@ entry("getpgid");
 entry("procctl");
 entry("tcsetpgrp");
 entry("getprocs");
+entry("locklab");
