@@ -41,6 +41,7 @@ GUEST_SOURCE_NAMES = (
     "uthreadtest.c",
     "vaaccesstest.c",
     "addresswindowtest.c",
+    "locktest.c",
     "testlib.c",
     "xv6test.c",
 )
@@ -135,6 +136,7 @@ class SuiteCompositionTests(unittest.TestCase):
         commands = [test.commands for test in RUNNER.SUITES["lab8-locks"].tests]
         self.assertEqual(
             [
+                ("xv6test --run lab8-lock-model",),
                 ("xv6test --run lab8-createdelete",),
                 ("xv6test --run lab8-fourfiles",),
             ],
