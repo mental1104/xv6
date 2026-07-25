@@ -46,3 +46,8 @@
 #define SYS_getprocs         45
 #define SYS_swapout          46
 #define SYS_swapinfo         47
+#define SYS_semcreate        48
+#define SYS_semwait          49
+#define SYS_sempost          50
+#define SYS_semdestroy       51
+#define SYS_seminfo          52
