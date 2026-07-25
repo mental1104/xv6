@@ -1,0 +1,109 @@
+name: semaphore rebase finalize
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.head_ref == 'concept/151-semaphore-final'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          show-progress: false
+      - name: Wire semaphore into latest main
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file_path = Path(path)
+              text = file_path.read_text()
+              if old not in text:
+                  raise SystemExit(f"missing replacement anchor in {path}: {old!r}")
+              file_path.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              "Makefile",
+              "  $K/sysproc.o \\\n  $K/sysps.o \\\n",
+              "  $K/sysproc.o \\\n  $K/syssem.o \\\n  $K/semaphore.o \\\n  $K/semexit.o \\\n  $K/sysps.o \\\n",
+          )
+          replace_once(
+              "Makefile",
+              "# 保留 proc.c 的历史入口作为可链接后备，由 sched.c 提供公开调度入口。\n$K/proc.o: CFLAGS += -Dprocinit=legacy_procinit -Dscheduler=legacy_scheduler -Dyield=legacy_yield\n",
+              "# 保留 proc.c 的历史入口作为可链接后备，由 sched.c 和 semexit.c 提供公开入口。\n$K/proc.o: CFLAGS += -Dprocinit=legacy_procinit -Dscheduler=legacy_scheduler -Dyield=legacy_yield -Dexit=proc_exit_without_semaphore\n",
+          )
+          replace_once(
+              "Makefile",
+              "\t$U/_pgtbltest\\\n\t$U/_vaaccesstest\\\n",
+              "\t$U/_pgtbltest\\\n\t$U/_semaphoretest\\\n\t$U/_vaaccesstest\\\n",
+          )
+          replace_once(
+              "kernel/syscall.h",
+              "#define SYS_fsinspect        49\n",
+              "#define SYS_fsinspect        49\n#define SYS_semcreate        50\n#define SYS_semwait          51\n#define SYS_sempost          52\n#define SYS_semdestroy       53\n#define SYS_seminfo          54\n",
+          )
+          replace_once(
+              "kernel/syscall_names.h",
+              '[SYS_fsinspect]        = "fsinspect",\n',
+              '[SYS_fsinspect]        = "fsinspect",\n[SYS_semcreate]        = "semcreate",\n[SYS_semwait]          = "semwait",\n[SYS_sempost]          = "sempost",\n[SYS_semdestroy]       = "semdestroy",\n[SYS_seminfo]          = "seminfo",\n',
+          )
+          replace_once(
+              "kernel/syscall.c",
+              "extern uint64 sys_concurrencylab(void);\n",
+              "extern uint64 sys_concurrencylab(void);\nextern uint64 sys_semcreate(void);\nextern uint64 sys_semwait(void);\nextern uint64 sys_sempost(void);\nextern uint64 sys_semdestroy(void);\nextern uint64 sys_seminfo(void);\n",
+          )
+          replace_once(
+              "kernel/syscall.c",
+              "[SYS_fsinspect]        sys_fsinspect,\n",
+              "[SYS_fsinspect]        sys_fsinspect,\n[SYS_semcreate]        sys_semcreate,\n[SYS_semwait]          sys_semwait,\n[SYS_sempost]          sys_sempost,\n[SYS_semdestroy]       sys_semdestroy,\n[SYS_seminfo]          sys_seminfo,\n",
+          )
+          replace_once(
+              "user/usys.pl",
+              'entry("fsinspect");\n',
+              'entry("fsinspect");\nentry("semcreate");\nentry("semwait");\nentry("sempost");\nentry("semdestroy");\nentry("seminfo");\n',
+          )
+          replace_once(
+              "user/user.h",
+              "struct swap_info;\n",
+              "struct swap_info;\nstruct semaphore_info;\n",
+          )
+          replace_once(
+              "user/user.h",
+              "int fsinspect(int fd, struct fsinspect_snapshot *snapshot);\n",
+              "int fsinspect(int fd, struct fsinspect_snapshot *snapshot);\n\n/**\n * 创建一个带计数上界、由当前进程负责销毁的教学型信号量。\n *\n * @param initial 初始许可数，必须满足 0 <= initial <= limit。\n * @param limit 许可上界，必须大于 0。\n * @return 成功返回正句柄；参数非法或固定槽位耗尽返回 -1。\n */\nint semcreate(int initial, int limit);\n\n/** 消费一个许可；当前无许可时睡眠，对象销毁或进程被杀死时返回 -1。 */\nint semwait(int handle);\n\n/** 产生一个许可；达到创建上界时返回 -1 且不改变计数。 */\nint sempost(int handle);\n\n/** 由创建者销毁对象；等待者被唤醒并从 semwait() 失败返回。 */\nint semdestroy(int handle);\n\n/** 把当前计数、等待者和累计操作次数复制到 info。 */\nint seminfo(int handle, struct semaphore_info *info);\n",
+          )
+          PY
+          git rm .github/workflows/semaphore-rebase-finalize.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Makefile kernel/syscall.h kernel/syscall_names.h kernel/syscall.c user/usys.pl user/user.h
+          git commit -m "build: 在最新主线上接入信号量闭环"
+          git push origin HEAD:${GITHUB_HEAD_REF}
+      - name: Install RISC-V toolchain and QEMU
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc \
+            python3-pexpect
+      - name: Verify CPUS=3
+        shell: bash
+        run: |
+          set -o pipefail
+          make clean
+          make -j2 CPUS=3
+          python3 tests/run.py --suite usertests-core --cpus 3
+      - name: Verify CPUS=1
+        shell: bash
+        run: |
+          set -o pipefail
+          make clean
+          make -j2 CPUS=1
+          python3 tests/run.py --suite usertests-core --cpus 1
