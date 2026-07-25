@@ -1,11 +1,12 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "kernel/schedstat.h"
+#include "kernel/schedtrace_abi.h"
 #include "user/user.h"
 
 #define WORKERS 3
 #define MLFQ_CPU_TICKS 8
-#define MLFQ_COMPETITION_CPU_TICKS 24
+#define MLFQ_COMPETITION_CPU_TICKS 80
 #define MLFQ_INTERACTIVE_ROUNDS 4
 #define MLFQ_INTERACTIVE_SLEEP_TICKS 2
 #define MLFQ_BOOST_RUNTIME_LIMIT 96
@@ -17,6 +18,8 @@ struct worker_result {
   unsigned long initial_mlfq_epoch;
   struct sched_stats stats;
 };
+
+static struct schedtrace_snapshot mlfq_snapshot;
 
 static void
 burn(void)
@@ -410,9 +413,78 @@ mlfq_interactive_worker(int readyfd, int startfd, int resultfd)
 }
 
 /**
- * run_mlfq_competition 验证睡眠型任务在 CPU 密集任务结束前完成且始终停留在 Q0。
+ * verify_mlfq_trace 从混合负载快照中校验降级、睡眠唤醒、boost 和单核抢占。
  *
- * @return 响应顺序和层级均符合预期返回 0，否则返回 -1。
+ * @param cpu_pid CPU 密集 worker PID。
+ * @param interactive_pid 周期睡眠 worker PID。
+ * @return 所有事件契约满足返回 0，否则输出缺失项并返回 -1。
+ */
+static int
+verify_mlfq_trace(int cpu_pid, int interactive_pid)
+{
+  int saw_level1 = 0;
+  int saw_level2 = 0;
+  int saw_interactive_sleep = 0;
+  int saw_interactive_resume = 0;
+  int saw_boost = 0;
+  int saw_higher_queue = 0;
+
+  if(schedtrace(SCHEDTRACE_OP_READ, &mlfq_snapshot,
+                SCHEDTRACE_MAX_EVENTS) < 0)
+    return -1;
+  if(mlfq_snapshot.policy != SCHED_POLICY_MLFQ ||
+     mlfq_snapshot.events <= 0 || mlfq_snapshot.dropped != 0){
+    printf("schedtest: mlfq trace policy=%d events=%d dropped=%d\n",
+           mlfq_snapshot.policy, mlfq_snapshot.events, mlfq_snapshot.dropped);
+    return -1;
+  }
+
+  for(int i = 0; i < mlfq_snapshot.events; i++){
+    struct schedtrace_event *event = &mlfq_snapshot.events_buffer[i];
+    if(event->event_type == SCHEDTRACE_EVENT_MLFQ_BOOST)
+      saw_boost = 1;
+    if(event->pid == cpu_pid &&
+       event->event_type == SCHEDTRACE_EVENT_RUN_STOP){
+      if(event->stop_reason == SCHEDTRACE_REASON_MLFQ_QUANTUM &&
+         event->mlfq_level == 1)
+        saw_level1 = 1;
+      if(event->stop_reason == SCHEDTRACE_REASON_MLFQ_QUANTUM &&
+         event->mlfq_level == 2)
+        saw_level2 = 1;
+      if(event->stop_reason == SCHEDTRACE_REASON_MLFQ_HIGHER_QUEUE)
+        saw_higher_queue = 1;
+    }
+    if(event->pid == interactive_pid &&
+       event->event_type == SCHEDTRACE_EVENT_RUN_STOP &&
+       event->stop_reason == SCHEDTRACE_REASON_SLEEP &&
+       event->mlfq_level == 0)
+      saw_interactive_sleep = 1;
+    if(saw_interactive_sleep && event->pid == interactive_pid &&
+       event->event_type == SCHEDTRACE_EVENT_RUN_START &&
+       event->mlfq_level == 0)
+      saw_interactive_resume = 1;
+  }
+
+  if(!saw_level1 || !saw_level2 || !saw_interactive_sleep ||
+     !saw_interactive_resume || !saw_boost){
+    printf("schedtest: mlfq trace q1=%d q2=%d sleep=%d resume=%d boost=%d\n",
+           saw_level1, saw_level2, saw_interactive_sleep,
+           saw_interactive_resume, saw_boost);
+    return -1;
+  }
+#if defined(XV6_CPUS) && XV6_CPUS == 1
+  if(!saw_higher_queue){
+    printf("schedtest: mlfq trace missing higher-queue preemption\n");
+    return -1;
+  }
+#endif
+  return 0;
+}
+
+/**
+ * run_mlfq_competition 验证睡眠型任务优先完成，并保留可由 schedviz dump 读取的快照。
+ *
+ * @return 响应顺序、层级和 trace 契约均符合预期返回 0，否则返回 -1。
  */
 static int
 run_mlfq_competition(void)
@@ -453,6 +525,12 @@ run_mlfq_competition(void)
   if(read_exact(ready[0], &token, 1) < 0 ||
      read_exact(ready[0], &token, 1) < 0)
     return -1;
+
+  if(schedtrace(SCHEDTRACE_OP_RESET, 0, 0) < 0 ||
+     schedtrace(SCHEDTRACE_OP_WATCH_PID, 0, cpu_pid) < 0 ||
+     schedtrace(SCHEDTRACE_OP_WATCH_PID, 0, interactive_pid) < 0 ||
+     schedtrace(SCHEDTRACE_OP_START, 0, 0) < 0)
+    return -1;
   if(write_exact(start[1], "s", 1) < 0 ||
      write_exact(start[1], "s", 1) < 0)
     return -1;
@@ -465,6 +543,8 @@ run_mlfq_competition(void)
   close(result[0]);
   wait(0);
   wait(0);
+  if(schedtrace(SCHEDTRACE_OP_STOP, 0, 0) < 0)
+    return -1;
 
   if(first.id != 1 || second.id != 0){
     printf("schedtest: mlfq response first=%d second=%d\n", first.id, second.id);
@@ -475,7 +555,7 @@ run_mlfq_competition(void)
            first.max_mlfq_level, first.stats.mlfq_level);
     return -1;
   }
-  return 0;
+  return verify_mlfq_trace(cpu_pid, interactive_pid);
 }
 
 /**
