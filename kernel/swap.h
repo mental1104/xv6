@@ -1,7 +1,10 @@
 #ifndef XV6_SWAP_H
 #define XV6_SWAP_H
 
-#define NSWAP 64
+// Eight pages are enough to exercise allocation, fork ownership, exhaustion,
+// and cleanup without making every xv6 boot preallocate a production-sized
+// swap area. Capacity policy is deliberately outside this teaching mechanism.
+#define NSWAP 8
 #define SWAPFILE_PATH "/var/xv6.swap"
 
 // RISC-V reserves PTE bits 8 and 9 for supervisor software. COW already uses
