@@ -156,10 +156,16 @@ SUITES: dict[str, Suite] = {
     ),
     "lab8-locks": Suite(
         name="lab8-locks",
-        description="Fast Lab8 buffer-cache guest regression",
+        description="Fast Lab8 lock and buffer-cache guest regression",
         tests=(
-            # 两个快速项仍在同一个 QEMU snapshot 中顺序执行。拆开看门狗和日志
+            # 三个快速项仍在同一个 QEMU snapshot 中顺序执行。拆开看门狗和日志
             # 只为精确定位慢路径或阻塞点，不通过重启 guest 隐藏跨测试状态问题。
+            TestCase(
+                "lab8-lock-model",
+                ("xv6test --run lab8-lock-model",),
+                expected=GUEST_SUCCESS,
+                timeout=180,
+            ),
             TestCase(
                 "lab8-createdelete",
                 ("xv6test --run lab8-createdelete",),
