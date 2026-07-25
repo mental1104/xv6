@@ -1,0 +1,31 @@
+#ifndef XV6_KERNEL_LOCKLAB_H
+#define XV6_KERNEL_LOCKLAB_H
+
+// locklab 系统调用的教学操作编号。每个操作只暴露可重复验证的状态，
+// 不把 spinlock 或 sleeplock 对象本身泄露给用户态。
+#define LOCKLAB_RESET             1
+#define LOCKLAB_SPLIT_READ        2
+#define LOCKLAB_SPLIT_WRITE       3
+#define LOCKLAB_SAFE_INCREMENT    4
+#define LOCKLAB_COUNTER           5
+#define LOCKLAB_OWNER_ORACLE      6
+#define LOCKLAB_SLEEP_HOLDER      7
+#define LOCKLAB_SLEEP_WAITER      8
+#define LOCKLAB_SLEEP_STATE       9
+#define LOCKLAB_SLEEP_RELEASE    10
+
+// LOCKLAB_OWNER_ORACLE 返回值中的稳定断言位。
+#define LOCKLAB_OWNER_OUTSIDE_REJECTED (1 << 0)
+#define LOCKLAB_OWNER_INSIDE_HELD      (1 << 1)
+#define LOCKLAB_OWNER_AFTER_REJECTED   (1 << 2)
+#define LOCKLAB_OWNER_EXPECTED \
+  (LOCKLAB_OWNER_OUTSIDE_REJECTED | LOCKLAB_OWNER_INSIDE_HELD | \
+   LOCKLAB_OWNER_AFTER_REJECTED)
+
+// LOCKLAB_SLEEP_STATE 返回值中的状态位。
+#define LOCKLAB_SLEEP_HOLDER_READY     (1 << 0)
+#define LOCKLAB_SLEEP_WAITER_STARTED   (1 << 1)
+#define LOCKLAB_SLEEP_WAITER_ACQUIRED  (1 << 2)
+#define LOCKLAB_SLEEP_RELEASE_REQUEST  (1 << 3)
+
+#endif
