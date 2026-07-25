@@ -7,7 +7,17 @@
 #include "user/paths.h"
 #include "tests/guest/testlib.h"
 
+#define TLB_SWITCH_ROUNDS 64
+
 static char output[4096];
+
+/** 记录 COW 后 child 在同一 VA 上观察到的翻译与权限。 */
+struct tlb_switch_report {
+  uint64 va;
+  uint64 pa;
+  uint64 flags;
+  int query_ok;
+};
 
 /**
  * fail 输出稳定失败原因并以非零状态终止测试。
@@ -146,6 +156,113 @@ test_cow_access(void)
   printf("vaaccesstest: cow access OK\n");
 }
 
+/**
+ * test_tlb_switch_isolation 验证同一 VA 在父子地址空间之间反复切换时不会复用旧翻译。
+ *
+ * child 首次写入会触发 COW，使父子保留相同 VA 但映射到不同 PA，并同时改变写权限。
+ * 两个进程随后通过 pipe 交替阻塞和唤醒；在 CPUS=1 下，每轮都要求同一 hart 在两个
+ * 地址空间之间切换。断言只观察页表状态与读回值，不把运行时间解释为 TLB 事件。
+ */
+static void
+test_tlb_switch_isolation(void)
+{
+  int parent_to_child[2];
+  int child_to_parent[2];
+  int status = 0;
+  int ok = 1;
+  char token = 'x';
+  char *base = sbrk(PGSIZE);
+  struct tlb_switch_report report;
+  struct memviz_va_query parent_query;
+
+  if(base == (char *)-1)
+    fail("tlb page allocation failed");
+  volatile unsigned char *page = (volatile unsigned char *)base;
+  *page = 0x51;
+  memset(&report, 0, sizeof(report));
+  memset(&parent_query, 0, sizeof(parent_query));
+
+  if(pipe(parent_to_child) < 0 || pipe(child_to_parent) < 0)
+    fail("tlb pipe failed");
+
+  int pid = fork();
+  if(pid < 0)
+    fail("tlb fork failed");
+
+  if(pid == 0){
+    close(parent_to_child[1]);
+    close(child_to_parent[0]);
+
+    // 该 store 必须在 COW PTE 更新及 TLB 同步后重试成功。
+    *page = 0xa7;
+    struct memviz_va_query child_query;
+    if(vaquery((uint64)base, &child_query) < 0)
+      exit(1);
+
+    report.va = (uint64)base;
+    report.pa = child_query.pa;
+    report.flags = child_query.flags;
+    report.query_ok = child_query.present;
+    if(write(child_to_parent[1], &report, sizeof(report)) != sizeof(report))
+      exit(1);
+
+    for(int round = 0; round < TLB_SWITCH_ROUNDS; round++){
+      if(read(parent_to_child[0], &token, 1) != 1)
+        exit(1);
+      if(*page != 0xa7)
+        exit(1);
+      token = (char)(round & 0x7f);
+      if(write(child_to_parent[1], &token, 1) != 1)
+        exit(1);
+    }
+
+    close(parent_to_child[0]);
+    close(child_to_parent[1]);
+    exit(0);
+  }
+
+  close(parent_to_child[0]);
+  close(child_to_parent[1]);
+
+  if(read(child_to_parent[0], &report, sizeof(report)) != sizeof(report))
+    ok = 0;
+  if(ok && vaquery((uint64)base, &parent_query) < 0)
+    ok = 0;
+  if(ok && (!report.query_ok || !parent_query.present ||
+            report.va != (uint64)base || report.pa == parent_query.pa ||
+            (report.flags & PTE_W) == 0 || (report.flags & PTE_COW) != 0 ||
+            (parent_query.flags & PTE_W) != 0 ||
+            (parent_query.flags & PTE_COW) == 0))
+    ok = 0;
+
+  for(int round = 0; ok && round < TLB_SWITCH_ROUNDS; round++){
+    if(*page != 0x51){
+      ok = 0;
+      break;
+    }
+    token = (char)(round & 0x7f);
+    if(write(parent_to_child[1], &token, 1) != 1 ||
+       read(child_to_parent[0], &token, 1) != 1 ||
+       *page != 0x51)
+      ok = 0;
+  }
+
+  // 先关闭父端 pipe，让任何等待中的 child 能退出，再统一 wait 回收。
+  close(parent_to_child[1]);
+  close(child_to_parent[0]);
+  if(wait(&status) != pid || status != 0)
+    ok = 0;
+  if(*page != 0x51)
+    ok = 0;
+  if(sbrk(-PGSIZE) == (char *)-1)
+    ok = 0;
+
+  if(!ok)
+    fail("tlb context switch isolation");
+  printf("vaaccesstest: tlb switch isolation OK rounds=%d\n",
+         TLB_SWITCH_ROUNDS);
+}
+
 /** test_faults 验证非法访问只杀 worker，supervisor 和后续命令仍可继续。 */
 static void
 test_faults(void)
@@ -235,6 +352,7 @@ main(int argc, char **argv)
   test_mapped_access();
   test_lazy_access();
   test_cow_access();
+  test_tlb_switch_isolation();
   test_faults();
   test_parsing_and_expect();
   test_va_zero_follows_real_pagetable();
