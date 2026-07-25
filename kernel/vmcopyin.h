@@ -1,3 +1,13 @@
+struct proc;
+
+uint64 vm_legacy_walkaddr(pagetable_t, uint64);
+int vm_legacy_uvmlazyalloc(struct proc *, uint64);
+void vm_legacy_uvmunmap(pagetable_t, uint64, uint64, int);
+uint64 vm_legacy_uvmdealloc(pagetable_t, uint64, uint64);
+void vm_legacy_uvmfree(pagetable_t, uint64);
+int vm_legacy_uvmcopy(pagetable_t, pagetable_t, uint64);
+int vm_legacy_copyout(pagetable_t, uint64, char *, uint64);
+
 // vm.c includes this header after defs.h. Rename only that translation unit's
 // public VM entry points so vmcopyin.c can provide swap-aware wrappers without
 // duplicating the existing lazy-allocation, COW, and page-table implementation.
