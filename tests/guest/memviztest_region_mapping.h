@@ -2,9 +2,17 @@
 #define XV6_MEMVIZTEST_REGION_MAPPING_H
 
 #include "kernel/types.h"
-#include "kernel/riscv.h"
+#include "kernel/param.h"
 #include "kernel/memviz.h"
 #include "user/user.h"
+
+#define REGION_PGSIZE 4096L
+#define REGION_PTE_V (1L << 0)
+#define REGION_PTE_R (1L << 1)
+#define REGION_PTE_W (1L << 2)
+#define REGION_PTE_X (1L << 3)
+#define REGION_PTE_U (1L << 4)
+#define REGION_PTE_COW (1L << 8)
 
 static struct memviz_snapshot region_before;
 static struct memviz_snapshot region_deep_stack;
@@ -39,12 +47,12 @@ static void
 region_mapping_print_flags(uint64 flags)
 {
   printf("%c%c%c%c%c%c",
-         (flags & PTE_V) ? 'V' : '-',
-         (flags & PTE_R) ? 'R' : '-',
-         (flags & PTE_W) ? 'W' : '-',
-         (flags & PTE_X) ? 'X' : '-',
-         (flags & PTE_U) ? 'U' : '-',
-         (flags & PTE_COW) ? 'C' : '-');
+         (flags & REGION_PTE_V) ? 'V' : '-',
+         (flags & REGION_PTE_R) ? 'R' : '-',
+         (flags & REGION_PTE_W) ? 'W' : '-',
+         (flags & REGION_PTE_X) ? 'X' : '-',
+         (flags & REGION_PTE_U) ? 'U' : '-',
+         (flags & REGION_PTE_COW) ? 'C' : '-');
 }
 
 static void region_mapping_capture_deep_stack(int depth) __attribute__((noinline));
@@ -97,9 +105,9 @@ memviztest_region_mapping(void)
     region_mapping_fail("ELF image range");
   if(region_before.image_end != region_before.stack_guard_start)
     region_mapping_fail("ELF and guard boundary");
-  if(region_before.stack_guard_start + PGSIZE != region_before.stack_bottom)
+  if(region_before.stack_guard_start + REGION_PGSIZE != region_before.stack_bottom)
     region_mapping_fail("guard and stack boundary");
-  if(region_before.stack_bottom + PGSIZE != region_before.stack_top)
+  if(region_before.stack_bottom + REGION_PGSIZE != region_before.stack_top)
     region_mapping_fail("fixed one-page stack");
   if(region_before.stack_top != region_before.dynamic_start)
     region_mapping_fail("stack and dynamic boundary");
@@ -109,11 +117,15 @@ memviztest_region_mapping(void)
   region_mapping_query(region_before.image_start, &image);
   region_mapping_query(region_before.stack_guard_start, &guard);
   region_mapping_query(region_before.stack_bottom, &stack);
-  if(!image.present || (image.flags & (PTE_U | PTE_X)) != (PTE_U | PTE_X))
+  if(!image.present ||
+     (image.flags & (REGION_PTE_U | REGION_PTE_X)) !=
+     (REGION_PTE_U | REGION_PTE_X))
     region_mapping_fail("ELF representative leaf permissions");
-  if(!guard.present || (guard.flags & PTE_U) != 0)
+  if(!guard.present || (guard.flags & REGION_PTE_U) != 0)
     region_mapping_fail("guard remains user accessible");
-  if(!stack.present || (stack.flags & (PTE_U | PTE_W)) != (PTE_U | PTE_W))
+  if(!stack.present ||
+     (stack.flags & (REGION_PTE_U | REGION_PTE_W)) !=
+     (REGION_PTE_U | REGION_PTE_W))
     region_mapping_fail("stack representative leaf permissions");
 
   region_mapping_capture_deep_stack(4);
@@ -127,14 +139,14 @@ memviztest_region_mapping(void)
   if(region_deep_stack.stack_used <= region_before.stack_used)
     region_mapping_fail("deeper stack did not consume more bytes");
 
-  char *dynamic_base = sbrk(PGSIZE);
+  char *dynamic_base = sbrk(REGION_PGSIZE);
   if(dynamic_base == (char *)-1)
     region_mapping_fail("sbrk grow");
   if((uint64)dynamic_base != region_before.process_size)
     region_mapping_fail("sbrk old break");
   if(memsnapshot(MEMVIZ_VIEW_USER, &region_lazy) < 0)
     region_mapping_fail("lazy growth snapshot");
-  if(region_lazy.process_size != region_before.process_size + PGSIZE)
+  if(region_lazy.process_size != region_before.process_size + REGION_PGSIZE)
     region_mapping_fail("p->sz did not grow upward by one page");
   if(region_lazy.dynamic_page_count != region_before.dynamic_page_count + 1)
     region_mapping_fail("dynamic page count after sbrk");
@@ -148,7 +160,8 @@ memviztest_region_mapping(void)
   dynamic_base[0] = 0x5a;
   region_mapping_query((uint64)dynamic_base, &dynamic);
   if(!dynamic.present ||
-     (dynamic.flags & (PTE_U | PTE_W)) != (PTE_U | PTE_W))
+     (dynamic.flags & (REGION_PTE_U | REGION_PTE_W)) !=
+     (REGION_PTE_U | REGION_PTE_W))
     region_mapping_fail("touched dynamic page permissions");
   touched_pa = dynamic.pa;
   if(memsnapshot(MEMVIZ_VIEW_USER, &region_resident) < 0)
@@ -159,7 +172,7 @@ memviztest_region_mapping(void)
   if(region_resident.dynamic_lazy_pages + 1 != region_lazy.dynamic_lazy_pages)
     region_mapping_fail("lazy count did not decrease after touch");
 
-  if(sbrk(-PGSIZE) == (char *)-1)
+  if(sbrk(-REGION_PGSIZE) == (char *)-1)
     region_mapping_fail("sbrk shrink");
   if(memsnapshot(MEMVIZ_VIEW_USER, &region_restored) < 0)
     region_mapping_fail("restored snapshot");
@@ -187,5 +200,13 @@ memviztest_region_mapping(void)
   printf("regionmapping: external fragmentation is not reproduced by page-granular allocation\n");
   printf("regionmapping: OK\n");
 }
+
+#undef REGION_PGSIZE
+#undef REGION_PTE_V
+#undef REGION_PTE_R
+#undef REGION_PTE_W
+#undef REGION_PTE_X
+#undef REGION_PTE_U
+#undef REGION_PTE_COW
 
 #endif
