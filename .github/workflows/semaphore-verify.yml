@@ -1,0 +1,52 @@
+name: semaphore verify
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.head_ref == 'concept/151-semaphore'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
+      - name: Install RISC-V toolchain and QEMU
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc \
+            python3-pexpect
+      - name: Build and test CPUS=3
+        shell: bash
+        run: |
+          set -o pipefail
+          make clean
+          make -j2 CPUS=3 2>&1 | tee /tmp/build-cpu3.log
+          python3 tests/run.py --suite usertests-core --cpus 3 2>&1 | tee /tmp/test-cpu3.log
+          cp test-results/usertests-core/usertests-core.log /tmp/guest-cpu3.log
+      - name: Build and test CPUS=1
+        shell: bash
+        run: |
+          set -o pipefail
+          make clean
+          make -j2 CPUS=1 2>&1 | tee /tmp/build-cpu1.log
+          python3 tests/run.py --suite usertests-core --cpus 1 2>&1 | tee /tmp/test-cpu1.log
+          cp test-results/usertests-core/usertests-core.log /tmp/guest-cpu1.log
+      - name: Upload verification logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semaphore-verification
+          path: |
+            /tmp/build-cpu3.log
+            /tmp/test-cpu3.log
+            /tmp/guest-cpu3.log
+            /tmp/build-cpu1.log
+            /tmp/test-cpu1.log
+            /tmp/guest-cpu1.log
