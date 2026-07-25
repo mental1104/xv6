@@ -86,6 +86,7 @@ memviztest_region_mapping(void)
   struct memviz_va_query guard;
   struct memviz_va_query stack;
   struct memviz_va_query dynamic;
+  uint64 touched_pa;
 
   if(memsnapshot(MEMVIZ_VIEW_USER, &region_before) < 0)
     region_mapping_fail("baseline snapshot");
@@ -149,6 +150,7 @@ memviztest_region_mapping(void)
   if(!dynamic.present ||
      (dynamic.flags & (PTE_U | PTE_W)) != (PTE_U | PTE_W))
     region_mapping_fail("touched dynamic page permissions");
+  touched_pa = dynamic.pa;
   if(memsnapshot(MEMVIZ_VIEW_USER, &region_resident) < 0)
     region_mapping_fail("resident growth snapshot");
   if(region_resident.dynamic_resident_pages !=
@@ -181,7 +183,7 @@ memviztest_region_mapping(void)
          region_before.stack_bottom, region_before.stack_top,
          region_before.user_sp, region_deep_stack.user_sp);
   printf("regionmapping: dynamic old-end=%p lazy-end=%p touched-pa=%p direction=up\n",
-         region_before.process_size, region_lazy.process_size, dynamic.pa);
+         region_before.process_size, region_lazy.process_size, touched_pa);
   printf("regionmapping: external fragmentation is not reproduced by page-granular allocation\n");
   printf("regionmapping: OK\n");
 }
