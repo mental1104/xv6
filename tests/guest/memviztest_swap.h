@@ -115,7 +115,7 @@ swap_test_cycle(void)
          swap_swapped.slot);
 }
 
-/** Verify that fork gives a swapped private page independent slot ownership. */
+/** Verify fork refcounts one immutable slot while materializing private pages. */
 static void
 swap_test_fork_ownership(void)
 {
@@ -125,10 +125,15 @@ swap_test_fork_ownership(void)
   swap_test_fill(page);
 
   struct swap_info baseline;
+  struct swap_info parent_snapshot;
   if(swapinfo(page, &baseline) < 0)
     swap_test_fail("fork baseline");
   if(swapout(page) < 0)
     swap_test_fail("fork parent swapout");
+  if(swapinfo(page, &parent_snapshot) < 0 ||
+     parent_snapshot.page_state != SWAP_PAGE_SWAPPED ||
+     parent_snapshot.used_slots != baseline.used_slots + 1)
+    swap_test_fail("fork parent swapped oracle");
 
   int pid = fork();
   if(pid < 0)
@@ -138,7 +143,8 @@ swap_test_fork_ownership(void)
     struct swap_info child_resident;
     if(swapinfo(page, &child_swapped) < 0 ||
        child_swapped.page_state != SWAP_PAGE_SWAPPED ||
-       child_swapped.used_slots != baseline.used_slots + 2)
+       child_swapped.slot != parent_snapshot.slot ||
+       child_swapped.used_slots != baseline.used_slots + 1)
       exit(2);
 
     swap_test_verify(page);
@@ -157,6 +163,7 @@ swap_test_fork_ownership(void)
   struct swap_info parent_swapped;
   if(swapinfo(page, &parent_swapped) < 0 ||
      parent_swapped.page_state != SWAP_PAGE_SWAPPED ||
+     parent_swapped.slot != parent_snapshot.slot ||
      parent_swapped.used_slots != baseline.used_slots + 1)
     swap_test_fail("parent slot after child exit");
   swap_test_verify(page);
@@ -172,7 +179,7 @@ swap_test_fork_ownership(void)
      (uint64)sbrk(0) != old_break)
     swap_test_fail("fork test break cleanup");
 
-  printf("SWAP fork child_slot=private parent_slot=preserved isolation=OK\n");
+  printf("SWAP fork backing_slot=shared-immutable materialized_pages=private isolation=OK\n");
 }
 
 /** Verify that exit releases a non-resident page without first faulting it in. */
