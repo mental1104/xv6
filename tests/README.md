@@ -73,6 +73,7 @@ xv6test --group lab1
 xv6test --group lab2
 xv6test --group lab3
 xv6test --run lab3-memviz
+xv6test --run lab3-vaaccess
 xv6test --group lab4
 xv6test --group lab5
 /usr/bin/lazytests memory-api
@@ -110,7 +111,39 @@ XV6TEST done status=0
 | Lab9 file system | `--run lab9-bigfile` / `--run lab9-symlink` | `bigfile.c`、`symlinktest.c` | 分开 QEMU snapshot |
 | Lab10 mmap | `xv6test --group lab10` | `mmaptest.c` | 无 |
 
-`memviztest` 属于 Lab3 地址空间观察回归，验证用户栈、内核栈、物理页计数、分配与释放不变量；`vaaccesstest` 属于 Lab3 用户态 VA 访问回归，验证普通命中、lazy 首次触页、COW 写时复制和非法 VA fault 隔离；普通 `lab-vm` suite 会通过 `xv6test --group lab3` 自动覆盖它们。
+`memviztest` 属于 Lab3 地址空间观察回归，验证用户栈、内核栈、物理页计数、分配与释放不变量；`vaaccesstest` 属于 Lab3 用户态 VA 访问回归，验证精确 VA 的 L2/L1/L0 页表路径、页内偏移保持、缺页/权限/上界负向 oracle、普通命中、lazy 首次触页、COW 写时复制、TLB 地址空间切换与非法 VA fault 隔离；普通 `lab-vm` suite 会通过 `xv6test --group lab3` 自动覆盖它们。
+
+### Lab3 地址转换闭环
+
+进入 xv6 shell 后运行：
+
+```text
+xv6test --run lab3-vaaccess
+```
+
+测试会自动构造四类稳定事实：
+
+1. `mapped`：同一物理页中的两个精确 VA，验证 VA 差值与翻译后 PA 差值一致；
+2. `missing-pte`：普通用户范围内没有叶子 PTE，查询不补页；
+3. `guard-no-user`：叶子 PTE 有效但缺少 `PTE_U`，真实访问必须 fault；
+4. `out-of-range`：`USERMAX` 被查询接口拒绝，且空闲页和进程 break 不变。
+
+核心观察协议如下：
+
+```text
+ADDRTRANS sample=mapped requested_va=<va> page_va=<page-va> offset=<offset> mapped=1
+ADDRTRANS sample=mapped L2 ...
+ADDRTRANS sample=mapped L1 ...
+ADDRTRANS sample=mapped L0 ...
+ADDRTRANS sample=mapped leaf_page_pa=<page-pa> translated_pa=<page-pa+offset> ...
+ADDRTRANS sample=guard-no-user ... flags=<no PTE_U>
+ADDRTRANS sample=missing-pte ... mapped=0
+ADDRTRANS sample=out-of-range ... query_result=-1 side_effect=none
+vaaccesstest: OK
+XV6TEST done status=0
+```
+
+任一层索引、PTE 权限、页内偏移、fault 隔离或资源回收不符合预期时，guest 测试会打印 `vaaccesstest: FAIL: <reason>` 并以非零状态退出。
 
 `lazytests memory-api` 在现有 Lab5 guest 程序内复用 `malloc/free`、`sbrk`、`fork/wait` 和缺页路径，验证：首次分配扩展用户态 arena、`free` 只回收到分配器 free list、再次分配不增长 break、父子分配器状态与 COW 隔离、`sbrk` 增长/触页/收缩回环、过量收缩失败且不改变 break、页内一字节越界可能暂时可见，以及收缩后再次访问必然以 `exit(-1)` 终止子进程。页内越界用例是击穿错误直觉的反例，不代表该访问成为合法 API 行为。
 
