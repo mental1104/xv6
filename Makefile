@@ -30,6 +30,8 @@ OBJS = \
   $K/sysps.o \
   $K/memviz.o \
   $K/sysmemviz.o \
+  $K/locklab.o \
+  $K/syslocklab.o \
   $K/bio.o \
   $K/fs.o \
   $K/log.o \
@@ -293,6 +295,7 @@ UPROGS=\
 	$U/_consolelinetest\
 	$U/_lstest\
 	$U/_pstest\
+	$U/_locktest\
 	$U/_xv6test\
 	$U/_schedtest\
 	$U/_schedtracetest
