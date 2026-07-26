@@ -105,6 +105,7 @@ static struct image_file image_files[] = {
   {"/consolelinetest", XV6_TEST_PATH("consolelinetest")},
   {"/lstest", XV6_TEST_PATH("lstest")},
   {"/pstest", XV6_TEST_PATH("pstest")},
+  {"/locktest", XV6_TEST_PATH("locktest")},
   {"/schedtest", XV6_TEST_PATH("schedtest")},
   {"/schedtracetest", XV6_TEST_PATH("schedtracetest")},
   {"/xargstest.sh", XV6_TEST_PATH("xargstest.sh")},
