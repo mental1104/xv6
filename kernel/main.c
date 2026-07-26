@@ -8,6 +8,7 @@ volatile static int started = 0;
 
 // 并发入门探针由 spinlock.c 持有，只在启动 CPU 上初始化一次。
 extern void concurrencylab_init(void);
+extern void seminit(void);
 
 // start() jumps here in supervisor mode on all CPUs.
 void
@@ -26,6 +27,7 @@ main()
     kvmmap(RTC, RTC, PGSIZE, PTE_R | PTE_W);
     kvminithart();   // turn on paging
     procinit();      // process table
+    seminit();       // teaching semaphore table
     trapinit();      // trap vectors
     trapinithart();  // install kernel trap vector
     plicinit();      // set up interrupt controller

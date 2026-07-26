@@ -12,6 +12,7 @@ struct sched_stats;
 struct schedtrace_snapshot;
 struct user_context;
 struct swap_info;
+struct semaphore_info;
 
 // system calls
 int fork(void);
@@ -93,6 +94,27 @@ int schedtrace(int op, struct schedtrace_snapshot *snapshot, int arg);
  * @return 成功返回 0；描述符、对象类型或用户地址非法时返回 -1。
  */
 int fsinspect(int fd, struct fsinspect_snapshot *snapshot);
+
+/**
+ * 创建一个带计数上界、由当前进程负责销毁的教学型信号量。
+ *
+ * @param initial 初始许可数，必须满足 0 <= initial <= limit。
+ * @param limit 许可上界，必须大于 0。
+ * @return 成功返回正句柄；参数非法或固定槽位耗尽返回 -1。
+ */
+int semcreate(int initial, int limit);
+
+/** 消费一个许可；当前无许可时睡眠，对象销毁或进程被杀死时返回 -1。 */
+int semwait(int handle);
+
+/** 产生一个许可；达到创建上界时返回 -1 且不改变计数。 */
+int sempost(int handle);
+
+/** 由创建者销毁对象；等待者被唤醒并从 semwait() 失败返回。 */
+int semdestroy(int handle);
+
+/** 把当前计数、等待者和累计操作次数复制到 info。 */
+int seminfo(int handle, struct semaphore_info *info);
 
 /**
  * 驱动显式启用的并发入门教学会话。
