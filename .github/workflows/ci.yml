@@ -3,214 +3,43 @@ name: xv6 CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  schedule:
-    # 新加坡时间 02:30 执行完整慢速回归，避免占用白天的 PR 反馈窗口。
-    - cron: "30 18 * * *"
-  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: xv6-ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  regression:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+  source-export:
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
-
     steps:
-      - name: Checkout
+      - name: Checkout previous main
         uses: actions/checkout@v4
         with:
-          # PR 事件需要同时读取 base/head commit，才能可靠计算 changed files。
-          fetch-depth: 0
+          ref: 0a7d790ab01985c8fc9f94465c3ee71b166920a0
+          path: base
 
-      - name: Install toolchain
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main
+
+      - name: Checkout resolved issue 155 head
+        uses: actions/checkout@v4
+        with:
+          ref: concept/155-disk-scheduling
+          path: head
+
+      - name: Package source trees
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc-riscv64-linux-gnu \
-            binutils-riscv64-linux-gnu \
-            qemu-system-misc \
-            python3-pexpect
+          mkdir -p export
+          tar --exclude=.git -czf export/base.tar.gz -C base .
+          tar --exclude=.git -czf export/main.tar.gz -C main .
+          tar --exclude=.git -czf export/head.tar.gz -C head .
 
-      - name: Unit-test regression grader
-        run: |
-          python3 -m py_compile \
-            tests/run.py \
-            tests/run_lock_model.py \
-            tests/run_usertests.py \
-            tests/shell_history_interactive.py \
-            tests/test_run_lock_model.py \
-            tests/test_runner.py \
-            tests/ci_plan.py \
-            tests/test_ci_plan.py
-          make test-unit
-          python3 tests/run.py --list
-
-      - name: Build xv6
-        run: |
-          make clean
-          make -j2
-
-      - name: Select PR regression suites
-        if: github.event_name == 'pull_request'
-        id: plan
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > /tmp/changed-files.txt
-          echo "Changed files:"
-          cat /tmp/changed-files.txt
-          python3 tests/ci_plan.py < /tmp/changed-files.txt | tee -a "$GITHUB_OUTPUT"
-          if grep -Eq '^(tests/guest/usertests_2g\.c|kernel/file\.c|tests/guest/xv6test\.c|tests/run_usertests\.py)$' /tmp/changed-files.txt; then
-            echo 'full_usertests=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'full_usertests=false' >> "$GITHUB_OUTPUT"
-          fi
-          if grep -Eq '^(kernel/(console\.c|jobctl\.h|proc\.h|sysproc\.c|trap\.c|wait\.h)|user/sh\.c|tests/guest/consolelinetest\.c|tests/shell_history_interactive\.py)$' /tmp/changed-files.txt; then
-            echo 'job_control=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'job_control=false' >> "$GITHUB_OUTPUT"
-          fi
-          if grep -Eq '^(kernel/(concurrencylab\.h|proc\.c|sleeplock\.c|spinlock\.c|swtch\.S)|tests/guest/uthreadtest\.c|tests/host/(barrier\.c|ph\.c))$' /tmp/changed-files.txt; then
-            echo 'concurrency_single_core=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'concurrency_single_core=false' >> "$GITHUB_OUTPUT"
-          fi
-          if grep -Eq '^(kernel/(bio\.c|file\.c|fs\.c|fs\.h|fsinspect\.c|fsinspect\.h|log\.c|sysfile\.c|sysfsinspect\.c|virtio_disk\.c)|mkfs/mkfs\.c|tests/guest/fileapitest\.c)$' /tmp/changed-files.txt; then
-            echo 'filesystem=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'filesystem=false' >> "$GITHUB_OUTPUT"
-          fi
-          if grep -Eq '^(Makefile|kernel/(defs\.h|locklab\.c|locklab\.h|main\.c|syscall\.c|syscall\.h|syscall_names\.h|syslocklab\.c)|tests/guest/(locktest\.c|xv6test\.c)|tests/run_lock_model\.py|tests/test_run_lock_model\.py|user/(init\.c|user\.h|usys\.pl))$' /tmp/changed-files.txt; then
-            echo 'lock_model=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'lock_model=false' >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Run shell history interaction regression
-        if: >-
-          github.event_name == 'pull_request' &&
-          steps.plan.outputs.shell_history == 'true'
-        run: python3 tests/shell_history_interactive.py --cpus 3
-
-      # 先消费初始的三核构建，再执行会重建 CPUS=1 的补充回归。否则 make 不会
-      # 因命令行 CFLAGS 变化自动重编译，后续三核 QEMU 会加载带 XV6_CPUS=1 的旧对象。
-      - name: Run selected PR QEMU regression
-        if: >-
-          github.event_name == 'pull_request' &&
-          steps.plan.outputs.suites != ''
-        env:
-          SELECTED_SUITES: ${{ steps.plan.outputs.suites }}
-        run: |
-          IFS=',' read -r -a suites <<< "$SELECTED_SUITES"
-          args=()
-          for suite in "${suites[@]}"; do
-            if [[ -n "$suite" ]]; then
-              args+=(--suite "$suite")
-            fi
-          done
-          printf 'Selected PR suites: %s\n' "${suites[*]}"
-          python3 tests/run.py "${args[@]}" --cpus 3
-
-      - name: Run lock model single-core and multi-core matrix
-        if: >-
-          github.event_name == 'pull_request' &&
-          steps.plan.outputs.lock_model == 'true'
-        run: python3 tests/run_lock_model.py --cpus 3
-
-      - name: Run job-control regression single-core
-        if: >-
-          github.event_name == 'pull_request' &&
-          steps.plan.outputs.job_control == 'true'
-        run: python3 tests/run.py --suite usertests-core --cpus 1
-
-      - name: Run filesystem regression single-core
-        if: >-
-          github.event_name == 'pull_request' &&
-          steps.plan.outputs.filesystem == 'true'
-        run: |
-          set -o pipefail
-          mkdir -p test-results/infrastructure
-          rm -rf test-results/usertests-core
-          # CPUS participates in the kernel build; rebuild rather than reusing the
-          # default three-CPU image when collecting the supplementary one-CPU result.
-          make clean
-          make -j2 CPUS=1 2>&1 | tee test-results/infrastructure/filesystem-single-core-build.log
-          make test-suite SUITE=usertests-core CPUS=1 2>&1 | tee test-results/infrastructure/filesystem-single-core-run.log
-
-      - name: Run concurrency regression single-core
-        if: >-
-          github.event_name == 'pull_request' &&
-          steps.plan.outputs.concurrency_single_core == 'true'
-        run: |
-          set -o pipefail
-          mkdir -p test-results/infrastructure
-          rm -rf test-results/lab7-thread
-          # CPUS changes a compile-time kernel constant; force a clean one-CPU image.
-          make clean
-          make -j2 CPUS=1 2>&1 | tee test-results/infrastructure/concurrency-single-core-build.log
-          make test-suite SUITE=lab7-thread CPUS=1 2>&1 | tee test-results/infrastructure/concurrency-single-core-run.log
-
-      - name: Run VM regression single-core
-        if: >-
-          github.event_name == 'pull_request' &&
-          contains(steps.plan.outputs.suites, 'lab-vm')
-        run: |
-          set -o pipefail
-          mkdir -p test-results/infrastructure
-          rm -rf test-results/lab-vm
-          # CPUS changes a compile-time kernel constant. Rebuild after the
-          # default three-CPU suite instead of reusing its stale kernel image.
-          make clean
-          make -j2 CPUS=1 2>&1 | tee test-results/infrastructure/vm-single-core-build.log
-          make test-suite SUITE=lab-vm CPUS=1 2>&1 | tee test-results/infrastructure/vm-single-core-run.log
-
-      - name: Run complete usertests for lifecycle-sensitive changes
-        if: >-
-          github.event_name == 'pull_request' &&
-          steps.plan.outputs.full_usertests == 'true'
-        run: |
-          dump_usertests_log() {
-            local log="test-results/usertests-full/usertests-full.log"
-            echo "::group::Failing usertests guest output (last 160 lines)"
-            if [[ -f "$log" ]]; then
-              tail -n 160 "$log"
-            else
-              echo "No usertests log was created at $log"
-            fi
-            echo "::endgroup::"
-          }
-
-          # 逐项 runner 为每个测试设置独立看门狗，并有意跳过旧 writebig 的
-          # MAXFILE 密集写。三级间接和文件上界由已选中的 lab9-bigfile 专项覆盖。
-          python3 tests/run_usertests.py --cpus 3 || { dump_usertests_log; exit 1; }
-
-      - name: Run scheduled or manual full regression
-        if: github.event_name != 'pull_request'
-        run: |
-          python3 tests/shell_history_interactive.py --cpus 3
-          make test-full CPUS=3
-
-      # _start_qemu() can fail before the Python runner creates its first log.
-      # Capture one bounded serial boot attempt so startup panics are preserved.
-      - name: Capture QEMU boot log
-        if: failure()
-        run: |
-          mkdir -p test-results/infrastructure
-          timeout 30s make -s --no-print-directory qemu \
-            CPUS=3 QEMUEXTRA=-snapshot \
-            > test-results/infrastructure/qemu-boot.log 2>&1 || true
-
-      - name: Upload QEMU logs
-        if: failure()
+      - name: Upload source trees
         uses: actions/upload-artifact@v4
         with:
-          name: xv6-test-results-${{ github.run_id }}
-          path: test-results/
-          if-no-files-found: ignore
+          name: issue155-latest-three-way
+          path: export/
+          if-no-files-found: error
+          retention-days: 1
