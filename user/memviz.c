@@ -38,19 +38,14 @@ enum dynamic_display_kind {
   DYNAMIC_COW = 4,
 };
 
-/** 输出 memviz 支持的视图和纯文本选项。 */
+/** 输出 memviz 支持的视图、PID 注入和纯文本选项。 */
 static void
 usage(void)
 {
-  fprintf(2, "usage: memviz <user|phys|kernel|pagetable|all> [filter] [--plain]\n");
+  fprintf(2,
+          "usage: memviz <user|phys|kernel|pagetable|all> [filter] [--pid pid] [--plain]\n");
 }
 
-/**
- * 返回以 NUL 结尾字符串的字节数。
- *
- * @param text 非空字符串。
- * @return 不包含结尾 NUL 的字节数。
- */
 static int
 string_length(char *text)
 {
@@ -60,13 +55,6 @@ string_length(char *text)
   return length;
 }
 
-/**
- * 输出一个可选 ANSI 颜色的单字节字符。
- *
- * @param glyph 要输出的字符。
- * @param color ANSI 颜色前缀。
- * @param plain 非零时禁止输出 ANSI 转义序列。
- */
 static void
 print_glyph(char glyph, char *color, int plain)
 {
@@ -76,14 +64,12 @@ print_glyph(char glyph, char *color, int plain)
     printf("%s%c%s", color, glyph, ANSI_RESET);
 }
 
-/** 输出带真实地址的字符图边界线。 */
 static void
 print_line(uint64 address, char *mark)
 {
   printf("%p %s\n", address, mark);
 }
 
-/** 输出地址空间框内的一行文本并补齐右边界。 */
 static void
 print_box_text(char *text)
 {
@@ -94,14 +80,6 @@ print_box_text(char *text)
   printf(" |\n");
 }
 
-/**
- * 将用量压缩为固定宽度字符数，非零用量至少占一个字符。
- *
- * @param used 已使用字节或页数。
- * @param total 总字节或总页数。
- * @param cells 条形图字符宽度。
- * @return 范围为 [0, cells] 的已使用字符数。
- */
 static int
 scaled_cells(uint64 used, uint64 total, int cells)
 {
@@ -113,7 +91,6 @@ scaled_cells(uint64 used, uint64 total, int cells)
   return (int)result;
 }
 
-/** 输出低偏移到高偏移方向的页内用量条。 */
 static void
 print_box_bar(int used_cells, char used, char free, int plain)
 {
@@ -127,7 +104,6 @@ print_box_bar(int used_cells, char used, char free, int plain)
   printf("] |\n");
 }
 
-/** 输出高地址侧已使用的向下增长栈用量条。 */
 static void
 print_box_reverse_bar(int used_cells, int plain)
 {
@@ -141,7 +117,6 @@ print_box_reverse_bar(int used_cells, int plain)
   printf("] |\n");
 }
 
-/** 输出教学相关的 RISC-V PTE 权限位。 */
 static void
 print_pte_flags(uint64 flags)
 {
@@ -154,7 +129,6 @@ print_pte_flags(uint64 flags)
          (flags & PTE_COW) ? 'C' : '-');
 }
 
-/** 计算 p->sz 到 USERMAX 之间仍未使用的整页数。 */
 static uint64
 remaining_pages(struct memviz_snapshot *state)
 {
@@ -163,11 +137,6 @@ remaining_pages(struct memviz_snapshot *state)
   return (state->user_limit - state->process_size) / PGSIZE;
 }
 
-/**
- * 用明显的断裂线表现 p->sz 到 USERMAX 的巨大地址跨度。
- *
- * @param state 当前内存快照。
- */
 static void
 print_user_gap(struct memviz_snapshot *state)
 {
@@ -189,15 +158,6 @@ print_user_gap(struct memviz_snapshot *state)
   }
 }
 
-/**
- * 返回压缩单元应显示的主状态。
- *
- * @param cell 一个连续动态页范围的精确分类计数。
- * @return DYNAMIC_* 显示类型。
- *
- * 单元只覆盖一页时结果即该页状态。压缩单元混合多种状态时选择页数最多者；
- * 数量相同按 COW > mmap > lazy > resident 决定，使高语义状态不会在平局中消失。
- */
 static int
 dynamic_cell_kind(struct memviz_user_state_cell *cell)
 {
@@ -216,12 +176,6 @@ dynamic_cell_kind(struct memviz_user_state_cell *cell)
   return kind;
 }
 
-/**
- * 输出动态逻辑范围的页状态条。
- *
- * @param state 当前内存快照。
- * @param plain 非零时用 #/C/L/M 替代颜色。
- */
 static void
 print_dynamic_state_bar(struct memviz_snapshot *state, int plain)
 {
@@ -245,7 +199,6 @@ print_dynamic_state_bar(struct memviz_snapshot *state, int plain)
   printf("] |\n");
 }
 
-/** 输出动态页状态图例；正常模式中的三类特殊状态都使用彩色点。 */
 static void
 print_dynamic_legend(int plain)
 {
@@ -260,7 +213,6 @@ print_dynamic_legend(int plain)
   printf(" mmap\n");
 }
 
-/** 展示 trampoline 页的 VA、PA、权限和代码顺序。 */
 static void
 print_trampoline_details(struct memviz_snapshot *state)
 {
@@ -296,7 +248,6 @@ print_trampoline_details(struct memviz_snapshot *state)
          state->trampoline_pa + PGSIZE);
 }
 
-/** 按真实 ABI 顺序展开 trapframe 页内全部成员。 */
 static void
 print_trapframe_details(struct memviz_snapshot *state)
 {
@@ -333,25 +284,29 @@ print_trapframe_details(struct memviz_snapshot *state)
          (int)(PGSIZE - state->trapframe_used));
 }
 
-/**
- * 输出包含固定页、动态页状态、巨大 VA 空洞和低地址进程区域的完整视图。
- *
- * @param plain 非零时禁用 ANSI 颜色并使用 #/C/L/M 状态字符。
- * @return 采样成功返回 0，系统调用失败返回 -1。
- */
+/** 采集当前进程或显式 PID，并输出完整用户地址空间视图。 */
 static int
-print_user_view(int plain)
+print_user_view(int target_pid, int plain)
 {
-  if(memsnapshot(MEMVIZ_VIEW_USER, &user_snapshot) < 0)
+  int result;
+  if(target_pid > 0)
+    result = memsnapshot_pid(target_pid, MEMVIZ_VIEW_USER, &user_snapshot);
+  else
+    result = memsnapshot(MEMVIZ_VIEW_USER, &user_snapshot);
+  if(result < 0){
+    if(target_pid > 0)
+      fprintf(2, "memviz: cannot snapshot pid %d\n", target_pid);
     return -1;
+  }
 
   int trampoline_cells = scaled_cells(user_snapshot.trampoline_used,
                                       PGSIZE, USER_BAR_CELLS);
   int trapframe_cells = scaled_cells(user_snapshot.trapframe_used,
                                      PGSIZE, USER_BAR_CELLS);
 
-  printf("\n%s=== CURRENT PROCESS USER VIRTUAL ADDRESS SPACE ===%s\n",
+  printf("\n%s=== PROCESS USER VIRTUAL ADDRESS SPACE ===%s\n",
          plain ? "" : ANSI_CYAN, plain ? "" : ANSI_RESET);
+  printf("observed process pid=%d\n", user_snapshot.process_pid);
   printf("\n       HIGH ADDRESS\n");
   print_line(user_snapshot.maxva, "+--------------- MAXVA ---------------+");
   print_box_text("TRAMPOLINE / supervisor-only RX");
@@ -433,12 +388,18 @@ print_user_view(int plain)
   return 0;
 }
 
-/** 依次输出增强用户视图和其余已有视图。 */
 static int
-print_all_views(int plain)
+print_all_views(int target_pid, int plain)
 {
-  if(print_user_view(plain) < 0)
+  if(print_user_view(target_pid, plain) < 0)
     return -1;
+  if(target_pid > 0){
+    if(memviz_print_pid(target_pid, MEMVIZ_VIEW_PHYS, plain) < 0)
+      return -1;
+    if(memviz_print_pid(target_pid, MEMVIZ_VIEW_KERNEL, plain) < 0)
+      return -1;
+    return memviz_print_pid(target_pid, MEMVIZ_VIEW_PAGETABLE, plain);
+  }
   if(memviz_print(MEMVIZ_VIEW_PHYS, plain) < 0)
     return -1;
   if(memviz_print(MEMVIZ_VIEW_KERNEL, plain) < 0)
@@ -446,26 +407,34 @@ print_all_views(int plain)
   return memviz_print(MEMVIZ_VIEW_PAGETABLE, plain);
 }
 
-/**
- * 解析命令行并打印指定的当前进程内存视图。
- *
- * @param argc 参数数量。
- * @param argv 参数数组；第一个位置参数必须是视图名。
- * @return 成功返回 0；参数或采样失败返回 1。
- */
 int
 main(int argc, char **argv)
 {
-  if(argc < 2 || argc > 4){
+  if(argc < 2 || argc > 6){
     usage();
     exit(1);
   }
 
   int plain = 0;
+  int target_pid = 0;
   char *filter = 0;
   for(int i = 2; i < argc; i++){
     if(strcmp(argv[i], "--plain") == 0){
+      if(plain){
+        usage();
+        exit(1);
+      }
       plain = 1;
+    } else if(strcmp(argv[i], "--pid") == 0){
+      if(target_pid != 0 || i + 1 >= argc){
+        usage();
+        exit(1);
+      }
+      target_pid = atoi(argv[++i]);
+      if(target_pid <= 0){
+        usage();
+        exit(1);
+      }
     } else if(filter == 0){
       filter = argv[i];
     } else {
@@ -474,22 +443,28 @@ main(int argc, char **argv)
     }
   }
 
-  int result;
   if(strcmp(argv[1], "pagetable") != 0 && filter != 0){
     usage();
     exit(1);
   }
 
+  int result;
   if(strcmp(argv[1], "user") == 0)
-    result = print_user_view(plain);
+    result = print_user_view(target_pid, plain);
   else if(strcmp(argv[1], "phys") == 0)
-    result = memviz_print(MEMVIZ_VIEW_PHYS, plain);
+    result = target_pid > 0 ?
+      memviz_print_pid(target_pid, MEMVIZ_VIEW_PHYS, plain) :
+      memviz_print(MEMVIZ_VIEW_PHYS, plain);
   else if(strcmp(argv[1], "kernel") == 0)
-    result = memviz_print(MEMVIZ_VIEW_KERNEL, plain);
+    result = target_pid > 0 ?
+      memviz_print_pid(target_pid, MEMVIZ_VIEW_KERNEL, plain) :
+      memviz_print(MEMVIZ_VIEW_KERNEL, plain);
   else if(strcmp(argv[1], "pagetable") == 0)
-    result = memviz_print_filtered(MEMVIZ_VIEW_PAGETABLE, plain, filter);
+    result = target_pid > 0 ?
+      memviz_print_pid_filtered(target_pid, MEMVIZ_VIEW_PAGETABLE, plain, filter) :
+      memviz_print_filtered(MEMVIZ_VIEW_PAGETABLE, plain, filter);
   else if(strcmp(argv[1], "all") == 0)
-    result = print_all_views(plain);
+    result = print_all_views(target_pid, plain);
   else {
     usage();
     exit(1);
