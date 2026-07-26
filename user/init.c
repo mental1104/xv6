@@ -81,6 +81,7 @@ static struct image_file image_files[] = {
   {"/memviztest", XV6_TEST_PATH("memviztest")},
   {"/memtargettest", XV6_TEST_PATH("memtargettest")},
   {"/pgtbltest", XV6_TEST_PATH("pgtbltest")},
+  {"/ostepintrotest", XV6_TEST_PATH("ostepintrotest")},
   {"/vaaccesstest", XV6_TEST_PATH("vaaccesstest")},
   {"/addresswindowtest", XV6_TEST_PATH("addresswindowtest")},
   {"/forktest", XV6_TEST_PATH("forktest")},

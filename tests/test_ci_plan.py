@@ -42,6 +42,14 @@ class CiPlanSelectionTests(unittest.TestCase):
         self.assertEqual(PLANNER.VM_SUITES, plan.suites)
         self.assertFalse(plan.run_shell_history)
 
+    def test_ostep_intro_runs_vm_and_core_regression(self) -> None:
+        """概念实验必须进入多核 VM 回归，并触发工作流中的单核 VM 补充验证。"""
+
+        plan = PLANNER.build_ci_plan(("tests/guest/ostepintrotest.c",))
+
+        self.assertEqual(PLANNER.VM_SUITES, plan.suites)
+        self.assertFalse(plan.run_shell_history)
+
     def test_filesystem_change_keeps_bigfile_boundary_test(self) -> None:
         plan = PLANNER.build_ci_plan(("kernel/fs.c",))
 

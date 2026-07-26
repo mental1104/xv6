@@ -263,6 +263,7 @@ UPROGS=\
 	$U/_memviztest\
 	$U/_memtargettest\
 	$U/_pgtbltest\
+	$U/_ostepintrotest\
 	$U/_vaaccesstest\
 	$U/_addresswindowtest\
 	$U/_wc\
