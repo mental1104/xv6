@@ -28,6 +28,7 @@ main()
     kvminithart();   // turn on paging
     procinit();      // process table
     seminit();       // teaching semaphore table
+    locklabinit();   // deterministic lock teaching state
     trapinit();      // trap vectors
     trapinithart();  // install kernel trap vector
     plicinit();      // set up interrupt controller
