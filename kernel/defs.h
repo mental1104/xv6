@@ -1,5 +1,6 @@
 struct buf;
 struct context;
+struct disktrace_snapshot;
 struct file;
 struct fsinspect_cache_stats;
 struct fsinspect_log_stats;
@@ -166,6 +167,9 @@ int             fetchstr(uint64, char*, int);
 int             fetchaddr(uint64, uint64*);
 void            syscall();
 
+// sysdisktrace.c
+void            disktrace_sys_init(void);
+
 // trap.c
 extern uint     ticks;
 void            trapinit(void);
@@ -220,6 +224,10 @@ void            plic_complete(int);
 void            virtio_disk_init(void);
 void            virtio_disk_rw(struct buf *, int);
 void            virtio_disk_intr(void);
+void            virtio_disk_trace_reset(void);
+int             virtio_disk_trace_start(void);
+int             virtio_disk_trace_stop(void);
+int             virtio_disk_trace_copy_snapshot(struct disktrace_snapshot*, int);
 
 uint64          free_proc(void);
 uint64          free_mem(void);

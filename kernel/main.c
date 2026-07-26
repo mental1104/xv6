@@ -35,6 +35,7 @@ main()
     fileinit();      // file table
     concurrencylab_init(); // explicit, inactive teaching probe
     virtio_disk_init(); // emulated hard disk
+    disktrace_sys_init(); // block-driver observation syscall state
     userinit();      // first user process
     vma_init();
     __sync_synchronize();

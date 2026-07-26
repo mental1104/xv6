@@ -148,6 +148,7 @@ extern uint64 sys_getprocs(void);
 extern uint64 sys_swapout(void);
 extern uint64 sys_swapinfo(void);
 extern uint64 sys_concurrencylab(void);
+extern uint64 sys_disktrace(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -200,6 +201,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_swapinfo]         sys_swapinfo,
 [SYS_concurrencylab]   sys_concurrencylab,
 [SYS_fsinspect]        sys_fsinspect,
+[SYS_disktrace]        sys_disktrace,
 };
 
 void

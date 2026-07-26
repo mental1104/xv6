@@ -53,6 +53,7 @@ static char *core_linkunlink_argv[] = {XV6_TEST_PATH("usertests"), "linkunlink",
 static char *core_openiput_argv[] = {XV6_TEST_PATH("usertests"), "openiput", 0};
 static char *core_fileapi_argv[] = {XV6_TEST_PATH("fileapitest"), 0};
 static char *core_schedtrace_argv[] = {XV6_TEST_PATH("schedtracetest"), 0};
+static char *core_disksched_argv[] = {XV6_TEST_PATH("diskschedtest"), 0};
 static char *core_history_argv[] = {XV6_TEST_PATH("historytest"), 0};
 static char *core_job_control_argv[] = {XV6_TEST_PATH("consolelinetest"), "jobctl", 0};
 static char *core_ls_options_argv[] = {XV6_TEST_PATH("lstest"), 0};
@@ -113,6 +114,7 @@ static struct xv6_test_case tests[] = {
   {"core", "core-openiput", core_openiput_argv},
   {"core", "core-fileapi", core_fileapi_argv},
   {"core", "core-schedtrace", core_schedtrace_argv},
+  {"core", "core-disk-scheduling", core_disksched_argv},
   {"core", "core-shell-history", core_history_argv},
   {"core", "core-job-control", core_job_control_argv},
   {"core", "core-ls-options", core_ls_options_argv},
