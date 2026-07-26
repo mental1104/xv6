@@ -41,8 +41,10 @@ jobs:
         run: |
           python3 -m py_compile \
             tests/run.py \
+            tests/run_lock_model.py \
             tests/run_usertests.py \
             tests/shell_history_interactive.py \
+            tests/test_run_lock_model.py \
             tests/test_runner.py \
             tests/ci_plan.py \
             tests/test_ci_plan.py
@@ -85,6 +87,11 @@ jobs:
           else
             echo 'filesystem=false' >> "$GITHUB_OUTPUT"
           fi
+          if grep -Eq '^(Makefile|kernel/(defs\.h|locklab\.c|locklab\.h|main\.c|syscall\.c|syscall\.h|syscall_names\.h|syslocklab\.c)|tests/guest/(locktest\.c|xv6test\.c)|tests/run_lock_model\.py|tests/test_run_lock_model\.py|user/(init\.c|user\.h|usys\.pl))$' /tmp/changed-files.txt; then
+            echo 'lock_model=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'lock_model=false' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run shell history interaction regression
         if: >-
@@ -114,6 +121,12 @@ jobs:
           done
           printf 'Selected PR suites: %s\n' "${suites[*]}"
           python3 tests/run.py "${args[@]}" --cpus 3
+
+      - name: Run lock model single-core and multi-core matrix
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.plan.outputs.lock_model == 'true'
+        run: python3 tests/run_lock_model.py --cpus 3
 
       - name: Run filesystem regression single-core
         if: >-
