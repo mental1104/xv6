@@ -64,3 +64,5 @@ entry("swapout");
 entry("swapinfo");
 entry("concurrencylab");
 entry("fsinspect");
+entry("raid1info");
+entry("raid1rw");

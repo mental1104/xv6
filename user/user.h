@@ -8,6 +8,8 @@ struct procinfo;
 struct memviz_snapshot;
 struct memviz_va_query;
 struct fsinspect_snapshot;
+struct raid1_info;
+struct raid1_result;
 struct sched_stats;
 struct schedtrace_snapshot;
 struct user_context;
@@ -114,6 +116,26 @@ int swapout(void *address);
 
 /** Return global swap counters and the non-faulting state of one virtual page. */
 int swapinfo(void *address, struct swap_info *info);
+
+/**
+ * 读取 RAID1 教学层的在线成员和最小共同容量。
+ *
+ * @param info 接收 struct raid1_info；结构定义在 kernel/raid1.h。
+ * @return 成功返回 0；用户地址非法时返回 -1。
+ */
+int raid1info(struct raid1_info *info);
+
+/**
+ * 读写一个 RAID1 固定大小逻辑块，并返回成员级执行结果。
+ *
+ * @param operation RAID1_OP_READ 或 RAID1_OP_WRITE。
+ * @param blockno RAID1 逻辑块号。
+ * @param payload 指向 RAID1_PAYLOAD_SIZE 字节的输入或输出缓冲区。
+ * @param result 接收尝试、完成、来源和修复成员掩码。
+ * @return 成功返回 0；越界、无有效副本、一致性冲突或用户地址非法时返回 -1。
+ */
+int raid1rw(int operation, uint blockno, void *payload,
+            struct raid1_result *result);
 
 /**
  * 将当前进程表复制到用户提供的结构化快照数组。
