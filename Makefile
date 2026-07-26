@@ -380,6 +380,7 @@ test-grader: test-unit
 # and validate xv6 through its user-visible behavior.
 test-integration: $K/kernel fs.img
 	$(PYTHON) tests/shell_history_interactive.py --cpus $(CPUS)
+	$(PYTHON) tests/run_lock_model.py --cpus $(CPUS)
 	$(PYTHON) tests/run.py --suite pr --cpus $(CPUS)
 
 test-labs: test-integration
