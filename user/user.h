@@ -67,6 +67,17 @@ char *mmap(void *addr, int length, int prot, int flags, int fd, int offset);
 int munmap(void *addr, int length);
 int backtrace(void);
 int memsnapshot(int view, struct memviz_snapshot *snapshot);
+
+/**
+ * 只读采集指定进程的稳定内存快照。
+ *
+ * @param pid 目标进程 PID，必须为正数。
+ * @param view MEMVIZ_VIEW_* 之一。
+ * @param snapshot 接收快照的用户缓冲区。
+ * @return 当前进程或稳定的非 RUNNING 目标成功返回 0；否则返回 -1。
+ */
+int memsnapshot_pid(int pid, int view, struct memviz_snapshot *snapshot);
+
 int vaquery(uint64 va, struct memviz_va_query *query);
 int consolemode(int fd, int mode);
 int sched_set_hint(int ticks);

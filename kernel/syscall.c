@@ -131,6 +131,7 @@ extern uint64 sys_mmap(void);
 extern uint64 sys_munmap(void);
 extern uint64 sys_backtrace(void);
 extern uint64 sys_memsnapshot(void);
+extern uint64 sys_memsnapshot_pid(void);
 extern uint64 sys_vaquery(void);
 extern uint64 sys_waitpid(void);
 extern uint64 sys_consolemode(void);
@@ -179,6 +180,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_munmap]    sys_munmap,
 [SYS_backtrace] sys_backtrace,
 [SYS_memsnapshot] sys_memsnapshot,
+[SYS_memsnapshot_pid] sys_memsnapshot_pid,
 [SYS_vaquery] sys_vaquery,
 [SYS_waitpid] sys_waitpid,
 [SYS_consolemode] sys_consolemode,

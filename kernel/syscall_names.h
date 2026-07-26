@@ -35,6 +35,7 @@ static const char *const syscall_names[] = {
 [SYS_munmap]    = "munmap",
 [SYS_backtrace] = "backtrace",
 [SYS_memsnapshot] = "memsnapshot",
+[SYS_memsnapshot_pid] = "memsnapshot_pid",
 [SYS_vaquery]    = "vaquery",
 [SYS_waitpid]    = "waitpid",
 [SYS_consolemode] = "consolemode",

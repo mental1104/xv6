@@ -48,3 +48,4 @@
 #define SYS_swapinfo         47
 #define SYS_concurrencylab   48
 #define SYS_fsinspect        49
+#define SYS_memsnapshot_pid  50

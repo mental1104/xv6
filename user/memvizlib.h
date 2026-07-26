@@ -28,4 +28,17 @@ int memviz_print_filtered(int view, int plain, char *filter);
  */
 int memviz_print_all(int plain);
 
+/**
+ * memviz_print_pid_filtered 采集并打印指定 PID 的稳定内存视图。
+ *
+ * @param pid 目标 PID，必须为正数。
+ * @param view MEMVIZ_VIEW_* 之一；当前只有 pagetable 使用 filter。
+ * @param plain 非零时禁用 ANSI 颜色。
+ * @param filter 页表过滤字符串；为空指针时打印默认完整视图。
+ * @return 成功返回 0；目标不可观察、系统调用或 view 无效时返回 -1。
+ */
+int memviz_print_pid_filtered(int pid, int view, int plain, char *filter);
+int memviz_print_pid(int pid, int view, int plain);
+int memviz_print_all_pid(int pid, int plain);
+
 #endif

@@ -18,9 +18,6 @@
 // 使用静态缓冲避免在固定一页的用户栈上放置较大的快照结构体。
 static struct memviz_snapshot snapshot;
 
-/**
- * 输出一个可选 ANSI 颜色的单字节字符。
- */
 static void
 print_glyph(char glyph, char *color, int plain)
 {
@@ -30,9 +27,6 @@ print_glyph(char glyph, char *color, int plain)
     printf("%s%c%s", color, glyph, ANSI_RESET);
 }
 
-/**
- * 返回以 NUL 结尾字符串的字节数。
- */
 static int
 string_length(char *text)
 {
@@ -42,15 +36,11 @@ string_length(char *text)
   return length;
 }
 
-/**
- * 判断静态文本中是否包含过滤子串；空过滤条件匹配全部。
- */
 static int
 string_contains(char *text, char *pattern)
 {
   if(pattern == 0 || pattern[0] == 0)
     return 1;
-
   for(int i = 0; text[i] != 0; i++){
     int j = 0;
     while(pattern[j] != 0 && text[i + j] == pattern[j])
@@ -61,9 +51,6 @@ string_contains(char *text, char *pattern)
   return 0;
 }
 
-/**
- * 输出左侧补零的非负十进制整数。
- */
 static void
 print_decimal_padded(int value, int width)
 {
@@ -77,10 +64,6 @@ print_decimal_padded(int value, int width)
   printf("%d", value);
 }
 
-/**
- * 返回页表采样角色的用户可见名称。内部 ABI 仍沿用 USER_MIRROR 枚举，
- * 但实现语义已经是高地址 alias window，因此界面统一使用 alias。
- */
 static char *
 pte_role_name(int role)
 {
@@ -120,9 +103,6 @@ pte_role_name(int role)
   }
 }
 
-/**
- * 返回页表所属地址空间的固定显示名。
- */
 static char *
 pte_space_name(int space)
 {
@@ -133,9 +113,6 @@ pte_space_name(int space)
   return "UNKNOWN";
 }
 
-/**
- * 将十进制或 0x 前缀的完整字符串解析为地址。
- */
 static int
 parse_filter_address(char *filter, uint64 *value)
 {
@@ -171,9 +148,6 @@ parse_filter_address(char *filter, uint64 *value)
   return 1;
 }
 
-/**
- * 判断页表采样条目是否满足角色、空间、MMIO 或地址过滤条件。
- */
 static int
 pte_entry_matches(struct memviz_pte_entry *entry, char *filter)
 {
@@ -198,9 +172,6 @@ pte_entry_matches(struct memviz_pte_entry *entry, char *filter)
   return 0;
 }
 
-/**
- * 输出 RISC-V PTE 的教学相关权限位。
- */
 static void
 print_pte_flags(uint64 flags)
 {
@@ -213,9 +184,6 @@ print_pte_flags(uint64 flags)
          (flags & PTE_COW) ? 'C' : '-');
 }
 
-/**
- * 把物理地址换算为 kalloc 压缩视图的 cell 下标。
- */
 static int
 kalloc_cell_index(struct memviz_snapshot *state, uint64 pa)
 {
@@ -228,9 +196,6 @@ kalloc_cell_index(struct memviz_snapshot *state, uint64 pa)
   return (int)cell;
 }
 
-/**
- * 返回物理页池压缩 cell 的字符状态。
- */
 static char
 kalloc_cell_state(struct memviz_snapshot *state, int cell)
 {
@@ -244,9 +209,6 @@ kalloc_cell_state(struct memviz_snapshot *state, int cell)
   return ':';
 }
 
-/**
- * 输出 leaf PA 在物理页池中的压缩位置。
- */
 static void
 print_kalloc_cell(struct memviz_snapshot *state, uint64 pa, int plain)
 {
@@ -268,9 +230,6 @@ print_kalloc_cell(struct memviz_snapshot *state, uint64 pa, int plain)
     print_glyph(glyph, ANSI_YELLOW, plain);
 }
 
-/**
- * 将用量压缩为固定宽度字符数，非零用量至少占一个字符。
- */
 static int
 scaled_cells(uint64 used, uint64 total, int cells)
 {
@@ -282,9 +241,6 @@ scaled_cells(uint64 used, uint64 total, int cells)
   return (int)result;
 }
 
-/**
- * 输出低地址到高地址方向的固定宽度条形图。
- */
 static void
 print_bar(int used_cells, char used, char free, char *used_color,
           char *free_color, int plain)
@@ -297,9 +253,6 @@ print_bar(int used_cells, char used, char free, char *used_color,
   printf("]");
 }
 
-/**
- * 输出高地址侧为已使用区域的反向条形图，用于向下增长的栈。
- */
 static void
 print_reverse_bar(int used_cells, char used, char free, char *used_color,
                   char *free_color, int plain)
@@ -312,18 +265,12 @@ print_reverse_bar(int used_cells, char used, char free, char *used_color,
   printf("]");
 }
 
-/**
- * 输出带真实地址的布局边界线。
- */
 static void
 print_line(uint64 address, char *mark)
 {
   printf("%p %s\n", address, mark);
 }
 
-/**
- * 输出竖向地址空间图中的一行文本，并补齐右边界。
- */
 static void
 print_box_text(char *text)
 {
@@ -334,9 +281,6 @@ print_box_text(char *text)
   printf(" |\n");
 }
 
-/**
- * 输出竖向地址空间图中的正向用量条。
- */
 static void
 print_box_bar(int used_cells, char used, char free, char *used_color,
               char *free_color, int plain)
@@ -346,9 +290,6 @@ print_box_bar(int used_cells, char used, char free, char *used_color,
   printf(" |\n");
 }
 
-/**
- * 输出竖向地址空间图中的反向用量条。
- */
 static void
 print_box_reverse_bar(int used_cells, char used, char free, char *used_color,
                       char *free_color, int plain)
@@ -358,9 +299,6 @@ print_box_reverse_bar(int used_cells, char used, char free, char *used_color,
   printf(" |\n");
 }
 
-/**
- * 计算动态区域已覆盖的页数。
- */
 static uint64
 dynamic_pages(struct memviz_snapshot *state)
 {
@@ -369,9 +307,6 @@ dynamic_pages(struct memviz_snapshot *state)
   return (state->process_size - state->dynamic_start + PGSIZE - 1) / PGSIZE;
 }
 
-/**
- * 计算动态起点到 USERMAX 的理论页容量。
- */
 static uint64
 dynamic_capacity_pages(struct memviz_snapshot *state)
 {
@@ -380,9 +315,6 @@ dynamic_capacity_pages(struct memviz_snapshot *state)
   return (state->user_limit - state->dynamic_start) / PGSIZE;
 }
 
-/**
- * 计算当前 break 到 USERMAX 之间仍可增长的整页数。
- */
 static uint64
 remaining_pages(struct memviz_snapshot *state)
 {
@@ -391,9 +323,6 @@ remaining_pages(struct memviz_snapshot *state)
   return (state->user_limit - state->process_size) / PGSIZE;
 }
 
-/**
- * 根据用户栈余量生成教学风险信号。
- */
 static char *
 stack_signal(struct memviz_snapshot *state)
 {
@@ -406,9 +335,6 @@ stack_signal(struct memviz_snapshot *state)
   return "normal";
 }
 
-/**
- * 根据可立即分配物理页比例生成教学 OOM 信号。
- */
 static char *
 physical_signal(struct memviz_snapshot *state)
 {
@@ -422,10 +348,12 @@ physical_signal(struct memviz_snapshot *state)
   return "normal";
 }
 
-/**
- * 输出当前进程的低地址用户布局。PLIC、CLINT 和 UART 仅是物理 MMIO
- * 数值，不再作为用户虚拟地址上限；真正边界由快照中的 USERMAX 给出。
- */
+static void
+print_process_pid(struct memviz_snapshot *state)
+{
+  printf("observed process pid=%d\n", state->process_pid);
+}
+
 static void
 print_user_view(struct memviz_snapshot *state, int plain)
 {
@@ -433,8 +361,9 @@ print_user_view(struct memviz_snapshot *state, int plain)
   uint64 capacity_pages = dynamic_capacity_pages(state);
   int used_cells = scaled_cells(used_pages, capacity_pages, BAR_CELLS);
 
-  printf("\n%s=== CURRENT PROCESS USER VIRTUAL ADDRESS SPACE ===%s\n",
+  printf("\n%s=== PROCESS USER VIRTUAL ADDRESS SPACE ===%s\n",
          plain ? "" : ANSI_CYAN, plain ? "" : ANSI_RESET);
+  print_process_pid(state);
   printf("\n       HIGH ADDRESS\n");
   print_line(state->user_limit, "+------------- USERMAX --------------+");
   print_box_text("AVAILABLE USER VA RANGE");
@@ -486,9 +415,6 @@ print_user_view(struct memviz_snapshot *state, int plain)
          (int)state->total_pages, physical_signal(state));
 }
 
-/**
- * 输出 kalloc 管理范围和每 CPU freelist 汇总。
- */
 static void
 print_phys_view(struct memviz_snapshot *state, int plain)
 {
@@ -530,18 +456,15 @@ print_phys_view(struct memviz_snapshot *state, int plain)
   printf("\nOOM signal: %s\n", physical_signal(state));
 }
 
-/**
- * 输出当前进程内核页表的主要映射，按 Sv39 高规范半区、非规范空洞和低规范
- * 半区的真实顺序展示用户 alias、trampoline、内核 direct map 与 MMIO。
- */
 static void
 print_kernel_view(struct memviz_snapshot *state, int plain)
 {
   uint64 alias_limit = state->user_mirror_start + state->user_limit;
   uint64 lower_canonical_limit = state->trampoline + PGSIZE;
 
-  printf("\n%s=== CURRENT PROCESS KERNEL ADDRESS SPACE ===%s\n",
+  printf("\n%s=== PROCESS KERNEL ADDRESS SPACE ===%s\n",
          plain ? "" : ANSI_CYAN, plain ? "" : ANSI_RESET);
+  print_process_pid(state);
   printf("\n       HIGH ADDRESS\n");
   print_line(alias_limit, "+------------ KUSEREND --------------+");
   print_box_text("unused alias capacity");
@@ -590,9 +513,6 @@ print_kernel_view(struct memviz_snapshot *state, int plain)
          state->clint_start, state->plic_start);
 }
 
-/**
- * 输出一层页表 PTE；缺失项终止当前链路。
- */
 static void
 print_pagetable_level(struct memviz_pte_level *level, int last)
 {
@@ -607,9 +527,6 @@ print_pagetable_level(struct memviz_pte_level *level, int last)
   printf(" -> %p\n", level->pa);
 }
 
-/**
- * 输出一条从 VA 经 Sv39 三级页表到 PA 的链路。
- */
 static void
 print_pagetable_tree(struct memviz_snapshot *state,
                      struct memviz_pte_entry *entry, int plain)
@@ -635,9 +552,6 @@ print_pagetable_tree(struct memviz_snapshot *state,
     printf("          note: same PA as user page, supervisor-only alias\n");
 }
 
-/**
- * 输出指定地址空间中满足过滤条件的页表链路集合。
- */
 static int
 print_pagetable_forest(struct memviz_snapshot *state, int space, char *title,
                        uint64 root, int plain, char *filter)
@@ -656,9 +570,6 @@ print_pagetable_forest(struct memviz_snapshot *state, int space, char *title,
   return printed;
 }
 
-/**
- * 输出一个页表页的 512 个 PTE 槽压缩矩阵。
- */
 static void
 print_pt_usage_page(struct memviz_pt_usage_page *page, int plain)
 {
@@ -693,14 +604,12 @@ print_pt_usage_page(struct memviz_pt_usage_page *page, int plain)
   }
 }
 
-/**
- * 输出已分配页表页的 PTE 槽位余量。
- */
 static void
 print_pagetable_usage_view(struct memviz_snapshot *state, int plain)
 {
   printf("\n%s=== PAGE TABLE SLOT USAGE ===%s\n",
          plain ? "" : ANSI_CYAN, plain ? "" : ANSI_RESET);
+  print_process_pid(state);
   printf("\nEach matrix compresses 512 PTE slots into 64 cells.\n");
   for(int index = 0; index < (int)state->pagetable_usage_count; index++)
     print_pt_usage_page(&state->pagetable_usage[index], plain);
@@ -709,9 +618,6 @@ print_pagetable_usage_view(struct memviz_snapshot *state, int plain)
          (int)state->pagetable_usage_count, MEMVIZ_PT_USAGE_PAGES);
 }
 
-/**
- * 输出当前进程用户页表和进程内核页表的代表性映射链路。
- */
 static void
 print_pagetable_view(struct memviz_snapshot *state, int plain, char *filter)
 {
@@ -720,8 +626,9 @@ print_pagetable_view(struct memviz_snapshot *state, int plain, char *filter)
     return;
   }
 
-  printf("\n%s=== CURRENT PROCESS PAGE TABLE TREE ===%s\n",
+  printf("\n%s=== PROCESS PAGE TABLE TREE ===%s\n",
          plain ? "" : ANSI_CYAN, plain ? "" : ANSI_RESET);
+  print_process_pid(state);
   printf("\nflow: root -> L2 -> L1 -> L0 leaf -> PA -> kalloc cell\n");
   if(filter != 0)
     printf("filter: %s\n", filter);
@@ -738,10 +645,46 @@ print_pagetable_view(struct memviz_snapshot *state, int plain, char *filter)
   printf("printed paths: %d\n", total);
 }
 
+/** 采集当前进程或指定 PID 的快照到静态用户态缓冲。 */
+static int
+load_snapshot(int pid, int view)
+{
+  if(pid > 0)
+    return memsnapshot_pid(pid, view, &snapshot);
+  return memsnapshot(view, &snapshot);
+}
+
+int
+memviz_print_pid_filtered(int pid, int view, int plain, char *filter)
+{
+  if(pid <= 0 || load_snapshot(pid, view) < 0){
+    fprintf(2, "memviz: cannot snapshot pid %d for view %d\n", pid, view);
+    return -1;
+  }
+
+  switch(view){
+  case MEMVIZ_VIEW_USER:
+    print_user_view(&snapshot, plain);
+    break;
+  case MEMVIZ_VIEW_PHYS:
+    print_phys_view(&snapshot, plain);
+    break;
+  case MEMVIZ_VIEW_KERNEL:
+    print_kernel_view(&snapshot, plain);
+    break;
+  case MEMVIZ_VIEW_PAGETABLE:
+    print_pagetable_view(&snapshot, plain, filter);
+    break;
+  default:
+    return -1;
+  }
+  return 0;
+}
+
 int
 memviz_print_filtered(int view, int plain, char *filter)
 {
-  if(memsnapshot(view, &snapshot) < 0){
+  if(load_snapshot(0, view) < 0){
     fprintf(2, "memviz: memsnapshot failed for view %d\n", view);
     return -1;
   }
@@ -772,6 +715,12 @@ memviz_print(int view, int plain)
 }
 
 int
+memviz_print_pid(int pid, int view, int plain)
+{
+  return memviz_print_pid_filtered(pid, view, plain, 0);
+}
+
+int
 memviz_print_all(int plain)
 {
   if(memviz_print(MEMVIZ_VIEW_USER, plain) < 0)
@@ -781,6 +730,20 @@ memviz_print_all(int plain)
   if(memviz_print(MEMVIZ_VIEW_PHYS, plain) < 0)
     return -1;
   if(memviz_print(MEMVIZ_VIEW_KERNEL, plain) < 0)
+    return -1;
+  return 0;
+}
+
+int
+memviz_print_all_pid(int pid, int plain)
+{
+  if(memviz_print_pid(pid, MEMVIZ_VIEW_USER, plain) < 0)
+    return -1;
+  if(memviz_print_pid(pid, MEMVIZ_VIEW_PAGETABLE, plain) < 0)
+    return -1;
+  if(memviz_print_pid(pid, MEMVIZ_VIEW_PHYS, plain) < 0)
+    return -1;
+  if(memviz_print_pid(pid, MEMVIZ_VIEW_KERNEL, plain) < 0)
     return -1;
   return 0;
 }
