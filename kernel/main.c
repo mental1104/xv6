@@ -37,7 +37,9 @@ main()
     fileinit();      // file table
     concurrencylab_init(); // explicit, inactive teaching probe
     virtio_disk_init(); // root disk plus optional teaching member disks
-    raid1_init();    // independent RAID1 teaching layer; never replaces the root FS path
+#ifdef XV6_RAID1
+    raid1_init();    // opt-in RAID1 teaching layer; never replaces the root FS path
+#endif
     userinit();      // first user process
     vma_init();
     __sync_synchronize();
