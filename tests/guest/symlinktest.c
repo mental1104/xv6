@@ -12,7 +12,15 @@
 #define fail(msg) do {printf("FAILURE: " msg "\n"); failed = 1; goto done;} while (0);
 static int failed = 0;
 
+static char *depth_paths[] = {
+  "/testsymlink/d0", "/testsymlink/d1", "/testsymlink/d2",
+  "/testsymlink/d3", "/testsymlink/d4", "/testsymlink/d5",
+  "/testsymlink/d6", "/testsymlink/d7", "/testsymlink/d8",
+  "/testsymlink/d9", "/testsymlink/d10", "/testsymlink/d11",
+};
+
 static void testsymlink(void);
+static void testdepth(void);
 static void concur(void);
 static void cleanup(void);
 
@@ -21,10 +29,13 @@ main(int argc, char *argv[])
 {
   cleanup();
   testsymlink();
+  testdepth();
   concur();
+  cleanup();
   exit(failed);
 }
 
+/** 删除本测试创建的所有路径，使连续运行共享同一镜像时仍从干净状态开始。 */
 static void
 cleanup(void)
 {
@@ -37,19 +48,29 @@ cleanup(void)
   unlink("/testsymlink/4");
   unlink("/testsymlink/z");
   unlink("/testsymlink/y");
+  for(int i = 0; i < sizeof(depth_paths) / sizeof(depth_paths[0]); i++)
+    unlink(depth_paths[i]);
   unlink("/testsymlink");
 }
 
-// stat a symbolic link using O_NOFOLLOW
+/**
+ * 使用 O_NOFOLLOW 读取符号链接自身的元数据。
+ *
+ * @param pn 待检查路径。
+ * @param st 接收文件状态的调用者缓冲区。
+ * @return 成功返回 0；路径无法打开或 fstat 失败时返回 -1。函数始终关闭临时 fd。
+ */
 static int
 stat_slink(char *pn, struct stat *st)
 {
+  int result = -1;
   int fd = open(pn, O_RDONLY | O_NOFOLLOW);
   if(fd < 0)
     return -1;
-  if(fstat(fd, st) != 0)
-    return -1;
-  return 0;
+  if(fstat(fd, st) == 0)
+    result = 0;
+  close(fd);
+  return result;
 }
 
 static void
@@ -126,9 +147,54 @@ testsymlink(void)
     fail("Value read from 4 differed from value written to 1\n");
 
   printf("test symlinks: ok\n");
-done:
+ done:
   close(fd1);
   close(fd2);
+}
+
+/** 验证恰好十次符号链接跳转成功，而第十一次跳转被深度上限拒绝。 */
+static void
+testdepth(void)
+{
+  int fd = -1;
+
+  printf("Start: test symlink depth boundary\n");
+
+  for(int i = 0; i < 10; i++)
+    if(symlink(depth_paths[i + 1], depth_paths[i]) < 0)
+      fail("failed to create ten-link chain");
+
+  fd = open(depth_paths[10], O_CREATE | O_RDWR);
+  if(fd < 0)
+    fail("failed to create ten-link target");
+  close(fd);
+  fd = -1;
+
+  fd = open(depth_paths[0], O_RDONLY);
+  if(fd < 0)
+    fail("ten symbolic links should be accepted");
+  close(fd);
+  fd = -1;
+
+  if(unlink(depth_paths[10]) < 0)
+    fail("failed to replace ten-link target");
+  if(symlink(depth_paths[11], depth_paths[10]) < 0)
+    fail("failed to extend chain to eleven links");
+
+  fd = open(depth_paths[11], O_CREATE | O_RDWR);
+  if(fd < 0)
+    fail("failed to create eleven-link target");
+  close(fd);
+  fd = -1;
+
+  fd = open(depth_paths[0], O_RDONLY);
+  if(fd >= 0)
+    fail("eleven symbolic links should exceed the limit");
+
+  printf("test symlink depth boundary: ok\n");
+ done:
+  if(fd >= 0)
+    close(fd);
 }
 
 static void
