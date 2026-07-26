@@ -104,8 +104,8 @@ $(error unsupported SCHED_POLICY='$(SCHED_POLICY)'; use rr, fifo, sjf, stcf, mlf
 endif
 CFLAGS += -DSCHED_POLICY=$(SCHED_POLICY_ID)
 
-# 保留 proc.c 的历史入口作为可链接后备，由 sched.c 提供公开调度入口。
-$K/proc.o: CFLAGS += -Dprocinit=legacy_procinit -Dscheduler=legacy_scheduler -Dyield=legacy_yield -Dexit=legacy_exit
+# 保留 proc.c 的历史入口作为可链接后备，由 sched.c 和 semexit.c 提供公开入口。
+$K/proc.o: CFLAGS += -Dprocinit=legacy_procinit -Dscheduler=legacy_scheduler -Dyield=legacy_yield -Dexit=proc_exit_without_semaphore
 $K/trap.o: CFLAGS += -Dyield=sched_timer_yield
 
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]no-pie'),)
@@ -268,6 +268,7 @@ UPROGS=\
 	$U/_memviztest\
 	$U/_memtargettest\
 	$U/_pgtbltest\
+	$U/_semaphoretest\
 	$U/_vaaccesstest\
 	$U/_addresswindowtest\
 	$U/_wc\
@@ -303,7 +304,6 @@ UPROGS=\
 	$U/_consolelinetest\
 	$U/_lstest\
 	$U/_pstest\
-	$U/_semaphoretest\
 	$U/_locktest\
 	$U/_xv6test\
 	$U/_schedtest\
