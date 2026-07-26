@@ -148,8 +148,15 @@ extern uint64 sys_getprocs(void);
 extern uint64 sys_swapout(void);
 extern uint64 sys_swapinfo(void);
 extern uint64 sys_concurrencylab(void);
+
+#ifdef XV6_RAID1
 extern uint64 sys_raid1info(void);
 extern uint64 sys_raid1rw(void);
+#else
+/** RAID1 关闭时保留稳定 ABI，并显式拒绝教学层调用。 */
+static uint64 sys_raid1info(void) { return -1; }
+static uint64 sys_raid1rw(void) { return -1; }
+#endif
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
