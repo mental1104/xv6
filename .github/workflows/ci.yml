@@ -5,41 +5,96 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  source-export:
+  resolve-test-push:
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
     steps:
-      - name: Checkout merge base
+      - name: Checkout tooling branch
         uses: actions/checkout@v4
         with:
-          ref: a08dde16cd6cedeaeb5be294d9435a75cb111a5d
-          path: base
+          path: tooling
 
-      - name: Checkout current main
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          path: main
-
-      - name: Checkout issue 155 pull request head
+      - name: Checkout target branch
         uses: actions/checkout@v4
         with:
           ref: concept/155-disk-scheduling
-          path: head
+          fetch-depth: 0
+          path: target
 
-      - name: Package source trees
+      - name: Reconstruct verified merge patch
         run: |
-          mkdir -p export
-          tar --exclude=.git -czf export/base.tar.gz -C base .
-          tar --exclude=.git -czf export/main.tar.gz -C main .
-          tar --exclude=.git -czf export/head.tar.gz -C head .
+          cat tooling/.tmp/issue155-patch/part-*.b64 \
+            | base64 --decode > /tmp/issue155.patch
+          echo "19143abdef930c24eb4ffa44f6afe448080c9621b5e0167bd71db3c12cc70213  /tmp/issue155.patch" \
+            | sha256sum --check -
 
-      - name: Upload source trees
-        uses: actions/upload-artifact@v4
-        with:
-          name: source-export-three-way
-          path: export/
-          if-no-files-found: error
-          retention-days: 1
+      - name: Resolve conflicts on exact refs
+        working-directory: target
+        env:
+          EXPECTED_REMOTE_HEAD: 840c3eb20d6c0acd7cce12eeb36714726ab6b1cf
+          ORIGINAL_FEATURE_HEAD: 99112241adb4b7970a8316a62af0c150902a5fa0
+          EXPECTED_MAIN: 0a7d790ab01985c8fc9f94465c3ee71b166920a0
+        run: |
+          set -euo pipefail
+          git fetch origin main concept/155-disk-scheduling
+          test "$(git rev-parse origin/main)" = "$EXPECTED_MAIN"
+          test "$(git rev-parse origin/concept/155-disk-scheduling)" = "$EXPECTED_REMOTE_HEAD"
+          git config user.name "mental1104"
+          git config user.email "64130690+mental1104@users.noreply.github.com"
+          git reset --hard "$ORIGINAL_FEATURE_HEAD"
+          git merge --no-commit --no-ff "$EXPECTED_MAIN" || true
+          test -f .git/MERGE_HEAD
+          git read-tree --reset -u "$EXPECTED_MAIN"
+          test -f .git/MERGE_HEAD
+          git clean -fdx
+          git apply --check /tmp/issue155.patch
+          git apply /tmp/issue155.patch
+          git add -A
+          git diff --cached --check
+          test "$(git diff --cached --name-only | wc -l)" -eq 17
+          git diff --cached --name-only
+          git commit -m "merge: 同步 main 并解决磁盘调度实验冲突"
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu \
+            qemu-system-misc \
+            python3-pexpect
+
+      - name: Build and test resolved tree
+        working-directory: target
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tests/run.py \
+            tests/run_usertests.py \
+            tests/shell_history_interactive.py \
+            tests/test_runner.py \
+            tests/ci_plan.py \
+            tests/test_ci_plan.py
+          make test-unit
+          make clean
+          make -j2
+          python3 tests/run.py --suite pr --cpus 3
+          make clean
+          make -j2 CPUS=1
+          python3 tests/run.py --suite usertests-core --cpus 1
+          make clean
+          make -j2
+          python3 tests/run_usertests.py --cpus 3
+
+      - name: Push resolved target branch
+        working-directory: target
+        env:
+          EXPECTED_REMOTE_HEAD: 840c3eb20d6c0acd7cce12eeb36714726ab6b1cf
+        run: |
+          git push \
+            --force-with-lease=refs/heads/concept/155-disk-scheduling:$EXPECTED_REMOTE_HEAD \
+            origin HEAD:refs/heads/concept/155-disk-scheduling
