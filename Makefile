@@ -33,6 +33,8 @@ OBJS = \
   $K/sysps.o \
   $K/memviz.o \
   $K/sysmemviz.o \
+  $K/locklab.o \
+  $K/syslocklab.o \
   $K/bio.o \
   $K/fs.o \
   $K/fsinspect.o \
@@ -303,6 +305,7 @@ UPROGS=\
 	$U/_consolelinetest\
 	$U/_lstest\
 	$U/_pstest\
+	$U/_locktest\
 	$U/_xv6test\
 	$U/_schedtest\
 	$U/_schedtracetest
@@ -382,6 +385,7 @@ test-grader: test-unit
 # and validate xv6 through its user-visible behavior.
 test-integration: $K/kernel fs.img
 	$(PYTHON) tests/shell_history_interactive.py --cpus $(CPUS)
+	$(PYTHON) tests/run_lock_model.py --cpus $(CPUS)
 	$(PYTHON) tests/run.py --suite pr --cpus $(CPUS)
 
 test-labs: test-integration
