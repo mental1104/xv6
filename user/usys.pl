@@ -70,3 +70,5 @@ entry("sempost");
 entry("semdestroy");
 entry("seminfo");
 entry("logcrash");
+entry("raid1info");
+entry("raid1rw");
