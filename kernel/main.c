@@ -26,6 +26,7 @@ main()
     kvmmap(RTC, RTC, PGSIZE, PTE_R | PTE_W);
     kvminithart();   // turn on paging
     procinit();      // process table
+    locklabinit();   // deterministic lock teaching state
     trapinit();      // trap vectors
     trapinithart();  // install kernel trap vector
     plicinit();      // set up interrupt controller
