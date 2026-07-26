@@ -48,8 +48,9 @@
 #define SYS_swapinfo         47
 #define SYS_concurrencylab   48
 #define SYS_fsinspect        49
-#define SYS_semcreate        50
-#define SYS_semwait          51
-#define SYS_sempost          52
-#define SYS_semdestroy       53
-#define SYS_seminfo          54
+#define SYS_memsnapshot_pid  50
+#define SYS_semcreate        51
+#define SYS_semwait          52
+#define SYS_sempost          53
+#define SYS_semdestroy       54
+#define SYS_seminfo          55
