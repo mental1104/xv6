@@ -116,6 +116,14 @@ int swapout(void *address);
 int swapinfo(void *address, struct swap_info *info);
 
 /**
+ * 为下一次文件系统提交武装确定性崩溃点，供日志恢复教学实验使用。
+ *
+ * @param phase kernel/log.h 中的 LOG_CRASH_*；LOG_CRASH_NONE 取消武装。
+ * @return 成功返回 0；阶段非法、已有注入点或文件系统事务正在进行时返回 -1。
+ */
+int logcrash(int phase);
+
+/**
  * 将当前进程表复制到用户提供的结构化快照数组。
  *
  * @param entries 接收最多 max_entries 个 struct procinfo；结构定义在 kernel/procinfo.h。

@@ -110,6 +110,7 @@ extern uint64 sys_fsinspect(void);
 extern uint64 sys_getpid(void);
 extern uint64 sys_kill(void);
 extern uint64 sys_link(void);
+extern uint64 sys_logcrash(void);
 extern uint64 sys_lseek(void);
 extern uint64 sys_mkdir(void);
 extern uint64 sys_mknod(void);
@@ -200,6 +201,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_swapinfo]         sys_swapinfo,
 [SYS_concurrencylab]   sys_concurrencylab,
 [SYS_fsinspect]        sys_fsinspect,
+[SYS_logcrash]         sys_logcrash,
 };
 
 void

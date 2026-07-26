@@ -231,6 +231,10 @@ setup_image_layout(void)
   for(struct image_file *file = image_files; file->source != 0; file++)
     place_file(file->source, file->destination);
 
+  // 日志恢复场景由 xv6test 再次 exec 自身的内部模式；测试目录别名让注册表仍遵守
+  // “argv[0] 位于测试目录”的统一路径契约，同时与 /usr/bin/xv6test 共享同一 inode。
+  ensure_file_link(XV6_USR_BIN_PATH("xv6test"), XV6_TEST_PATH("xv6test"));
+
   // 原始 usertests 的 copyout 用例读取相对路径 README；它不是可执行文件搜索。
   ensure_file_link("/README", "/root/README");
   setup_swap_backing();
