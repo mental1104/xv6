@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""在单核和请求的多核配置下执行锁模型 guest 回归。"""
+"""在单核和请求的多核配置下重建并执行锁模型 guest 回归。"""
 
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from collections.abc import Sequence
 
-from run import GUEST_SUCCESS, TestCase, TestFailure, _run_qemu_tests
+import pexpect
+
+from run import GUEST_SUCCESS, REPO_ROOT, TestCase, TestFailure, _run_qemu_tests
 
 
 def cpu_matrix(requested_cpus: int) -> tuple[int, ...]:
@@ -16,6 +19,13 @@ def cpu_matrix(requested_cpus: int) -> tuple[int, ...]:
     if requested_cpus < 1:
         raise ValueError("CPU count must be at least 1")
     return tuple(dict.fromkeys((1, requested_cpus)))
+
+
+def build_xv6(cpus: int) -> None:
+    """按指定 CPU 数量执行干净构建，避免复用其他矩阵项的内核。"""
+
+    subprocess.run(("make", "clean"), cwd=REPO_ROOT, check=True)
+    subprocess.run(("make", "-j2", f"CPUS={cpus}"), cwd=REPO_ROOT, check=True)
 
 
 def run_lock_model(cpus: int) -> None:
@@ -39,7 +49,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """执行单核与多核矩阵，并以进程状态汇总失败。"""
+    """逐项干净构建并执行单核与多核矩阵。"""
 
     args = parse_args(argv)
     try:
@@ -50,8 +60,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     failures: list[str] = []
     for cpus in matrix:
         try:
+            build_xv6(cpus)
             run_lock_model(cpus)
-        except TestFailure as exc:
+        except (TestFailure, subprocess.CalledProcessError, pexpect.TIMEOUT, pexpect.EOF) as exc:
             failures.append(f"CPUS={cpus}: {exc}")
             print(f"FAIL lock model CPUS={cpus}: {exc}", file=sys.stderr)
 
