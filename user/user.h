@@ -7,6 +7,7 @@ struct sysinfo;
 struct procinfo;
 struct memviz_snapshot;
 struct memviz_va_query;
+struct fsinspect_snapshot;
 struct sched_stats;
 struct schedtrace_snapshot;
 struct user_context;
@@ -66,12 +67,32 @@ char *mmap(void *addr, int length, int prot, int flags, int fd, int offset);
 int munmap(void *addr, int length);
 int backtrace(void);
 int memsnapshot(int view, struct memviz_snapshot *snapshot);
+
+/**
+ * 只读采集指定进程的稳定内存快照。
+ *
+ * @param pid 目标进程 PID，必须为正数。
+ * @param view MEMVIZ_VIEW_* 之一。
+ * @param snapshot 接收快照的用户缓冲区。
+ * @return 当前进程或稳定的非 RUNNING 目标成功返回 0；否则返回 -1。
+ */
+int memsnapshot_pid(int pid, int view, struct memviz_snapshot *snapshot);
+
 int vaquery(uint64 va, struct memviz_va_query *query);
 int consolemode(int fd, int mode);
 int sched_set_hint(int ticks);
 int sched_set_weight(int weight);
 int sched_get_stats(struct sched_stats *stats);
 int schedtrace(int op, struct schedtrace_snapshot *snapshot, int arg);
+
+/**
+ * 读取文件系统全局状态，并可选附带一个打开 inode 的块映射边界。
+ *
+ * @param fd 普通文件或设备描述符；FSINSPECT_GLOBAL_FD 只读取全局状态。
+ * @param snapshot 接收 kernel/fsinspect.h 定义的结构化观察结果。
+ * @return 成功返回 0；描述符、对象类型或用户地址非法时返回 -1。
+ */
+int fsinspect(int fd, struct fsinspect_snapshot *snapshot);
 
 /**
  * 驱动显式启用的并发入门教学会话。
