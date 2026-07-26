@@ -24,11 +24,19 @@ class CpuMatrixTests(unittest.TestCase):
 
 
 class RunnerInvocationTests(unittest.TestCase):
-    """验证每个矩阵元素都会交给 QEMU runner。"""
+    """验证每个矩阵元素都会先构建，再交给 QEMU runner。"""
 
     @patch("run_lock_model.run_lock_model")
-    def test_main_runs_single_and_requested_multi_core(self, mocked_run) -> None:
+    @patch("run_lock_model.build_xv6")
+    def test_main_runs_single_and_requested_multi_core(
+        self,
+        mocked_build,
+        mocked_run,
+    ) -> None:
         self.assertEqual(run_lock_model.main(("--cpus", "3")), 0)
+        self.assertEqual(mocked_build.call_count, 2)
+        mocked_build.assert_any_call(1)
+        mocked_build.assert_any_call(3)
         self.assertEqual(mocked_run.call_count, 2)
         mocked_run.assert_any_call(1)
         mocked_run.assert_any_call(3)
