@@ -49,3 +49,4 @@
 #define SYS_concurrencylab   48
 #define SYS_fsinspect        49
 #define SYS_memsnapshot_pid  50
+#define SYS_locklab          51
