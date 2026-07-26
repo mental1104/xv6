@@ -52,5 +52,6 @@
 #define SYS_sempost          53
 #define SYS_semdestroy       54
 #define SYS_seminfo          55
+#define SYS_locklab          56
 #define SYS_fsinspect        49
 #define SYS_memsnapshot_pid  50
