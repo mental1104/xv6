@@ -110,6 +110,7 @@ extern uint64 sys_fsinspect(void);
 extern uint64 sys_getpid(void);
 extern uint64 sys_kill(void);
 extern uint64 sys_link(void);
+extern uint64 sys_locklab(void);
 extern uint64 sys_logcrash(void);
 extern uint64 sys_lseek(void);
 extern uint64 sys_mkdir(void);
@@ -223,6 +224,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_logcrash]         sys_logcrash,
 [SYS_raid1info]        sys_raid1info,
 [SYS_raid1rw]          sys_raid1rw,
+[SYS_locklab]          sys_locklab,
 };
 
 void
