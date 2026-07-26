@@ -8,6 +8,7 @@ volatile static int started = 0;
 
 // 并发入门探针由 spinlock.c 持有，只在启动 CPU 上初始化一次。
 extern void concurrencylab_init(void);
+extern void seminit(void);
 
 // start() jumps here in supervisor mode on all CPUs.
 void
@@ -21,11 +22,14 @@ main()
     printf("\n");
     kinit();         // physical page allocator
     kvminit();       // create kernel page table
-    // Goldfish RTC 位于普通 RAM direct map 之外，必须在启用分页前显式映射。
-    // 每进程内核页表会复制全局低半区，因此后续文件系统路径也能读取该 MMIO。
+    // Goldfish RTC 和额外 virtio-mmio 插槽位于默认低半区映射之外，必须在
+    // 启用分页前显式映射。缺少成员盘时寄存器读返回空插槽，而不是页表故障。
     kvmmap(RTC, RTC, PGSIZE, PTE_R | PTE_W);
+    kvmmap(VIRTIO1, VIRTIO1, PGSIZE, PTE_R | PTE_W);
+    kvmmap(VIRTIO2, VIRTIO2, PGSIZE, PTE_R | PTE_W);
     kvminithart();   // turn on paging
     procinit();      // process table
+    seminit();       // teaching semaphore table
     trapinit();      // trap vectors
     trapinithart();  // install kernel trap vector
     plicinit();      // set up interrupt controller
@@ -34,8 +38,11 @@ main()
     iinit();         // inode cache
     fileinit();      // file table
     concurrencylab_init(); // explicit, inactive teaching probe
-    virtio_disk_init(); // emulated hard disk
-    disktrace_sys_init(); // block-driver observation syscall state
+    virtio_disk_init(); // root disk plus optional teaching member disks
+    disktrace_sys_init(); // root block-driver observation syscall state
+#ifdef XV6_RAID1
+    raid1_init();    // opt-in RAID1 teaching layer; never replaces the root FS path
+#endif
     userinit();      // first user process
     vma_init();
     __sync_synchronize();

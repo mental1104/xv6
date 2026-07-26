@@ -76,6 +76,7 @@ VM_PATHS = {
     "tests/guest/cowtest.c",
     "tests/guest/lazytests.c",
     "tests/guest/memviztest.c",
+    "tests/guest/ostepintrotest.c",
     "tests/guest/vaaccesstest.c",
 }
 CONCURRENCY_PATHS = {

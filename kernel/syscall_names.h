@@ -55,6 +55,14 @@ static const char *const syscall_names[] = {
 [SYS_swapinfo]         = "swapinfo",
 [SYS_concurrencylab]   = "concurrencylab",
 [SYS_fsinspect]        = "fsinspect",
+[SYS_semcreate]        = "semcreate",
+[SYS_semwait]          = "semwait",
+[SYS_sempost]          = "sempost",
+[SYS_semdestroy]       = "semdestroy",
+[SYS_seminfo]          = "seminfo",
+[SYS_logcrash]         = "logcrash",
+[SYS_raid1info]        = "raid1info",
+[SYS_raid1rw]          = "raid1rw",
 [SYS_disktrace]        = "disktrace",
 };
 

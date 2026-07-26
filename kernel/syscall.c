@@ -88,7 +88,7 @@ argaddr(int n, uint64 *ip)
 
 // Fetch the nth word-sized system call argument as a null-terminated string.
 // Copies into buf, at most max.
-// Returns string length if OK (including nul), -1 if error.
+// Returns string length if OK (including nul), -1 for error.
 int
 argstr(int n, char *buf, int max)
 {
@@ -110,6 +110,7 @@ extern uint64 sys_fsinspect(void);
 extern uint64 sys_getpid(void);
 extern uint64 sys_kill(void);
 extern uint64 sys_link(void);
+extern uint64 sys_logcrash(void);
 extern uint64 sys_lseek(void);
 extern uint64 sys_mkdir(void);
 extern uint64 sys_mknod(void);
@@ -149,6 +150,20 @@ extern uint64 sys_swapout(void);
 extern uint64 sys_swapinfo(void);
 extern uint64 sys_concurrencylab(void);
 extern uint64 sys_disktrace(void);
+extern uint64 sys_semcreate(void);
+extern uint64 sys_semwait(void);
+extern uint64 sys_sempost(void);
+extern uint64 sys_semdestroy(void);
+extern uint64 sys_seminfo(void);
+
+#ifdef XV6_RAID1
+extern uint64 sys_raid1info(void);
+extern uint64 sys_raid1rw(void);
+#else
+/** RAID1 关闭时保留稳定 ABI，并显式拒绝教学层调用。 */
+static uint64 sys_raid1info(void) { return -1; }
+static uint64 sys_raid1rw(void) { return -1; }
+#endif
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -201,6 +216,14 @@ static uint64 (*syscalls[])(void) = {
 [SYS_swapinfo]         sys_swapinfo,
 [SYS_concurrencylab]   sys_concurrencylab,
 [SYS_fsinspect]        sys_fsinspect,
+[SYS_semcreate]        sys_semcreate,
+[SYS_semwait]          sys_semwait,
+[SYS_sempost]          sys_sempost,
+[SYS_semdestroy]       sys_semdestroy,
+[SYS_seminfo]          sys_seminfo,
+[SYS_logcrash]         sys_logcrash,
+[SYS_raid1info]        sys_raid1info,
+[SYS_raid1rw]          sys_raid1rw,
 [SYS_disktrace]        sys_disktrace,
 };
 
