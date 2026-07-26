@@ -4,6 +4,9 @@
 #include "kernel/types.h"
 #include "user/user.h"
 #include "user/paths.h"
+#include "tests/guest/memviztest_region_mapping.h"
+#include "tests/guest/memviztest_swap.h"
+#include "tests/guest/memviztest_policy.h"
 
 /**
  * memviztest_exec_absolute 将 memviztest 的唯一外部程序调用固定到 `/usr/bin`。
@@ -22,6 +25,38 @@ memviztest_exec_absolute(char *path, char **argv)
   return exec(XV6_USR_BIN_PATH("memviz"), argv);
 }
 
+int memviztest_original_main(int argc, char **argv);
+
+/**
+ * 在 memviztest 原入口外增加逻辑区域映射、教学 swap 与页面置换策略实验。
+ *
+ * @param argc 参数数量。
+ * @param argv 参数数组；`regions`、`swap` 或 `policy` 只运行对应概念实验，
+ *             无参数时在完整回归前依次运行三组实验。
+ * @return 原入口的返回值；所有正常路径最终均由测试代码调用 exit()。
+ */
+int
+main(int argc, char **argv)
+{
+  if(argc == 1){
+    memviztest_region_mapping();
+    memviztest_swap();
+    memviztest_policy();
+  } else if(argc == 2 && strcmp(argv[1], "regions") == 0){
+    memviztest_region_mapping();
+    exit(0);
+  } else if(argc == 2 && strcmp(argv[1], "swap") == 0){
+    memviztest_swap();
+    exit(0);
+  } else if(argc == 2 && strcmp(argv[1], "policy") == 0){
+    memviztest_policy();
+    exit(0);
+  }
+
+  return memviztest_original_main(argc, argv);
+}
+
 #define exec memviztest_exec_absolute
+#define main memviztest_original_main
 
 #endif

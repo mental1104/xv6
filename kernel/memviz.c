@@ -13,7 +13,7 @@ extern char end[];
 /**
  * 根据系统调用入口保存的 user SP 推导固定一页用户栈的边界。
  *
- * @param p 当前进程；调用期间其地址空间不会被其他进程替换。
+ * @param p 被观察进程；调用者负责保证其地址空间在采样期间保持稳定。
  * @param snapshot 待填写的快照，不接管其所有权。
  */
 static void
@@ -48,15 +48,15 @@ fill_user_layout(struct proc *p, struct memviz_snapshot *snapshot)
 }
 
 /**
- * 填写当前进程运行时使用的内核页表和固定映射边界。
+ * 填写被观察进程的内核页表和固定映射边界。
  *
- * @param p 当前进程；其 kstack 和 kpagetable 在进程回收前保持有效。
+ * @param p 被观察进程；外部目标必须处于非 RUNNING 状态并由 p->lock 稳定。
  * @param snapshot 待填写的快照，不接管其所有权。
  */
 static void
 fill_kernel_layout(struct proc *p, struct memviz_snapshot *snapshot)
 {
-  uint64 sp = r_sp();
+  uint64 sp = p == myproc() ? r_sp() : p->context.sp;
 
   snapshot->kernel_pagetable = (uint64)p->kpagetable;
   snapshot->kernel_sp = sp;
@@ -191,7 +191,7 @@ fill_pte_path(pagetable_t pagetable, uint64 va,
 /**
  * fill_pagetable_observations 采集从 VA 到 PA 的代表性映射闭环。
  *
- * @param p 当前进程；调用期间页表稳定，函数只读 walk() 查询结果。
+ * @param p 被观察进程；调用者保证页表稳定，函数只读 walk() 查询结果。
  * @param snapshot 待填写的快照；调用者已经清零并填好布局边界。
  *
  * 本视图不递归打印完整页表树，避免在普通 memviz 命令中输出成百上千行。
@@ -318,7 +318,7 @@ scan_pt_usage(struct memviz_snapshot *snapshot, int space, int level,
 /**
  * fill_pagetable_usage 采集用户页表和内核页表页的槽位余量。
  *
- * @param p 当前进程；函数只读 p->pagetable 和 p->kpagetable。
+ * @param p 被观察进程；函数只读 p->pagetable 和 p->kpagetable。
  * @param snapshot 待填写的快照。
  */
 static void
@@ -329,16 +329,18 @@ fill_pagetable_usage(struct proc *p, struct memviz_snapshot *snapshot)
 }
 
 /**
- * memviz_snapshot 采集指定视图所需的稳定内存快照。
+ * memviz_snapshot_proc 采集显式进程的稳定内存快照。
  *
+ * @param p 被观察进程；外部目标必须由调用者持有 p->lock 且不是 RUNNING。
  * @param view MEMVIZ_VIEW_* 之一。
  * @param snapshot 输出结构体，必须为可写的内核地址。
- * @return 成功返回 0；view 非法或参数为空时返回 -1。
+ * @return 成功返回 0；参数、进程资源或 view 非法时返回 -1。
  */
 int
-memviz_snapshot(int view, struct memviz_snapshot *snapshot)
+memviz_snapshot_proc(struct proc *p, int view, struct memviz_snapshot *snapshot)
 {
-  if(snapshot == 0)
+  if(p == 0 || snapshot == 0 || p->pagetable == 0 || p->kpagetable == 0 ||
+     p->trapframe == 0)
     return -1;
   if(view != MEMVIZ_VIEW_USER && view != MEMVIZ_VIEW_PHYS &&
      view != MEMVIZ_VIEW_KERNEL && view != MEMVIZ_VIEW_PAGETABLE)
@@ -346,8 +348,8 @@ memviz_snapshot(int view, struct memviz_snapshot *snapshot)
 
   memset(snapshot, 0, sizeof(*snapshot));
   snapshot->view = view;
+  snapshot->process_pid = p->pid;
 
-  struct proc *p = myproc();
   fill_user_layout(p, snapshot);
   fill_kernel_layout(p, snapshot);
   fill_pagetable_observations(p, snapshot);
@@ -356,6 +358,15 @@ memviz_snapshot(int view, struct memviz_snapshot *snapshot)
   // kalloc 负责在锁内完成 freelist 采样，返回前已经释放所有 allocator 锁。
   kalloc_mem_snapshot(snapshot);
   return 0;
+}
+
+/**
+ * memviz_snapshot 采集当前进程的内存快照，保持原系统调用兼容接口。
+ */
+int
+memviz_snapshot(int view, struct memviz_snapshot *snapshot)
+{
+  return memviz_snapshot_proc(myproc(), view, snapshot);
 }
 
 /**

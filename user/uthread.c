@@ -6,6 +6,8 @@
 #define PREEMPT_MIN_ITERATIONS 1000000ULL
 #define PREEMPT_TIMEOUT_TICKS 20
 #define LIFECYCLE_ROUNDS 3
+#define STACK_CONTEXT_ROUNDS 4
+#define STACK_CONTEXT_STEP 7
 
 static volatile uint64 preempt_progress[2];
 static volatile uint64 preempt_result[2];
@@ -13,6 +15,177 @@ static volatile uint64 preempt_iterations[2];
 static volatile int preempt_saw_peer[2];
 static volatile int capacity_seen[UTHREAD_MAX_WORKERS];
 static volatile int lifecycle_seen[LIFECYCLE_ROUNDS][UTHREAD_MAX_WORKERS];
+static volatile int shared_address_value;
+static volatile int stack_ready[2];
+
+/** 验证共享地址空间、借用参数和 join 失败语义所需的跨线程观察值。 */
+struct api_contract_argument {
+  int expected;
+  int observed;
+  int worker_pid;
+  int self_tid;
+  int self_join_result;
+};
+
+/** 记录一个工作线程独立栈上的局部变量地址和切换前后值。 */
+struct stack_context_argument {
+  int id;
+  uint64 stack_address;
+  int before;
+  int after;
+};
+
+/**
+ * 验证线程入口收到的是调用者持有的参数指针，并与主线程共享进程状态。
+ *
+ * @param argument 指向主线程栈上的 api_contract_argument；主线程会在线程真正
+ *                 运行前修改其字段，且一直保留到 join 完成。
+ * @return 无；观察结果写回 argument 和 shared_address_value。
+ */
+static void
+api_contract_worker(void *argument)
+{
+  struct api_contract_argument *item = argument;
+
+  item->observed = item->expected;
+  item->worker_pid = getpid();
+  shared_address_value = item->expected + 1;
+  item->self_join_result = thread_join(item->self_tid);
+}
+
+/**
+ * 在独立工作栈上保留局部哨兵，并跨多次主动切换验证执行上下文不被覆盖。
+ *
+ * @param argument 指向主线程栈上的 stack_context_argument，id 必须为 0 或 1。
+ * @return 无；局部变量地址和切换前后值写回 argument。
+ */
+static void
+stack_context_worker(void *argument)
+{
+  struct stack_context_argument *item = argument;
+  int sentinel = 1000 + item->id;
+
+  item->stack_address = (uint64)&sentinel;
+  item->before = sentinel;
+  stack_ready[item->id] = 1;
+
+  // 两个线程都建立局部栈帧后再继续，避免顺序执行也能误过“独立栈”检查。
+  while(stack_ready[1 - item->id] == 0)
+    thread_yield();
+
+  for(int round = 0; round < STACK_CONTEXT_ROUNDS; round++){
+    sentinel += STACK_CONTEXT_STEP;
+    thread_yield();
+  }
+  item->after = sentinel;
+}
+
+/**
+ * 验证共享地址空间、参数借用、self/duplicate/invalid join 与回收语义。
+ *
+ * 该测试在线程抢占启动前执行，因此 thread_create() 返回后、thread_join() 切换
+ * 前，主线程可以确定性地修改参数对象。工作线程必须观察到修改后的值，证明
+ * 运行时保存的是借用指针而非参数副本；相同 PID 和共享变量写入则证明它不是
+ * fork/wait 进程模型。
+ *
+ * @return 全部 API 契约成立返回 0；创建、观察、join 或回收异常返回 -1。
+ */
+static int
+run_api_contract_test(void)
+{
+  struct api_contract_argument argument = {
+    .expected = 7,
+    .observed = -1,
+    .worker_pid = -1,
+    .self_tid = -1,
+    .self_join_result = 0,
+  };
+  int main_pid = getpid();
+  int tid;
+  int duplicate_join;
+  int invalid_negative;
+  int invalid_main;
+  int invalid_high;
+
+  shared_address_value = 0;
+  tid = thread_create(api_contract_worker, &argument);
+  if(tid < 0)
+    return -1;
+
+  // 参数所有权仍在调用者；线程运行前的修改必须通过同一指针被观察到。
+  argument.expected = 42;
+  argument.self_tid = tid;
+  if(thread_join(tid) < 0)
+    return -1;
+
+  duplicate_join = thread_join(tid);
+  invalid_negative = thread_join(-1);
+  invalid_main = thread_join(0);
+  invalid_high = thread_join(UTHREAD_MAX_WORKERS + 1);
+
+  if(argument.observed != 42 ||
+     argument.worker_pid != main_pid ||
+     shared_address_value != 43 ||
+     argument.self_join_result != -1 ||
+     duplicate_join != -1 ||
+     invalid_negative != -1 ||
+     invalid_main != -1 ||
+     invalid_high != -1){
+    printf("uthread: api detail observed=%d worker_pid=%d main_pid=%d shared=%d "
+           "self=%d duplicate=%d invalid=%d/%d/%d\n",
+           argument.observed, argument.worker_pid, main_pid,
+           shared_address_value, argument.self_join_result, duplicate_join,
+           invalid_negative, invalid_main, invalid_high);
+    return -1;
+  }
+  return 0;
+}
+
+/**
+ * 验证两个线程拥有不同用户栈，且局部变量可跨多次上下文切换保持。
+ *
+ * @return 两个栈地址非零且不同、哨兵值完整时返回 0，否则返回 -1。
+ */
+static int
+run_stack_context_test(void)
+{
+  struct stack_context_argument arguments[2];
+  int tids[2];
+
+  memset((void *)stack_ready, 0, sizeof(stack_ready));
+  for(int i = 0; i < 2; i++){
+    arguments[i].id = i;
+    arguments[i].stack_address = 0;
+    arguments[i].before = -1;
+    arguments[i].after = -1;
+    tids[i] = thread_create(stack_context_worker, &arguments[i]);
+    if(tids[i] < 0)
+      return -1;
+  }
+
+  for(int i = 0; i < 2; i++){
+    if(thread_join(tids[i]) < 0)
+      return -1;
+  }
+
+  int expected0 = 1000 + STACK_CONTEXT_ROUNDS * STACK_CONTEXT_STEP;
+  int expected1 = 1001 + STACK_CONTEXT_ROUNDS * STACK_CONTEXT_STEP;
+  if(arguments[0].stack_address == 0 ||
+     arguments[1].stack_address == 0 ||
+     arguments[0].stack_address == arguments[1].stack_address ||
+     arguments[0].before != 1000 ||
+     arguments[1].before != 1001 ||
+     arguments[0].after != expected0 ||
+     arguments[1].after != expected1){
+    printf("uthread: stack detail address0=%p address1=%p before=%d/%d "
+           "after=%d/%d expected=%d/%d\n",
+           arguments[0].stack_address, arguments[1].stack_address,
+           arguments[0].before, arguments[1].before,
+           arguments[0].after, arguments[1].after, expected0, expected1);
+    return -1;
+  }
+  return 0;
+}
 
 /**
  * CPU 密集型抢占测试线程，不主动调用 thread_yield()。
@@ -185,7 +358,7 @@ run_lifecycle_test(void)
 }
 
 /**
- * 运行可抢占 M:1 用户线程的抢占、容量和生命周期验收场景。
+ * 运行 M:1 用户线程的 API 契约、独立栈、抢占、容量和生命周期验收场景。
  *
  * @param argc 命令行参数数量，本程序忽略额外参数。
  * @param argv 命令行参数数组，本程序忽略额外参数。
@@ -197,10 +370,29 @@ main(int argc, char *argv[])
   (void)argc;
   (void)argv;
 
-  if(thread_init() < 0 || thread_start() < 0){
+  if(thread_init() < 0){
     printf("uthread: initialization failed\n");
     exit(1);
   }
+
+  if(run_api_contract_test() < 0){
+    printf("uthread: api-contract FAILED\n");
+    exit(1);
+  }
+  printf("uthread: shared-address OK same-pid=1 shared=43\n");
+  printf("uthread: argument-lifetime OK observed=42 ownership=borrowed\n");
+  printf("uthread: join-failures OK self=-1 duplicate=-1 invalid=-1\n");
+
+  if(thread_start() < 0){
+    printf("uthread: preemption initialization failed\n");
+    exit(1);
+  }
+
+  if(run_stack_context_test() < 0){
+    printf("uthread: stack-context FAILED\n");
+    exit(1);
+  }
+  printf("uthread: stack-context OK distinct=1 preserved=2\n");
 
   if(run_preempt_test() < 0){
     printf("uthread: preempt FAILED\n");

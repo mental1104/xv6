@@ -121,12 +121,14 @@ struct memviz_pte_entry {
 
 // 对单个用户虚拟地址执行只读页表查询的结果。
 struct memviz_va_query {
+  // va 和 pa 都是页对齐基址；调用者保留原始 VA 才能恢复页内偏移。
   uint64 va;
   int present;
   int kalloc_cell;
   int reserved;
   uint64 pte;
   uint64 flags;
+  // 映射存在时，字节物理地址等于 pa + (original_va & (PGSIZE - 1))。
   uint64 pa;
   struct memviz_pte_level levels[3];
 };
@@ -157,7 +159,7 @@ struct memviz_snapshot {
   int view;
   int user_stack_valid;
   int kernel_stack_valid;
-  int reserved;
+  int process_pid;
 
   uint64 process_size;
   uint64 user_limit;
@@ -201,6 +203,14 @@ struct memviz_snapshot {
   uint64 cpu_free_pages[NCPU];
   struct memviz_cell physical[MEMVIZ_CELLS];
 
+  // kalloc 元数据审计结果。listed free pages 来自实际链表遍历，counter free
+  // pages 来自每 CPU 独立计数器；其余字段非零即为负向 oracle 命中。
+  uint64 allocator_counter_free_pages;
+  uint64 allocator_duplicate_pages;
+  uint64 allocator_invalid_nodes;
+  uint64 allocator_count_mismatches;
+  uint64 allocator_invariant_ok;
+
   uint64 kernel_pagetable;
   uint64 kernel_sp;
   uint64 kernel_stack_guard_start;
@@ -231,9 +241,13 @@ struct memviz_snapshot {
   struct memviz_pt_usage_page pagetable_usage[MEMVIZ_PT_USAGE_PAGES];
 };
 
+struct proc;
+
 // 以下接口只由内核实现调用；用户态仅使用 memsnapshot() 系统调用。
 void kalloc_mem_snapshot(struct memviz_snapshot *snapshot);
 int memviz_snapshot(int view, struct memviz_snapshot *snapshot);
+int memviz_snapshot_proc(struct proc *p, int view,
+                         struct memviz_snapshot *snapshot);
 int memviz_query_user_va(uint64 va, struct memviz_va_query *query);
 
 #endif

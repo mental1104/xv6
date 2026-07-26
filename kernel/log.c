@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "sleeplock.h"
 #include "fs.h"
+#include "fsinspect.h"
 #include "buf.h"
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
@@ -33,8 +34,41 @@ struct log {
 
 struct log log;
 
+struct {
+  struct spinlock lock;
+  struct fsinspect_log_stats value;
+} log_stats;
+
 static void recover_from_log(void);
 static void commit(void);
+
+/** 记录一次已经完整安装并清除提交标记的事务。 */
+static void
+record_commit(int blocks)
+{
+  acquire(&log_stats.lock);
+  log_stats.value.commits++;
+  log_stats.value.committed_blocks += blocks;
+  release(&log_stats.lock);
+}
+
+/** 记录启动时重放一个已发布事务。 */
+static void
+record_recovery(void)
+{
+  acquire(&log_stats.lock);
+  log_stats.value.recoveries++;
+  release(&log_stats.lock);
+}
+
+/** 把累计 redo log 计数复制到调用者持有的快照。 */
+void
+log_stats_snapshot(struct fsinspect_log_stats *out)
+{
+  acquire(&log_stats.lock);
+  *out = log_stats.value;
+  release(&log_stats.lock);
+}
 
 /** 返回编码最大日志头所需的固定磁盘块数。 */
 static int
@@ -68,6 +102,8 @@ void
 initlog(int dev, struct superblock *sb)
 {
   initlock(&log.lock, "log");
+  initlock(&log_stats.lock, "log.stats");
+  memset(&log_stats.value, 0, sizeof(log_stats.value));
   log.start = sb->logstart;
   log.header_blocks = log_header_block_count();
   log.size = sb->nlog - log.header_blocks;
@@ -176,9 +212,12 @@ static void
 recover_from_log(void)
 {
   read_head();
+  int recovered = log.lh.n;
   install_trans(1);
   log.lh.n = 0;
   write_head();
+  if(recovered > 0)
+    record_recovery();
 }
 
 /** 在持锁状态判断能否再预留一个最坏文件系统操作。 */
@@ -243,11 +282,13 @@ static void
 commit(void)
 {
   if(log.lh.n > 0){
+    int committed = log.lh.n;
     write_log();
     write_head();
     install_trans(0);
     log.lh.n = 0;
     write_head();
+    record_commit(committed);
   }
 }
 

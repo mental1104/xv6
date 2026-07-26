@@ -75,6 +75,16 @@ jobs:
           else
             echo 'job_control=false' >> "$GITHUB_OUTPUT"
           fi
+          if grep -Eq '^(kernel/(concurrencylab\.h|proc\.c|sleeplock\.c|spinlock\.c|swtch\.S)|tests/guest/uthreadtest\.c|tests/host/(barrier\.c|ph\.c))$' /tmp/changed-files.txt; then
+            echo 'concurrency_single_core=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'concurrency_single_core=false' >> "$GITHUB_OUTPUT"
+          fi
+          if grep -Eq '^(kernel/(bio\.c|file\.c|fs\.c|fs\.h|fsinspect\.c|fsinspect\.h|log\.c|sysfile\.c|sysfsinspect\.c|virtio_disk\.c)|mkfs/mkfs\.c|tests/guest/fileapitest\.c)$' /tmp/changed-files.txt; then
+            echo 'filesystem=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'filesystem=false' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run shell history interaction regression
         if: >-
@@ -105,11 +115,46 @@ jobs:
           printf 'Selected PR suites: %s\n' "${suites[*]}"
           python3 tests/run.py "${args[@]}" --cpus 3
 
+      - name: Run filesystem regression single-core
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.plan.outputs.filesystem == 'true'
+        run: |
+          set -o pipefail
+          mkdir -p test-results/infrastructure
+          rm -rf test-results/usertests-core
+          # CPUS participates in the kernel build; rebuild rather than reusing the
+          # default three-CPU image when collecting the supplementary one-CPU result.
+          make clean
+          make -j2 CPUS=1 2>&1 | tee test-results/infrastructure/filesystem-single-core-build.log
+          make test-suite SUITE=usertests-core CPUS=1 2>&1 | tee test-results/infrastructure/filesystem-single-core-run.log
+
+      - name: Run concurrency regression single-core
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.plan.outputs.concurrency_single_core == 'true'
+        run: |
+          set -o pipefail
+          mkdir -p test-results/infrastructure
+          rm -rf test-results/lab7-thread
+          # CPUS changes a compile-time kernel constant; force a clean one-CPU image.
+          make clean
+          make -j2 CPUS=1 2>&1 | tee test-results/infrastructure/concurrency-single-core-build.log
+          make test-suite SUITE=lab7-thread CPUS=1 2>&1 | tee test-results/infrastructure/concurrency-single-core-run.log
+
       - name: Run VM regression single-core
         if: >-
           github.event_name == 'pull_request' &&
           contains(steps.plan.outputs.suites, 'lab-vm')
-        run: make test-suite SUITE=lab-vm CPUS=1
+        run: |
+          set -o pipefail
+          mkdir -p test-results/infrastructure
+          rm -rf test-results/lab-vm
+          # CPUS changes a compile-time kernel constant. Rebuild after the
+          # default three-CPU suite instead of reusing its stale kernel image.
+          make clean
+          make -j2 CPUS=1 2>&1 | tee test-results/infrastructure/vm-single-core-build.log
+          make test-suite SUITE=lab-vm CPUS=1 2>&1 | tee test-results/infrastructure/vm-single-core-run.log
 
       - name: Run complete usertests for lifecycle-sensitive changes
         if: >-

@@ -12,6 +12,7 @@ extern char trampoline[];
 extern char uservec[];
 extern char userret[];
 extern char trampoline_end[];
+extern struct proc proc[NPROC];
 
 _Static_assert(sizeof(struct trapframe) ==
                MEMVIZ_TRAPFRAME_SLOT_COUNT * sizeof(uint64),
@@ -84,7 +85,7 @@ ensure_memvizsys_lock(void)
 /**
  * fill_user_leaf_mapping 读取用户页表中一个固定页的叶子映射。
  *
- * @param pagetable 当前进程用户页表，只读访问。
+ * @param pagetable 被观察进程用户页表，只读访问。
  * @param va 要查询的页对齐虚拟地址。
  * @param pa 接收页对齐物理地址；未映射时写 0。
  * @param flags 接收 PTE 低十位 flags；未映射时写 0。
@@ -109,8 +110,8 @@ fill_user_leaf_mapping(pagetable_t pagetable, uint64 va,
 /**
  * fill_user_top_snapshot 补充用户页表顶端两个 supervisor-only 固定页。
  *
- * @param p 当前进程；调用期间页表、trapframe 与 trampoline 映射保持有效。
- * @param snapshot 已由 memviz_snapshot 填写的快照，函数在原地补充顶端布局。
+ * @param p 被观察进程；调用者保证页表、trapframe 与 trampoline 映射稳定。
+ * @param snapshot 已由 memviz_snapshot_proc 填写的快照，函数在原地补充顶端布局。
  *
  * TRAPFRAME 的 36 个连续 uint64 槽按真实 ABI 原样复制，使用户态 renderer
  * 能同时展示页内偏移、虚拟地址、物理地址和采样值。TRAMPOLINE 的代码范围
@@ -209,7 +210,7 @@ initialize_dynamic_cells(struct memviz_snapshot *snapshot)
 /**
  * overlay_vma_ranges 将活动 VMA 覆盖的逻辑页从 lazy 改记为 mmap。
  *
- * @param p 当前进程；函数只读 p->vma[] 和 VMA 边界。
+ * @param p 被观察进程；函数只读 p->vma[] 和 VMA 边界。
  * @param snapshot 已初始化动态压缩单元的快照。
  *
  * 这里只根据 VMA 元数据标记整段逻辑区域，不读取文件、不建立 PTE。后续扫描
@@ -264,7 +265,7 @@ overlay_vma_ranges(struct proc *p, struct memviz_snapshot *snapshot)
 /**
  * classify_dynamic_leaf 将一个有效 L0 用户叶子覆盖到对应动态压缩单元。
  *
- * @param p 当前进程，用于判断该 VA 是否仍属于活动 VMA。
+ * @param p 被观察进程，用于判断该 VA 是否仍属于活动 VMA。
  * @param snapshot 已完成默认 lazy 和 VMA 覆盖的快照。
  * @param va 页对齐用户虚拟地址。
  * @param pte 该地址的有效叶子 PTE。
@@ -310,7 +311,7 @@ classify_dynamic_leaf(struct proc *p, struct memviz_snapshot *snapshot,
 /**
  * scan_dynamic_leaves 只遍历与动态范围相交的有效页表子树。
  *
- * @param p 当前进程。
+ * @param p 被观察进程。
  * @param snapshot 动态页状态快照。
  * @param pagetable 当前页表页。
  * @param level 当前 Sv39 层级，根为 2、叶为 0。
@@ -374,8 +375,8 @@ finish_dynamic_totals(struct memviz_snapshot *snapshot)
 /**
  * fill_user_page_states 只读采集 dynamic_start 到 p->sz 的页级状态。
  *
- * @param p 当前进程；系统调用期间不会替换其页表或 VMA 数组。
- * @param snapshot 已由 memviz_snapshot 清零并填写基本布局的快照。
+ * @param p 被观察进程；调用者保证页表和 VMA 数组稳定。
+ * @param snapshot 已由 memviz_snapshot_proc 清零并填写基本布局的快照。
  *
  * 本函数不调用 walkaddr()、cow_alloc() 或 mmap_fault()，因此不会分配物理页、
  * 修改 PTE、复制 COW 页或读取 mmap 文件内容。
@@ -389,6 +390,25 @@ fill_user_page_states(struct proc *p, struct memviz_snapshot *snapshot)
   overlay_vma_ranges(p, snapshot);
   scan_dynamic_leaves(p, snapshot, p->pagetable, 2, 0);
   finish_dynamic_totals(snapshot);
+}
+
+/** 采集一个已稳定进程的完整 memviz 快照。 */
+static int
+fill_process_snapshot(struct proc *p, int view)
+{
+  if(memviz_snapshot_proc(p, view, &memvizsys_snapshot) < 0)
+    return -1;
+  fill_user_top_snapshot(p, &memvizsys_snapshot);
+  fill_user_page_states(p, &memvizsys_snapshot);
+  return 0;
+}
+
+/** 把静态快照复制到调用者地址空间；调用者必须持有 memvizsys_lock。 */
+static int
+copy_snapshot_to_caller(struct proc *caller, uint64 address)
+{
+  return copyout(caller->pagetable, address, (char *)&memvizsys_snapshot,
+                 sizeof(memvizsys_snapshot));
 }
 
 /**
@@ -412,16 +432,60 @@ sys_memsnapshot(void)
   ensure_memvizsys_lock();
   acquire(&memvizsys_lock);
 
-  if(memviz_snapshot(view, &memvizsys_snapshot) < 0){
+  struct proc *caller = myproc();
+  if(fill_process_snapshot(caller, view) < 0 ||
+     copy_snapshot_to_caller(caller, address) < 0){
     release(&memvizsys_lock);
     return -1;
   }
 
-  struct proc *p = myproc();
-  fill_user_top_snapshot(p, &memvizsys_snapshot);
-  fill_user_page_states(p, &memvizsys_snapshot);
-  if(copyout(p->pagetable, address, (char *)&memvizsys_snapshot,
-             sizeof(memvizsys_snapshot)) < 0){
+  release(&memvizsys_lock);
+  return 0;
+}
+
+/**
+ * sys_memsnapshot_pid 采集指定 PID 的稳定进程快照。
+ *
+ * 参数 0 为正 PID，参数 1 为 MEMVIZ_VIEW_*，参数 2 为调用者输出地址。当前
+ * 进程可直接采样；外部目标必须持有 p->lock 且处于非 RUNNING、非 UNUSED、
+ * 非 USED 状态。持锁期间 scheduler 无法选中 RUNNABLE 目标，wait() 也无法
+ * 回收 ZOMBIE 目标的页表和 trapframe。
+ *
+ * @return 成功返回 0；PID、状态、view、目标资源或 copyout 无效时返回 -1。
+ */
+uint64
+sys_memsnapshot_pid(void)
+{
+  int pid;
+  int view;
+  uint64 address;
+
+  if(argint(0, &pid) < 0 || argint(1, &view) < 0 ||
+     argaddr(2, &address) < 0 || pid <= 0)
+    return -1;
+
+  ensure_memvizsys_lock();
+  acquire(&memvizsys_lock);
+
+  struct proc *caller = myproc();
+  int result = -1;
+  if(pid == caller->pid){
+    result = fill_process_snapshot(caller, view);
+  } else {
+    for(struct proc *target = proc; target < &proc[NPROC]; target++){
+      acquire(&target->lock);
+      if(target->pid != pid || target->state == UNUSED){
+        release(&target->lock);
+        continue;
+      }
+      if(target->state != USED && target->state != RUNNING)
+        result = fill_process_snapshot(target, view);
+      release(&target->lock);
+      break;
+    }
+  }
+
+  if(result < 0 || copy_snapshot_to_caller(caller, address) < 0){
     release(&memvizsys_lock);
     return -1;
   }

@@ -106,6 +106,7 @@ extern uint64 sys_execve(void);
 extern uint64 sys_exit(void);
 extern uint64 sys_fork(void);
 extern uint64 sys_fstat(void);
+extern uint64 sys_fsinspect(void);
 extern uint64 sys_getpid(void);
 extern uint64 sys_kill(void);
 extern uint64 sys_link(void);
@@ -130,6 +131,7 @@ extern uint64 sys_mmap(void);
 extern uint64 sys_munmap(void);
 extern uint64 sys_backtrace(void);
 extern uint64 sys_memsnapshot(void);
+extern uint64 sys_memsnapshot_pid(void);
 extern uint64 sys_vaquery(void);
 extern uint64 sys_waitpid(void);
 extern uint64 sys_consolemode(void);
@@ -143,6 +145,9 @@ extern uint64 sys_getpgid(void);
 extern uint64 sys_procctl(void);
 extern uint64 sys_tcsetpgrp(void);
 extern uint64 sys_getprocs(void);
+extern uint64 sys_swapout(void);
+extern uint64 sys_swapinfo(void);
+extern uint64 sys_concurrencylab(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -175,6 +180,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_munmap]    sys_munmap,
 [SYS_backtrace] sys_backtrace,
 [SYS_memsnapshot] sys_memsnapshot,
+[SYS_memsnapshot_pid] sys_memsnapshot_pid,
 [SYS_vaquery] sys_vaquery,
 [SYS_waitpid] sys_waitpid,
 [SYS_consolemode] sys_consolemode,
@@ -190,6 +196,10 @@ static uint64 (*syscalls[])(void) = {
 [SYS_lseek]            sys_lseek,
 [SYS_execve]           sys_execve,
 [SYS_getprocs]         sys_getprocs,
+[SYS_swapout]          sys_swapout,
+[SYS_swapinfo]         sys_swapinfo,
+[SYS_concurrencylab]   sys_concurrencylab,
+[SYS_fsinspect]        sys_fsinspect,
 };
 
 void

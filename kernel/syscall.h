@@ -44,3 +44,8 @@
 #define SYS_lseek            43
 #define SYS_execve           44
 #define SYS_getprocs         45
+#define SYS_swapout          46
+#define SYS_swapinfo         47
+#define SYS_concurrencylab   48
+#define SYS_fsinspect        49
+#define SYS_memsnapshot_pid  50

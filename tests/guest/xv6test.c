@@ -30,6 +30,8 @@ static char *lab3_copyout_argv[] = {XV6_TEST_PATH("usertests"), "copyout", 0};
 static char *lab3_copyinstr_argv[] = {XV6_TEST_PATH("usertests"), "copyinstr1", 0};
 static char *lab3_sbrkmuch_argv[] = {XV6_TEST_PATH("usertests"), "sbrkmuch", 0};
 static char *lab3_memviz_argv[] = {XV6_TEST_PATH("memviztest"), 0};
+static char *lab3_memtarget_argv[] = {XV6_TEST_PATH("memtargettest"), 0};
+static char *lab3_pgtbl_argv[] = {XV6_TEST_PATH("pgtbltest"), 0};
 static char *lab3_vaaccess_argv[] = {XV6_TEST_PATH("vaaccesstest"), 0};
 static char *lab3_address_window_argv[] = {XV6_TEST_PATH("addresswindowtest"), 0};
 static char *lab4_backtrace_argv[] = {XV6_TEST_PATH("bttest"), 0};
@@ -49,6 +51,7 @@ static char *core_sbrkbugs_argv[] = {XV6_TEST_PATH("usertests"), "sbrkbugs", 0};
 static char *core_forkforkfork_argv[] = {XV6_TEST_PATH("usertests"), "forkforkfork", 0};
 static char *core_linkunlink_argv[] = {XV6_TEST_PATH("usertests"), "linkunlink", 0};
 static char *core_openiput_argv[] = {XV6_TEST_PATH("usertests"), "openiput", 0};
+static char *core_fileapi_argv[] = {XV6_TEST_PATH("fileapitest"), 0};
 static char *core_schedtrace_argv[] = {XV6_TEST_PATH("schedtracetest"), 0};
 static char *core_history_argv[] = {XV6_TEST_PATH("historytest"), 0};
 static char *core_job_control_argv[] = {XV6_TEST_PATH("consolelinetest"), "jobctl", 0};
@@ -87,6 +90,8 @@ static struct xv6_test_case tests[] = {
   {"lab3", "lab3-copyinstr1", lab3_copyinstr_argv},
   {"lab3", "lab3-sbrkmuch", lab3_sbrkmuch_argv},
   {"lab3", "lab3-memviz", lab3_memviz_argv},
+  {"lab3", "lab3-memtarget", lab3_memtarget_argv},
+  {"lab3", "lab3-pgtbl", lab3_pgtbl_argv},
   {"lab3", "lab3-vaaccess", lab3_vaaccess_argv},
   {"lab3", "lab3-address-window", lab3_address_window_argv},
   {"lab4", "lab4-backtrace", lab4_backtrace_argv},
@@ -106,6 +111,7 @@ static struct xv6_test_case tests[] = {
   {"core", "core-forkforkfork", core_forkforkfork_argv},
   {"core", "core-linkunlink", core_linkunlink_argv},
   {"core", "core-openiput", core_openiput_argv},
+  {"core", "core-fileapi", core_fileapi_argv},
   {"core", "core-schedtrace", core_schedtrace_argv},
   {"core", "core-shell-history", core_history_argv},
   {"core", "core-job-control", core_job_control_argv},

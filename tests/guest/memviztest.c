@@ -6,6 +6,11 @@
 #include "kernel/memviz.h"
 #include "user/user.h"
 
+#define ALLOC_TRACE_PAGES 4
+#define ALLOC_STRESS_CHILDREN 4
+#define ALLOC_STRESS_ROUNDS 8
+#define ALLOC_STRESS_PAGES 2
+
 static struct memviz_snapshot before;
 static struct memviz_snapshot after_alloc;
 static struct memviz_snapshot after_free;
@@ -100,6 +105,84 @@ check_dynamic_state_totals(struct memviz_snapshot *snapshot)
     fail("dynamic global state totals");
   if(resident + cow + lazy + mmap_pages != snapshot->dynamic_page_count)
     fail("dynamic state partition");
+}
+
+/**
+ * 校验实际 freelist、独立计数器和损坏检测字段形成闭环。
+ *
+ * @param snapshot 任意 memsnapshot 视图返回的统一快照。
+ *
+ * duplicate、invalid 和 count mismatch 是 allocator 的非破坏性负向 oracle；
+ * 任一字段非零都说明空闲页元数据不再能被可信地遍历和计数。
+ */
+static void
+check_allocator_audit(struct memviz_snapshot *snapshot)
+{
+  if(!snapshot->allocator_invariant_ok)
+    fail("allocator audit failed");
+  if(snapshot->allocator_duplicate_pages != 0)
+    fail("allocator duplicate page");
+  if(snapshot->allocator_invalid_nodes != 0)
+    fail("allocator invalid node");
+  if(snapshot->allocator_count_mismatches != 0)
+    fail("allocator count mismatch");
+  if(snapshot->allocator_counter_free_pages != snapshot->free_pages)
+    fail("allocator counter/list mismatch");
+  if(snapshot->free_pages + snapshot->used_pages != snapshot->total_pages)
+    fail("allocator total mismatch");
+}
+
+/**
+ * 输出一条稳定的 allocator 阶段证据。
+ *
+ * @param stage baseline、allocated、returned、reallocated 或 final。
+ * @param snapshot 当前物理页池快照。
+ */
+static void
+print_allocator_stage(char *stage, struct memviz_snapshot *snapshot)
+{
+  printf("ALLOC TRACE stage=%s free=%d used=%d listed=%d counter=%d audit=%s\n",
+         stage, (int)snapshot->free_pages, (int)snapshot->used_pages,
+         (int)snapshot->free_pages,
+         (int)snapshot->allocator_counter_free_pages,
+         snapshot->allocator_invariant_ok ? "ok" : "fail");
+  printf("ALLOC TRACE oracle duplicate=%d invalid=%d count-mismatch=%d\n",
+         (int)snapshot->allocator_duplicate_pages,
+         (int)snapshot->allocator_invalid_nodes,
+         (int)snapshot->allocator_count_mismatches);
+}
+
+/**
+ * 查询一组已触页用户地址对应的真实物理页并输出 VA -> PA -> kalloc cell。
+ *
+ * @param phase owned 或 reallocated，用于区分两轮所有权。
+ * @param base 用户区间首地址，必须按页对齐。
+ * @param pages 连续页数，不能超过 ALLOC_TRACE_PAGES。
+ * @param physical 接收每页物理地址的数组。
+ */
+static void
+trace_allocated_pages(char *phase, char *base, int pages, uint64 *physical)
+{
+  if(pages <= 0 || pages > ALLOC_TRACE_PAGES)
+    fail("allocator trace page count");
+
+  for(int page = 0; page < pages; page++){
+    struct memviz_va_query query;
+    uint64 va = (uint64)base + (uint64)page * PGSIZE;
+    if(vaquery(va, &query) < 0 || !query.present)
+      fail("allocator trace VA missing");
+    if(query.pa < before.kalloc_start || query.pa >= before.kalloc_end)
+      fail("allocator trace PA outside kalloc");
+    if(query.kalloc_cell < 0 || query.kalloc_cell >= MEMVIZ_CELLS)
+      fail("allocator trace cell");
+
+    for(int previous = 0; previous < page; previous++)
+      if(physical[previous] == query.pa)
+        fail("allocator trace duplicate PA");
+    physical[page] = query.pa;
+    printf("ALLOC TRACE phase=%s page=%d va=%p pa=%p cell=%d\n",
+           phase, page, va, query.pa, query.kalloc_cell);
+  }
 }
 
 /**
@@ -221,8 +304,7 @@ test_user_snapshot(void)
   if(before.process_size > before.user_limit)
     fail("process size above user limit");
   check_dynamic_state_totals(&before);
-  if(before.free_pages + before.used_pages != before.total_pages)
-    fail("physical total in user view");
+  check_allocator_audit(&before);
 
   printf("memviztest: user invariants OK\n");
 }
@@ -361,12 +443,13 @@ test_dynamic_page_states(void)
   printf("memviztest: dynamic page states OK\n");
 }
 
-/** 验证 cell、CPU freelist 与全局页数相互一致。 */
+/** 验证 cell、CPU freelist、独立计数器与全局页数相互一致。 */
 static void
 test_physical_snapshot(void)
 {
   if(memsnapshot(MEMVIZ_VIEW_PHYS, &before) < 0)
     fail("physical snapshot syscall");
+  check_allocator_audit(&before);
 
   uint64 cell_total = 0;
   uint64 cell_free = 0;
@@ -400,13 +483,23 @@ test_physical_snapshot(void)
   printf("memviztest: physical invariants OK\n");
 }
 
-/** 验证触页会消耗物理页，缩容后页面会归还 kalloc。 */
+/**
+ * 验证分配、释放、非法重复缩容和再分配形成可观察的完整页生命周期。
+ *
+ * 该用例不假设再分配必然取得相同 PA：per-CPU LIFO 与进程迁移会影响重用页，
+ * 因此重用数量只作为证据输出；必须断言的是每轮页面可追踪且最终无泄漏。
+ */
 static void
 test_allocate_and_release(void)
 {
-  const int pages = 4;
+  const int pages = ALLOC_TRACE_PAGES;
+  uint64 first_physical[ALLOC_TRACE_PAGES] = {0};
+  uint64 second_physical[ALLOC_TRACE_PAGES] = {0};
+
   if(memsnapshot(MEMVIZ_VIEW_PHYS, &before) < 0)
     fail("baseline physical snapshot");
+  check_allocator_audit(&before);
+  print_allocator_stage("baseline", &before);
 
   char *base = sbrk(pages * PGSIZE);
   if(base == (char *)-1)
@@ -416,17 +509,132 @@ test_allocate_and_release(void)
 
   if(memsnapshot(MEMVIZ_VIEW_PHYS, &after_alloc) < 0)
     fail("allocated physical snapshot");
+  check_allocator_audit(&after_alloc);
   if(after_alloc.free_pages + pages > before.free_pages)
     fail("touched pages did not reduce free memory");
+  trace_allocated_pages("owned", base, pages, first_physical);
+  print_allocator_stage("allocated", &after_alloc);
 
   if(sbrk(-pages * PGSIZE) == (char *)-1)
     fail("sbrk release");
   if(memsnapshot(MEMVIZ_VIEW_PHYS, &after_free) < 0)
     fail("released physical snapshot");
+  check_allocator_audit(&after_free);
   if(after_free.free_pages != before.free_pages)
     fail("released pages did not return to kalloc");
+  print_allocator_stage("returned", &after_free);
 
-  printf("memviztest: allocate/release OK\n");
+  if(after_free.process_size > 0x7fffffff - PGSIZE)
+    fail("process too large for invalid shrink oracle");
+  int invalid_shrink = (int)after_free.process_size + PGSIZE;
+  if(sbrk(-invalid_shrink) != (char *)-1)
+    fail("invalid repeated release accepted");
+  if(memsnapshot(MEMVIZ_VIEW_PHYS, &after_alloc) < 0)
+    fail("invalid release snapshot");
+  check_allocator_audit(&after_alloc);
+  if(after_alloc.process_size != after_free.process_size ||
+     after_alloc.free_pages != after_free.free_pages)
+    fail("invalid release changed allocator state");
+  printf("ALLOC TRACE negative=repeated-release guard=reject unchanged=yes\n");
+
+  char *second = sbrk(pages * PGSIZE);
+  if(second == (char *)-1)
+    fail("sbrk reallocate");
+  for(int i = 0; i < pages; i++)
+    second[i * PGSIZE] = (char)(i + 16);
+
+  if(memsnapshot(MEMVIZ_VIEW_PHYS, &after_alloc) < 0)
+    fail("reallocated physical snapshot");
+  check_allocator_audit(&after_alloc);
+  trace_allocated_pages("reallocated", second, pages, second_physical);
+
+  int reused = 0;
+  for(int current = 0; current < pages; current++)
+    for(int previous = 0; previous < pages; previous++)
+      if(second_physical[current] == first_physical[previous])
+        reused++;
+  print_allocator_stage("reallocated", &after_alloc);
+  printf("ALLOC TRACE reuse=%d/%d policy=per-cpu-lifo-local-first\n",
+         reused, pages);
+
+  if(sbrk(-pages * PGSIZE) == (char *)-1)
+    fail("sbrk final release");
+  if(memsnapshot(MEMVIZ_VIEW_PHYS, &after_free) < 0)
+    fail("final physical snapshot");
+  check_allocator_audit(&after_free);
+  if(after_free.free_pages != before.free_pages)
+    fail("reallocated pages leaked");
+  print_allocator_stage("final", &after_free);
+  printf("ALLOC TRACE done status=0 split=none coalesce=none granularity=%d\n",
+         PGSIZE);
+
+  printf("memviztest: allocate/release/reallocate OK\n");
+}
+
+/**
+ * 在子进程中反复触发两页分配与归还，作为并发 allocator 压力源。
+ *
+ * @return 不返回；任一 sbrk 失败以非零状态退出。
+ */
+static void
+allocator_stress_worker(void)
+{
+  for(int round = 0; round < ALLOC_STRESS_ROUNDS; round++){
+    char *base = sbrk(ALLOC_STRESS_PAGES * PGSIZE);
+    if(base == (char *)-1)
+      exit(1);
+    for(int page = 0; page < ALLOC_STRESS_PAGES; page++)
+      base[page * PGSIZE] = (char)(round + page);
+    if(sbrk(-ALLOC_STRESS_PAGES * PGSIZE) == (char *)-1)
+      exit(1);
+  }
+  exit(0);
+}
+
+/**
+ * 在子进程分配/释放期间反复采样全部 per-CPU freelist，验证锁与计数闭环。
+ *
+ * 多核运行能覆盖真实并发临界区；CPUS=1 运行验证同一逻辑在调度交错下不依赖
+ * 并行时序。所有子进程回收后，空闲页总数必须恢复到基线。
+ */
+static void
+test_allocator_concurrency(void)
+{
+  int pids[ALLOC_STRESS_CHILDREN];
+  if(memsnapshot(MEMVIZ_VIEW_PHYS, &before) < 0)
+    fail("stress baseline snapshot");
+  check_allocator_audit(&before);
+
+  for(int child = 0; child < ALLOC_STRESS_CHILDREN; child++){
+    pids[child] = fork();
+    if(pids[child] < 0)
+      fail("stress fork");
+    if(pids[child] == 0)
+      allocator_stress_worker();
+  }
+
+  for(int sample = 0; sample < 24; sample++){
+    if(memsnapshot(MEMVIZ_VIEW_PHYS, &after_alloc) < 0)
+      fail("stress snapshot");
+    check_allocator_audit(&after_alloc);
+  }
+
+  for(int child = 0; child < ALLOC_STRESS_CHILDREN; child++){
+    int status = -1;
+    int pid = wait(&status);
+    if(pid < 0 || status != 0)
+      fail("stress child status");
+  }
+
+  if(memsnapshot(MEMVIZ_VIEW_PHYS, &after_free) < 0)
+    fail("stress final snapshot");
+  check_allocator_audit(&after_free);
+  if(after_free.free_pages != before.free_pages)
+    fail("stress leaked physical pages");
+
+  printf("ALLOC TRACE stress children=%d rounds=%d pages=%d audit=ok restored=yes\n",
+         ALLOC_STRESS_CHILDREN, ALLOC_STRESS_ROUNDS, ALLOC_STRESS_PAGES);
+  printf("memviztest: allocator concurrency OK\n");
 }
 
 /** 验证当前内核栈、MMIO 和用户别名窗口可观察。 */
@@ -569,9 +777,10 @@ run_named(char *name)
     test_dynamic_page_states();
   } else if(strcmp(name, "phys") == 0)
     test_physical_snapshot();
-  else if(strcmp(name, "alloc") == 0)
+  else if(strcmp(name, "alloc") == 0){
     test_allocate_and_release();
-  else if(strcmp(name, "kernel") == 0)
+    test_allocator_concurrency();
+  } else if(strcmp(name, "kernel") == 0)
     test_kernel_snapshot();
   else if(strcmp(name, "pagetable") == 0)
     test_pagetable_snapshot();
@@ -596,6 +805,7 @@ main(int argc, char **argv)
     test_dynamic_page_states();
     test_physical_snapshot();
     test_allocate_and_release();
+    test_allocator_concurrency();
     test_kernel_snapshot();
     test_pagetable_snapshot();
   } else if(argc == 2){

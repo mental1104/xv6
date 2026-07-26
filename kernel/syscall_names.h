@@ -35,6 +35,7 @@ static const char *const syscall_names[] = {
 [SYS_munmap]    = "munmap",
 [SYS_backtrace] = "backtrace",
 [SYS_memsnapshot] = "memsnapshot",
+[SYS_memsnapshot_pid] = "memsnapshot_pid",
 [SYS_vaquery]    = "vaquery",
 [SYS_waitpid]    = "waitpid",
 [SYS_consolemode] = "consolemode",
@@ -50,6 +51,10 @@ static const char *const syscall_names[] = {
 [SYS_lseek]            = "lseek",
 [SYS_execve]           = "execve",
 [SYS_getprocs]         = "getprocs",
+[SYS_swapout]          = "swapout",
+[SYS_swapinfo]         = "swapinfo",
+[SYS_concurrencylab]   = "concurrencylab",
+[SYS_fsinspect]        = "fsinspect",
 };
 
 // 名称表中可访问的元素数量（包含下标 0），用于限制遍历和查找范围。

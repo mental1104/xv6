@@ -33,6 +33,7 @@ GUEST_SOURCE_NAMES = (
     "alarmtest.c",
     "lazytests.c",
     "cowtest.c",
+    "fileapitest.c",
     "bigfile.c",
     "symlinktest.c",
     "mmaptest.c",
