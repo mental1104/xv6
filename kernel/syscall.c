@@ -150,6 +150,7 @@ extern uint64 sys_getprocs(void);
 extern uint64 sys_swapout(void);
 extern uint64 sys_swapinfo(void);
 extern uint64 sys_concurrencylab(void);
+extern uint64 sys_disktrace(void);
 extern uint64 sys_semcreate(void);
 extern uint64 sys_semwait(void);
 extern uint64 sys_sempost(void);
@@ -225,6 +226,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_raid1info]        sys_raid1info,
 [SYS_raid1rw]          sys_raid1rw,
 [SYS_locklab]          sys_locklab,
+[SYS_disktrace]        sys_disktrace,
 };
 
 void

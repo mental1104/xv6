@@ -40,6 +40,7 @@ main()
     fileinit();      // file table
     concurrencylab_init(); // explicit, inactive teaching probe
     virtio_disk_init(); // root disk plus optional teaching member disks
+    disktrace_sys_init(); // root block-driver observation syscall state
 #ifdef XV6_RAID1
     raid1_init();    // opt-in RAID1 teaching layer; never replaces the root FS path
 #endif

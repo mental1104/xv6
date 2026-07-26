@@ -12,6 +12,7 @@ struct raid1_info;
 struct raid1_result;
 struct sched_stats;
 struct schedtrace_snapshot;
+struct disktrace_snapshot;
 struct user_context;
 struct swap_info;
 struct semaphore_info;
@@ -137,6 +138,16 @@ int locklab(int operation, int value);
  * @return RESET 成功返回正会话编号；其他操作成功返回 0；失败返回 -1。
  */
 int concurrencylab(int op, int arg0, int arg1, void *result);
+
+/**
+ * 控制和读取 xv6 virtio 驱动边界轨迹。
+ *
+ * @param op DISKTRACE_OP_*。
+ * @param snapshot READ 时接收固定容量快照，其余操作可为空。
+ * @param max_events READ 时指定愿意接收的事件数。
+ * @return 成功返回 0，参数或用户地址非法时返回 -1。
+ */
+int disktrace(int op, struct disktrace_snapshot *snapshot, int max_events);
 
 /**
  * Explicitly move one current-process anonymous user page to the teaching

@@ -67,6 +67,7 @@ static struct image_file image_files[] = {
   {"/memviz", XV6_USR_BIN_PATH("memviz")},
   {"/memtarget", XV6_USR_BIN_PATH("memtarget")},
   {"/schedviz", XV6_USR_BIN_PATH("schedviz")},
+  {"/disksched", XV6_USR_BIN_PATH("disksched")},
   {"/varead", XV6_USR_BIN_PATH("varead")},
   {"/vawrite", XV6_USR_BIN_PATH("vawrite")},
   {"/vaprobe", XV6_USR_BIN_PATH("vaprobe")},
@@ -110,6 +111,7 @@ static struct image_file image_files[] = {
   {"/locktest", XV6_TEST_PATH("locktest")},
   {"/schedtest", XV6_TEST_PATH("schedtest")},
   {"/schedtracetest", XV6_TEST_PATH("schedtracetest")},
+  {"/diskschedtest", XV6_TEST_PATH("diskschedtest")},
   {"/xargstest.sh", XV6_TEST_PATH("xargstest.sh")},
   {0, 0},
 };

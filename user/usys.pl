@@ -73,3 +73,4 @@ entry("logcrash");
 entry("raid1info");
 entry("raid1rw");
 entry("locklab");
+entry("disktrace");

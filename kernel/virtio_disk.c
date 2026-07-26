@@ -16,6 +16,7 @@
 #include "fs.h"
 #include "buf.h"
 #include "virtio.h"
+#include "disktrace_abi.h"
 
 #define VIRTIO_DISK_COUNT 3
 #define VIRTIO_MMIO_STRIDE 0x1000L
@@ -39,7 +40,18 @@ struct virtio_disk_state {
   struct {
     struct buf *b;
     char status;
+    uint64 request_id;
+    uint64 blockno;
+    int write;
   } info[NUM];
+
+  // ABI 未携带设备编号，因此只在根设备 0 上启用轨迹，避免混入 RAID1 成员请求。
+  int trace_active;
+  int trace_dropped;
+  int trace_events;
+  uint64 trace_next_seq;
+  uint64 next_request_id;
+  struct disktrace_event trace_events_buffer[DISKTRACE_MAX_EVENTS];
 
   struct spinlock lock;
   uint64 capacity_blocks;
@@ -47,6 +59,44 @@ struct virtio_disk_state {
 } __attribute__((aligned(PGSIZE)));
 
 static struct virtio_disk_state disks[VIRTIO_DISK_COUNT];
+
+
+/**
+ * 在持锁状态下追加一个根设备驱动边界事件。
+ *
+ * @param disk 根设备状态；调用者必须持有 disk->lock。
+ * @param request_id 同一请求四个阶段共享的编号。
+ * @param blockno xv6 文件系统块号。
+ * @param write 非零表示写入，零表示读取。
+ * @param stage DISKTRACE_STAGE_*。
+ * @param descriptor 三描述符链首下标。
+ * @param queue_index 对应的 avail/used 槽位；无槽位时为 -1。
+ */
+static void
+append_trace_event_locked(struct virtio_disk_state *disk,
+                          uint64 request_id, uint64 blockno, int write,
+                          int stage, int descriptor, int queue_index)
+{
+  struct disktrace_event event;
+
+  if(!disk->trace_active)
+    return;
+  if(disk->trace_events >= DISKTRACE_MAX_EVENTS){
+    disk->trace_dropped++;
+    return;
+  }
+
+  memset(&event, 0, sizeof(event));
+  event.seq = disk->trace_next_seq++;
+  event.request_id = request_id;
+  event.timestamp = r_time();
+  event.blockno = blockno;
+  event.stage = stage;
+  event.write = write;
+  event.descriptor = descriptor;
+  event.queue_index = queue_index;
+  disk->trace_events_buffer[disk->trace_events++] = event;
+}
 
 /**
  * 探测并初始化一个 legacy virtio-blk MMIO 插槽。
@@ -105,6 +155,12 @@ virtio_disk_init_device(int device)
   disk->used = (struct UsedArea *)(disk->pages + PGSIZE);
   for(int i = 0; i < NUM; i++)
     disk->free[i] = 1;
+
+  disk->trace_active = 0;
+  disk->trace_dropped = 0;
+  disk->trace_events = 0;
+  disk->trace_next_seq = 1;
+  disk->next_request_id = 1;
 
   // legacy virtio-blk 配置区以两个小端 32 位寄存器保存 512 字节扇区数。
   uint64 sectors = *R(device, VIRTIO_MMIO_CONFIG);
@@ -264,18 +320,37 @@ virtio_disk_rw_device(int device, struct buf *buffer, int write)
   disk->desc[indexes[2]].flags = VRING_DESC_F_WRITE;
   disk->desc[indexes[2]].next = 0;
 
+  uint64 request_id = 0;
+  if(device == 0)
+    request_id = disk->next_request_id++;
+
   buffer->disk = 1;
   disk->info[indexes[0]].b = buffer;
-  disk->avail[2 + (disk->avail[1] % NUM)] = indexes[0];
+  disk->info[indexes[0]].request_id = request_id;
+  disk->info[indexes[0]].blockno = buffer->blockno;
+  disk->info[indexes[0]].write = write;
+  if(device == 0)
+    append_trace_event_locked(disk, request_id, buffer->blockno, write,
+                              DISKTRACE_STAGE_SUBMIT, indexes[0], -1);
+
+  int avail_slot = disk->avail[1] % NUM;
+  disk->avail[2 + avail_slot] = indexes[0];
   __sync_synchronize();
   disk->avail[1] = disk->avail[1] + 1;
   *R(device, VIRTIO_MMIO_QUEUE_NOTIFY) = 0;
+  if(device == 0)
+    append_trace_event_locked(disk, request_id, buffer->blockno, write,
+                              DISKTRACE_STAGE_QUEUED, indexes[0], avail_slot);
 
   while(buffer->disk == 1)
     sleep(buffer, &disk->lock);
 
+  if(device == 0)
+    append_trace_event_locked(disk, request_id, buffer->blockno, write,
+                              DISKTRACE_STAGE_RETURN, indexes[0], -1);
   int success = disk->info[indexes[0]].status == 0;
   disk->info[indexes[0]].b = 0;
+  disk->info[indexes[0]].request_id = 0;
   free_chain(disk, indexes[0]);
   release(&disk->lock);
   return success ? 0 : -1;
@@ -309,9 +384,15 @@ virtio_disk_intr(int device)
   acquire(&disk->lock);
 
   while((disk->used_idx % NUM) != (disk->used->id % NUM)){
-    int id = disk->used->elems[disk->used_idx].id;
+    int used_slot = disk->used_idx % NUM;
+    int id = disk->used->elems[used_slot].id;
     struct buf *buffer = disk->info[id].b;
     if(buffer != 0){
+      if(device == 0)
+        append_trace_event_locked(disk, disk->info[id].request_id,
+                                  disk->info[id].blockno,
+                                  disk->info[id].write,
+                                  DISKTRACE_STAGE_COMPLETE, id, used_slot);
       buffer->disk = 0;
       wakeup(buffer);
     }
@@ -321,4 +402,76 @@ virtio_disk_intr(int device)
     *R(device, VIRTIO_MMIO_INTERRUPT_STATUS) & 0x3;
 
   release(&disk->lock);
+}
+
+/** 清空根设备的一次轨迹会话；不回退全局请求编号，也不影响在途 I/O。 */
+void
+virtio_disk_trace_reset(void)
+{
+  struct virtio_disk_state *disk = &disks[0];
+
+  acquire(&disk->lock);
+  disk->trace_active = 0;
+  disk->trace_dropped = 0;
+  disk->trace_events = 0;
+  disk->trace_next_seq = 1;
+  release(&disk->lock);
+}
+
+/** 开启根设备驱动边界采样，不改变真实 I/O 提交和完成语义。 */
+int
+virtio_disk_trace_start(void)
+{
+  struct virtio_disk_state *disk = &disks[0];
+
+  acquire(&disk->lock);
+  disk->trace_active = 1;
+  release(&disk->lock);
+  return 0;
+}
+
+/** 关闭根设备采样并保留最近一次会话，供用户态随后读取。 */
+int
+virtio_disk_trace_stop(void)
+{
+  struct virtio_disk_state *disk = &disks[0];
+
+  acquire(&disk->lock);
+  disk->trace_active = 0;
+  release(&disk->lock);
+  return 0;
+}
+
+/**
+ * 将当前根设备轨迹复制到内核快照。
+ *
+ * @param snapshot 输出快照，必须位于内核地址空间。
+ * @param max_events 调用者愿意接收的事件数，范围为 0..DISKTRACE_MAX_EVENTS。
+ * @return 成功返回实际事件数；容量非法时返回 -1。
+ */
+int
+virtio_disk_trace_copy_snapshot(struct disktrace_snapshot *snapshot,
+                                int max_events)
+{
+  struct virtio_disk_state *disk = &disks[0];
+  int count;
+
+  if(max_events < 0 || max_events > DISKTRACE_MAX_EVENTS)
+    return -1;
+
+  acquire(&disk->lock);
+  count = disk->trace_events;
+  if(count > max_events)
+    count = max_events;
+
+  memset(snapshot, 0, sizeof(*snapshot));
+  snapshot->version = DISKTRACE_VERSION;
+  snapshot->events = count;
+  snapshot->dropped = disk->trace_dropped + (disk->trace_events - count);
+  snapshot->capacity = DISKTRACE_MAX_EVENTS;
+  snapshot->active = disk->trace_active;
+  memmove(snapshot->events_buffer, disk->trace_events_buffer,
+          count * sizeof(struct disktrace_event));
+  release(&disk->lock);
+  return count;
 }

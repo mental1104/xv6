@@ -35,6 +35,7 @@ OBJS = \
   $K/sysmemviz.o \
   $K/locklab.o \
   $K/syslocklab.o \
+  $K/sysdisktrace.o \
   $K/bio.o \
   $K/fs.o \
   $K/fsinspect.o \
@@ -210,6 +211,16 @@ $U/_historytest: $T/historytest.o $U/history.o $(ULIB)
 	$(OBJDUMP) -S $@ > $T/historytest.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/historytest.sym
 
+$U/_disksched: $U/disksched.o $U/disksched_model.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $U/disksched.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/disksched.sym
+
+$U/_diskschedtest: $T/diskschedtest.o $U/disksched_model.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $T/diskschedtest.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/diskschedtest.sym
+
 $U/usys.S: $U/usys.pl
 	perl $U/usys.pl > $U/usys.S
 
@@ -262,6 +273,7 @@ UPROGS=\
 	$U/_memviz\
 	$U/_memtarget\
 	$U/_schedviz\
+	$U/_disksched\
 	$U/_varead\
 	$U/_vawrite\
 	$U/_vaprobe\
@@ -308,7 +320,8 @@ UPROGS=\
 	$U/_locktest\
 	$U/_xv6test\
 	$U/_schedtest\
-	$U/_schedtracetest
+	$U/_schedtracetest\
+	$U/_diskschedtest
 
 UEXTRA = $U/xargstest.sh
 
