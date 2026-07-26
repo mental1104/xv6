@@ -1,6 +1,7 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "kernel/riscv.h"
+#include "kernel/param.h"
 #include "kernel/memviz.h"
 #include "user/user.h"
 #include "user/paths.h"
