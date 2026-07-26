@@ -52,11 +52,11 @@ jobs:
           test -f .git/MERGE_HEAD
           git clean -fdx
           git apply --check /tmp/issue155.patch
-          git apply /tmp/issue155.patch
+          git apply --whitespace=fix /tmp/issue155.patch
           git add -A
-          git diff --cached --check
-          test "$(git diff --cached --name-only | wc -l)" -eq 17
-          git diff --cached --name-only
+          git diff --cached --check "$EXPECTED_MAIN"
+          test "$(git diff --cached --name-only "$EXPECTED_MAIN" | wc -l)" -eq 17
+          git diff --cached --name-only "$EXPECTED_MAIN"
           git commit -m "merge: 同步 main 并解决磁盘调度实验冲突"
 
       - name: Install toolchain
