@@ -102,6 +102,18 @@ mmap_fault(struct proc *p, struct VMA *v, uint64 va)
   return 0;
 }
 
+/**
+ * 按 COW、mmap、lazy allocation 的既定优先级处理用户页错误。
+ *
+ * @param p 当前触发异常的进程；函数读取并更新它的用户页表。
+ * @param scause RISC-V 页错误原因，只接受 load 或 store page fault。
+ * @param va 触发异常的用户虚拟地址，允许位于页面内部。
+ * @return 成功完成页物化或 COW 时返回 0；地址非法或资源分配失败时返回 -1。
+ *
+ * 一旦 `vma_find()` 命中，fault 已被归类为文件映射页，必须直接传播
+ * `mmap_fault()` 的结果。即使物化失败也不能继续尝试匿名 lazy allocation，
+ * 否则既会重复扫描 VMA，也会模糊失败路径的责任边界。
+ */
 static int
 handle_user_page_fault(struct proc *p, uint64 scause, uint64 va)
 {
@@ -109,8 +121,8 @@ handle_user_page_fault(struct proc *p, uint64 scause, uint64 va)
     return 0;
 
   struct VMA *v = vma_find(p, va);
-  if(v && mmap_fault(p, v, va) == 0)
-    return 0;
+  if(v)
+    return mmap_fault(p, v, va);
   return uvmlazyalloc(p, va);
 }
 
@@ -196,7 +208,7 @@ usertrapret(void)
   // we're back in user space, where usertrap() is correct.
   intr_off();
 
-  // send syscalls, interrupts, and exceptions to trampoline.S
+  // send syscalls, interrupts and exceptions to trampoline.S
   w_stvec(TRAMPOLINE + (uservec - trampoline));
 
   // set up trapframe values that uservec will need when
@@ -206,7 +218,7 @@ usertrapret(void)
   p->trapframe->kernel_trap = (uint64)usertrap;
   p->trapframe->kernel_hartid = r_tp();         // hartid for cpuid()
 
-  // set up the registers that the trampoline.S's sret will use
+  // set up the registers that trampoline.S's sret will use
   // to get to user space.
 
   // set S Previous Privilege mode to User.
