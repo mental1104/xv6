@@ -42,6 +42,17 @@ class CiPlanSelectionTests(unittest.TestCase):
         self.assertEqual(PLANNER.VM_SUITES, plan.suites)
         self.assertFalse(plan.run_shell_history)
 
+    def test_page_fault_dispatch_runs_vm_and_mmap_regressions(self) -> None:
+        """trap page fault 改动必须同时覆盖匿名 VM 与文件映射路径。"""
+
+        plan = PLANNER.build_ci_plan(("kernel/trap.c",))
+
+        self.assertEqual(
+            ("lab10-mmap", "usertests-core", "lab-vm"),
+            plan.suites,
+        )
+        self.assertFalse(plan.run_shell_history)
+
     def test_filesystem_change_keeps_bigfile_boundary_test(self) -> None:
         plan = PLANNER.build_ci_plan(("kernel/fs.c",))
 
