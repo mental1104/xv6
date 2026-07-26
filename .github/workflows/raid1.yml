@@ -1,0 +1,83 @@
+name: RAID1 teaching experiment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - ".github/workflows/raid1.yml"
+      - "kernel/main.c"
+      - "kernel/memlayout.h"
+      - "kernel/plic.c"
+      - "kernel/raid1.c"
+      - "kernel/raid1.h"
+      - "kernel/syscall.c"
+      - "kernel/syscall.h"
+      - "kernel/syscall_names.h"
+      - "kernel/sysraid1.c"
+      - "kernel/trap.c"
+      - "kernel/virtio.h"
+      - "kernel/virtio_disk.c"
+      - "tests/guest/raid1test.c"
+      - "tests/raid1.mk"
+      - "tests/raid1_experiment.py"
+      - "tests/run_raid1.py"
+      - "tests/test_raid1_experiment.py"
+      - "user/user.h"
+      - "user/usys.pl"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: raid1-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  experiment:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu \
+            qemu-system-misc \
+            python3-pexpect
+
+      - name: Validate Python helpers
+        run: |
+          PYTHONPATH=tests python3 -m unittest tests/test_raid1_experiment.py -v
+          python3 -m py_compile tests/raid1_experiment.py tests/run_raid1.py
+
+      - name: Verify default build remains independent
+        run: |
+          make clean
+          make -j2
+
+      - name: Run RAID1 experiment single-core
+        run: |
+          make -f Makefile -f tests/raid1.mk clean
+          make -f Makefile -f tests/raid1.mk -j2 CPUS=1
+          make -f Makefile -f tests/raid1.mk raid1test CPUS=1
+
+      - name: Run RAID1 experiment multi-core
+        run: |
+          make -f Makefile -f tests/raid1.mk clean
+          make -f Makefile -f tests/raid1.mk -j2 CPUS=3
+          make -f Makefile -f tests/raid1.mk raid1test CPUS=3
+
+      - name: Upload experiment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: raid1-evidence-${{ github.run_attempt }}
+          path: artifacts/raid1-cpu*/
+          if-no-files-found: warn

@@ -69,3 +69,5 @@ entry("semwait");
 entry("sempost");
 entry("semdestroy");
 entry("seminfo");
+entry("raid1info");
+entry("raid1rw");

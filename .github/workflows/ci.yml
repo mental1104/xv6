@@ -92,12 +92,8 @@ jobs:
           steps.plan.outputs.shell_history == 'true'
         run: python3 tests/shell_history_interactive.py --cpus 3
 
-      - name: Run job-control regression single-core
-        if: >-
-          github.event_name == 'pull_request' &&
-          steps.plan.outputs.job_control == 'true'
-        run: python3 tests/run.py --suite usertests-core --cpus 1
-
+      # 先消费初始的三核构建，再执行会重建 CPUS=1 的补充回归。否则 make 不会
+      # 因命令行 CFLAGS 变化自动重编译，后续三核 QEMU 会加载带 XV6_CPUS=1 的旧对象。
       - name: Run selected PR QEMU regression
         if: >-
           github.event_name == 'pull_request' &&
@@ -114,6 +110,12 @@ jobs:
           done
           printf 'Selected PR suites: %s\n' "${suites[*]}"
           python3 tests/run.py "${args[@]}" --cpus 3
+
+      - name: Run job-control regression single-core
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.plan.outputs.job_control == 'true'
+        run: python3 tests/run.py --suite usertests-core --cpus 1
 
       - name: Run filesystem regression single-core
         if: >-
