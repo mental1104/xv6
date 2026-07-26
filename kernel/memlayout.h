@@ -7,8 +7,10 @@
 // 00101000 -- Goldfish real-time clock
 // 02000000 -- CLINT
 // 0C000000 -- PLIC
-// 10000000 -- uart0 
-// 10001000 -- virtio disk 
+// 10000000 -- uart0
+// 10001000 -- virtio-mmio slot 0
+// 10002000 -- virtio-mmio slot 1
+// 10003000 -- virtio-mmio slot 2
 // 80000000 -- boot ROM jumps here in machine mode
 //             -kernel loads the kernel here
 // unused RAM after 80000000.
@@ -28,9 +30,13 @@
 #define UART0 0x10000000L
 #define UART0_IRQ 10
 
-// virtio mmio interface
-#define VIRTIO0 0x10001000
+// virtio-mmio transports use consecutive 4 KiB slots and PLIC IRQs.
+#define VIRTIO0 0x10001000L
+#define VIRTIO1 0x10002000L
+#define VIRTIO2 0x10003000L
 #define VIRTIO0_IRQ 1
+#define VIRTIO1_IRQ 2
+#define VIRTIO2_IRQ 3
 
 // local interrupt controller, which contains the timer.
 #define CLINT 0x2000000L
