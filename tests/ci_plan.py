@@ -58,6 +58,7 @@ FILESYSTEM_PATHS = {
     "tests/guest/symlinktest.c",
 }
 MMAP_PATHS = {
+    "kernel/trap.c",
     "kernel/vma.c",
     "kernel/vma.h",
     "tests/guest/mmaptest.c",
