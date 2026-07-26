@@ -34,12 +34,14 @@ OBJS = \
   $K/syslocklab.o \
   $K/bio.o \
   $K/fs.o \
+  $K/fsinspect.o \
   $K/log.o \
   $K/sleeplock.o \
   $K/file.o \
   $K/pipe.o \
   $K/exec.o \
   $K/sysfile.o \
+  $K/sysfsinspect.o \
   $K/sysseek.o \
   $K/kernelvec.o \
   $K/plic.o \
@@ -255,11 +257,13 @@ UPROGS=\
 	$U/_rm\
 	$U/_sh\
 	$U/_memviz\
+	$U/_memtarget\
 	$U/_schedviz\
 	$U/_varead\
 	$U/_vawrite\
 	$U/_vaprobe\
 	$U/_memviztest\
+	$U/_memtargettest\
 	$U/_pgtbltest\
 	$U/_vaaccesstest\
 	$U/_addresswindowtest\
