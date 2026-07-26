@@ -54,5 +54,6 @@
 #define SYS_sempost          53
 #define SYS_semdestroy       54
 #define SYS_seminfo          55
-#define SYS_raid1info        56
-#define SYS_raid1rw          57
+#define SYS_logcrash         56
+#define SYS_raid1info        57
+#define SYS_raid1rw          58

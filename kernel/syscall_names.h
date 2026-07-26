@@ -60,6 +60,7 @@ static const char *const syscall_names[] = {
 [SYS_sempost]          = "sempost",
 [SYS_semdestroy]       = "semdestroy",
 [SYS_seminfo]          = "seminfo",
+[SYS_logcrash]         = "logcrash",
 [SYS_raid1info]        = "raid1info",
 [SYS_raid1rw]          = "raid1rw",
 };
