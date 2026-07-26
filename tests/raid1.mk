@@ -18,6 +18,6 @@ endif
 
 # 创建两个真实 raw 成员镜像，并跨四次 QEMU 启动验证降级、损坏、自愈与重启一致性。
 raid1test: $K/kernel fs.img
-	$(PYTHON) tests/raid1_experiment.py --cpus $(CPUS) --artifacts artifacts/raid1-cpu$(CPUS)
+	$(PYTHON) tests/run_raid1.py --cpus $(CPUS) --artifacts artifacts/raid1-cpu$(CPUS)
 
 .PHONY: raid1test
