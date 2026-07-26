@@ -8,8 +8,14 @@
 #include "tests/guest/testlib.h"
 
 #define TLB_SWITCH_ROUNDS 64
+#define TRANSLATION_OFFSET 37
+#define TRANSLATION_DELTA 73
 
 static char output[4096];
+// 页对齐 BSS 为精确 VA、页内偏移和用户写权限提供稳定样本。
+static volatile unsigned char translation_page[PGSIZE]
+  __attribute__((aligned(PGSIZE)));
+static struct memviz_snapshot translation_snapshot;
 
 /** 记录 COW 后 child 在同一 VA 上观察到的翻译与权限。 */
 struct tlb_switch_report {
@@ -80,6 +86,146 @@ free_pages(void)
   if(memsnapshot(MEMVIZ_VIEW_USER, &snapshot) < 0)
     fail("memsnapshot failed");
   return snapshot.free_pages;
+}
+
+/** 输出教学相关的叶子 PTE 权限位。 */
+static void
+print_flags(uint64 flags)
+{
+  printf("%c%c%c%c%c%c",
+         (flags & PTE_V) ? 'V' : '-',
+         (flags & PTE_R) ? 'R' : '-',
+         (flags & PTE_W) ? 'W' : '-',
+         (flags & PTE_X) ? 'X' : '-',
+         (flags & PTE_U) ? 'U' : '-',
+         (flags & PTE_COW) ? 'C' : '-');
+}
+
+/**
+ * print_translation 打印一个精确 VA 的 Sv39 三级路径和页内偏移结果。
+ *
+ * @param sample 稳定样本名称。
+ * @param requested_va 用户请求的字节地址。
+ * @param query vaquery() 返回的页级只读观察结果。
+ */
+static void
+print_translation(char *sample, uint64 requested_va,
+                  struct memviz_va_query *query)
+{
+  uint64 offset = requested_va - PGROUNDDOWN(requested_va);
+
+  printf("ADDRTRANS sample=%s requested_va=%p page_va=%p offset=%p mapped=%d\n",
+         sample, requested_va, query->va, offset, query->present);
+  for(int i = 0; i < 3; i++){
+    struct memviz_pte_level *level = &query->levels[i];
+    printf("ADDRTRANS sample=%s L%d index=%d present=%d pte=%p pa=%p flags=",
+           sample, level->level, level->index, level->present,
+           level->pte, level->pa);
+    print_flags(level->flags);
+    printf("\n");
+  }
+
+  if(query->present){
+    printf("ADDRTRANS sample=%s leaf_page_pa=%p translated_pa=%p flags=",
+           sample, query->pa, query->pa + offset);
+    print_flags(query->flags);
+    printf("\n");
+  }
+}
+
+/**
+ * query_read_only 执行 vaquery() 并验证观察不会分配页或改变 break。
+ *
+ * @param va 待查询虚拟地址。
+ * @param query 接收查询结果；查询失败时调用者不得读取其内容。
+ * @return vaquery() 的原始返回值。
+ */
+static int
+query_read_only(uint64 va, struct memviz_va_query *query)
+{
+  uint64 before_pages = free_pages();
+  uint64 before_brk = (uint64)sbrk(0);
+  int result = vaquery(va, query);
+
+  if(free_pages() != before_pages || (uint64)sbrk(0) != before_brk)
+    fail("vaquery changed process state");
+  return result;
+}
+
+/** 验证精确 VA 经 L2/L1/L0 到物理页后仍保留同一页内偏移。 */
+static void
+test_translation_trace(void)
+{
+  struct memviz_va_query first;
+  struct memviz_va_query second;
+  uint64 first_va = (uint64)&translation_page[TRANSLATION_OFFSET];
+  uint64 second_va = first_va + TRANSLATION_DELTA;
+
+  translation_page[TRANSLATION_OFFSET] = 0x5a;
+  translation_page[TRANSLATION_OFFSET + TRANSLATION_DELTA] = 0x6b;
+  if(query_read_only(first_va, &first) < 0 || !first.present)
+    fail("first mapped query failed");
+  if(query_read_only(second_va, &second) < 0 || !second.present)
+    fail("second mapped query failed");
+
+  uint64 first_offset = first_va - PGROUNDDOWN(first_va);
+  uint64 second_offset = second_va - PGROUNDDOWN(second_va);
+  if(first.va != PGROUNDDOWN(first_va) || second.va != first.va ||
+     first.pa != second.pa || first.pa % PGSIZE != 0)
+    fail("mapped page base mismatch");
+  if(first.pa + first_offset + TRANSLATION_DELTA !=
+     second.pa + second_offset)
+    fail("page offset was not preserved");
+  if((first.flags & (PTE_V | PTE_U | PTE_W)) !=
+     (PTE_V | PTE_U | PTE_W))
+    fail("mapped permissions mismatch");
+  if(!first.levels[0].present || !first.levels[1].present ||
+     !first.levels[2].present ||
+     first.levels[0].index != PX(2, first_va) ||
+     first.levels[1].index != PX(1, first_va) ||
+     first.levels[2].index != PX(0, first_va))
+    fail("Sv39 level trace mismatch");
+
+  print_translation("mapped", first_va, &first);
+  printf("ADDRTRANS sample=mapped offset_delta=%d translated_delta=%d result=ok\n",
+         TRANSLATION_DELTA, TRANSLATION_DELTA);
+  printf("vaaccesstest: translation trace OK\n");
+}
+
+/** 验证缺页、权限不匹配和 USERMAX 拒绝均有稳定且无副作用的 oracle。 */
+static void
+test_translation_negative_oracles(void)
+{
+  struct memviz_va_query guard;
+  struct memviz_va_query missing;
+  struct memviz_va_query rejected;
+
+  if(memsnapshot(MEMVIZ_VIEW_USER, &translation_snapshot) < 0 ||
+     !translation_snapshot.user_stack_valid)
+    fail("translation snapshot failed");
+
+  uint64 guard_va = translation_snapshot.stack_guard_start + TRANSLATION_OFFSET;
+  if(query_read_only(guard_va, &guard) < 0 || !guard.present)
+    fail("guard query failed");
+  if((guard.flags & PTE_V) == 0 || (guard.flags & PTE_U) != 0)
+    fail("guard permission oracle mismatch");
+  print_translation("guard-no-user", guard_va, &guard);
+
+  uint64 missing_va = PGROUNDUP(translation_snapshot.process_size) + PGSIZE +
+                      TRANSLATION_OFFSET;
+  if(missing_va >= USERMAX)
+    fail("missing sample outside user range");
+  if(query_read_only(missing_va, &missing) < 0 || missing.present)
+    fail("missing PTE oracle mismatch");
+  if(missing.pa != 0 || missing.pte != 0 || missing.flags != 0)
+    fail("missing PTE returned leaf state");
+  print_translation("missing-pte", missing_va, &missing);
+
+  if(query_read_only(USERMAX, &rejected) != -1)
+    fail("USERMAX query accepted");
+  printf("ADDRTRANS sample=out-of-range requested_va=%p query_result=-1 side_effect=none\n",
+         USERMAX);
+  printf("vaaccesstest: translation negative oracles OK\n");
 }
 
 /** test_mapped_access 验证已映射 ELF 页的读写都走普通命中路径。 */
@@ -349,6 +495,8 @@ main(int argc, char **argv)
   if(argc != 1)
     exit(2);
 
+  test_translation_trace();
+  test_translation_negative_oracles();
   test_mapped_access();
   test_lazy_access();
   test_cow_access();
