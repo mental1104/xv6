@@ -1,6 +1,9 @@
 struct buf;
 struct context;
 struct file;
+struct fsinspect_cache_stats;
+struct fsinspect_log_stats;
+struct fsinspect_snapshot;
 struct inode;
 struct pipe;
 struct proc;
@@ -20,6 +23,7 @@ void            brelse(struct buf*);
 void            bwrite(struct buf*);
 void            bpin(struct buf*);
 void            bunpin(struct buf*);
+void            bcache_stats_snapshot(struct fsinspect_cache_stats*);
 
 // console.c
 void            consoleinit(void);
@@ -62,6 +66,9 @@ void            stati(struct inode*, struct stat*);
 int             writei(struct inode*, int, uint64, uint64, uint);
 void            itrunc(struct inode*);
 
+// fsinspect.c
+void            fsinspect_collect(struct inode*, struct fsinspect_snapshot*);
+
 // ramdisk.c
 void            ramdiskinit(void);
 void            ramdiskintr(void);
@@ -83,6 +90,7 @@ void            initlog(int, struct superblock*);
 void            log_write(struct buf*);
 void            begin_op(void);
 void            end_op(void);
+void            log_stats_snapshot(struct fsinspect_log_stats*);
 
 // pipe.c
 int             pipealloc(struct file**, struct file**);
