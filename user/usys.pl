@@ -64,3 +64,4 @@ entry("swapout");
 entry("swapinfo");
 entry("concurrencylab");
 entry("fsinspect");
+entry("locklab");
