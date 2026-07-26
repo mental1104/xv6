@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -39,6 +41,7 @@ GUEST_SUCCESS = (r"^XV6TEST done status=0$",)
 GUEST_PROGRAM_PATHS = {
     "xv6test": "/usr/bin/xv6test",
 }
+LOG_RECOVERY_MARKER = "LOGRECOVER replay entries="
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,18 @@ class TestCase:
 
 
 @dataclass(frozen=True)
+class CrashRecoveryScenario:
+    """描述一个需要真实磁盘镜像跨 QEMU 重启保存的日志崩溃场景。"""
+
+    name: str
+    prepare_test: str
+    verify_test: str
+    crash_marker: str
+    recovery_expected: bool
+    timeout: int = 120
+
+
+@dataclass(frozen=True)
 class Suite:
     """描述一个原子测试套件或由其他套件组成的聚合套件。"""
 
@@ -70,6 +85,7 @@ class Suite:
     tests: tuple[TestCase, ...] = ()
     includes: tuple[str, ...] = ()
     description: str = ""
+    crash_scenarios: tuple[CrashRecoveryScenario, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -78,6 +94,31 @@ class QemuCommandResult:
 
     output: str
     failure: str | None = None
+
+
+LOG_RECOVERY_SCENARIOS = (
+    CrashRecoveryScenario(
+        name="before-commit",
+        prepare_test="logcrash-before-prepare",
+        verify_test="logcrash-before-verify",
+        crash_marker="LOGCRASH injected phase=before-commit",
+        recovery_expected=False,
+    ),
+    CrashRecoveryScenario(
+        name="after-commit",
+        prepare_test="logcrash-after-prepare",
+        verify_test="logcrash-after-verify",
+        crash_marker="LOGCRASH injected phase=after-commit",
+        recovery_expected=True,
+    ),
+    CrashRecoveryScenario(
+        name="during-install",
+        prepare_test="logcrash-install-prepare",
+        verify_test="logcrash-install-verify",
+        crash_marker="LOGCRASH injected phase=during-install",
+        recovery_expected=True,
+    ),
+)
 
 
 SUITES: dict[str, Suite] = {
@@ -176,7 +217,7 @@ SUITES: dict[str, Suite] = {
     ),
     "lab9-bigfile": Suite(
         name="lab9-bigfile",
-        description="Lab9 large-file test in an isolated disk snapshot",
+        description="Lab9 large-file and persistent journal recovery regression",
         tests=(
             TestCase(
                 "lab9-bigfile",
@@ -184,7 +225,14 @@ SUITES: dict[str, Suite] = {
                 expected=GUEST_SUCCESS,
                 timeout=120,
             ),
+            TestCase(
+                "logcrash-api",
+                ("xv6test --run logcrash-api",),
+                expected=GUEST_SUCCESS,
+                timeout=120,
+            ),
         ),
+        crash_scenarios=LOG_RECOVERY_SCENARIOS,
     ),
     "lab9-symlink": Suite(
         name="lab9-symlink",
@@ -364,13 +412,40 @@ def _run_host_test(suite: str, test: TestCase) -> None:
     print(f"PASS {test.name} {elapsed:.2f}s ({log_path.relative_to(REPO_ROOT)})")
 
 
-def _start_qemu(cpus: int) -> pexpect.spawn:
-    """启动使用 snapshot 的 xv6 QEMU，并等待 Shell 提示符。"""
+def _build_qemu_command(
+    cpus: int,
+    *,
+    fsimg: Path | None = None,
+    snapshot: bool = True,
+) -> str:
+    """构造显式 CPU、磁盘和 snapshot 策略的 QEMU make 命令。
 
-    command = (
-        "make -s --no-print-directory qemu "
-        f"CPUS={cpus} QEMUEXTRA=-snapshot"
-    )
+    Args:
+        cpus: QEMU 虚拟 CPU 数量。
+        fsimg: 需要跨重启保留写入的镜像；为空时使用 Makefile 默认 fs.img。
+        snapshot: 为 True 时把磁盘写入限制在当前 QEMU 进程。
+
+    Returns:
+        可由 ``bash -lc`` 执行的命令文本。
+    """
+
+    parts = ["make", "-s", "--no-print-directory", "qemu", f"CPUS={cpus}"]
+    if fsimg is not None:
+        parts.append(f"FSIMG={shlex.quote(str(fsimg))}")
+    if snapshot:
+        parts.append("QEMUEXTRA=-snapshot")
+    return " ".join(parts)
+
+
+def _start_qemu(
+    cpus: int,
+    *,
+    fsimg: Path | None = None,
+    snapshot: bool = True,
+) -> pexpect.spawn:
+    """启动指定磁盘策略的 xv6 QEMU，并等待 Shell 提示符。"""
+
+    command = _build_qemu_command(cpus, fsimg=fsimg, snapshot=snapshot)
     child = pexpect.spawn(
         "/bin/bash",
         ["-lc", command],
@@ -512,6 +587,154 @@ def _run_qemu_tests(suite: str, tests: Sequence[TestCase], cpus: int) -> None:
         _stop_qemu(child)
 
 
+def _crash_cpu_variants(cpus: int) -> tuple[int, ...]:
+    """多核为主证据，同时补充单核恢复；请求本身为单核时避免重复。"""
+
+    return (cpus,) if cpus == 1 else (cpus, 1)
+
+
+def _run_expected_log_crash(
+    suite: str,
+    scenario: CrashRecoveryScenario,
+    cpus: int,
+    fsimg: Path,
+) -> None:
+    """触发指定提交阶段，并断言 QEMU 只因预期日志注入 panic。"""
+
+    child = _start_qemu(cpus, fsimg=fsimg, snapshot=False)
+    boot_output = child.before
+    command = _absolute_guest_command(f"xv6test --run {scenario.prepare_test}")
+    try:
+        child.timeout = scenario.timeout
+        child.sendline(command)
+        result = _wait_for_qemu_command(child)
+        output = f"{boot_output}\n$ {command}\n{result.output}"
+        log_path = _write_log(
+            suite,
+            f"{scenario.name}-cpu{cpus}-crash",
+            output,
+        )
+        if result.failure != "matched fatal output: panic:":
+            raise TestFailure(
+                f"{scenario.name} did not stop at the expected panic; log: {log_path}"
+            )
+        if scenario.crash_marker not in _normalize_output(output):
+            raise TestFailure(
+                f"{scenario.name} missing crash marker {scenario.crash_marker!r}; "
+                f"log: {log_path}"
+            )
+    finally:
+        _stop_qemu(child)
+
+
+def _run_log_recovery_verification(
+    suite: str,
+    scenario: CrashRecoveryScenario,
+    cpus: int,
+    fsimg: Path,
+    *,
+    first_recovery: bool,
+) -> None:
+    """重启同一镜像，检查恢复触发条件并执行 guest 原子性 oracle。"""
+
+    child = _start_qemu(cpus, fsimg=fsimg, snapshot=False)
+    boot_output = child.before
+    command = _absolute_guest_command(f"xv6test --run {scenario.verify_test}")
+    stage = "recovery" if first_recovery else "idempotent-reboot"
+    try:
+        normalized_boot = _normalize_output(boot_output)
+        should_replay = first_recovery and scenario.recovery_expected
+        if should_replay and LOG_RECOVERY_MARKER not in normalized_boot:
+            log_path = _write_log(
+                suite,
+                f"{scenario.name}-cpu{cpus}-{stage}",
+                boot_output,
+            )
+            raise TestFailure(
+                f"{scenario.name} expected recovery replay but marker was absent; "
+                f"log: {log_path}"
+            )
+        if not should_replay and LOG_RECOVERY_MARKER in normalized_boot:
+            log_path = _write_log(
+                suite,
+                f"{scenario.name}-cpu{cpus}-{stage}",
+                boot_output,
+            )
+            raise TestFailure(
+                f"{scenario.name} replayed an uncommitted or already-cleared log; "
+                f"log: {log_path}"
+            )
+
+        child.timeout = scenario.timeout
+        child.sendline(command)
+        result = _wait_for_qemu_command(child)
+        output = f"{boot_output}\n$ {command}\n{result.output}"
+        log_path = _write_log(
+            suite,
+            f"{scenario.name}-cpu{cpus}-{stage}",
+            output,
+        )
+        if result.failure is not None:
+            raise TestFailure(f"{result.failure}; log: {log_path}")
+        _assert_output(
+            TestCase(
+                name=scenario.verify_test,
+                commands=(command,),
+                expected=GUEST_SUCCESS,
+            ),
+            output,
+        )
+    finally:
+        _stop_qemu(child)
+
+
+def _run_crash_recovery_scenario(
+    suite: str,
+    scenario: CrashRecoveryScenario,
+    cpus: int,
+) -> None:
+    """在独立镜像上完成崩溃、首次恢复和第二次幂等重启闭环。"""
+
+    started = time.perf_counter()
+    directory = RESULT_ROOT / _safe_name(suite)
+    directory.mkdir(parents=True, exist_ok=True)
+    fsimg = directory / f"{_safe_name(scenario.name)}-cpu{cpus}.img"
+    shutil.copyfile(REPO_ROOT / "fs.img", fsimg)
+    try:
+        _run_expected_log_crash(suite, scenario, cpus, fsimg)
+        _run_log_recovery_verification(
+            suite,
+            scenario,
+            cpus,
+            fsimg,
+            first_recovery=True,
+        )
+        _run_log_recovery_verification(
+            suite,
+            scenario,
+            cpus,
+            fsimg,
+            first_recovery=False,
+        )
+    finally:
+        fsimg.unlink(missing_ok=True)
+
+    elapsed = time.perf_counter() - started
+    print(f"PASS log-recovery-{scenario.name}-cpu{cpus} {elapsed:.2f}s")
+
+
+def _run_crash_recovery_scenarios(
+    suite: str,
+    scenarios: Sequence[CrashRecoveryScenario],
+    cpus: int,
+) -> None:
+    """按多核主证据和单核补充证据执行全部持久日志场景。"""
+
+    for cpu_count in _crash_cpu_variants(cpus):
+        for scenario in scenarios:
+            _run_crash_recovery_scenario(suite, scenario, cpu_count)
+
+
 def _expand_suite(name: str, stack: tuple[str, ...] = ()) -> list[str]:
     """递归展开聚合 suite，并检测未知引用和循环依赖。"""
 
@@ -541,7 +764,7 @@ def _deduplicate(values: Iterable[str]) -> list[str]:
 
 
 def run_atomic_suite(name: str, cpus: int) -> None:
-    """执行一个原子 suite，host 测试先于 QEMU 测试运行。"""
+    """执行原子 suite：host、snapshot guest、持久崩溃矩阵依次运行。"""
 
     suite = SUITES[name]
     print(f"\n== Suite {name}: {suite.description} ==")
@@ -551,6 +774,8 @@ def run_atomic_suite(name: str, cpus: int) -> None:
         _run_host_test(name, test)
     if qemu_tests:
         _run_qemu_tests(name, qemu_tests, cpus)
+    if suite.crash_scenarios:
+        _run_crash_recovery_scenarios(name, suite.crash_scenarios, cpus)
 
 
 def parse_args() -> argparse.Namespace:
