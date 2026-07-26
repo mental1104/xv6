@@ -54,3 +54,4 @@
 #define SYS_seminfo          55
 #define SYS_fsinspect        49
 #define SYS_memsnapshot_pid  50
+#define SYS_logcrash         56

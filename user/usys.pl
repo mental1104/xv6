@@ -69,3 +69,4 @@ entry("semwait");
 entry("sempost");
 entry("semdestroy");
 entry("seminfo");
+entry("logcrash");

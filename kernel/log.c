@@ -7,6 +7,7 @@
 #include "fs.h"
 #include "fsinspect.h"
 #include "buf.h"
+#include "log.h"
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
@@ -28,6 +29,7 @@ struct log {
   int header_blocks;
   int outstanding;
   int committing;
+  int crash_phase;   // 一次性教学故障注入点，由 lock 保护。
   int dev;
   struct logheader lh;
 };
@@ -97,6 +99,52 @@ log_data_start(void)
   return log.start + log.header_blocks;
 }
 
+/** 返回故障注入阶段的稳定诊断名称。 */
+static char*
+log_crash_phase_name(int phase)
+{
+  switch(phase){
+  case LOG_CRASH_BEFORE_COMMIT:
+    return "before-commit";
+  case LOG_CRASH_AFTER_COMMIT:
+    return "after-commit";
+  case LOG_CRASH_DURING_INSTALL:
+    return "during-install";
+  default:
+    return "unknown";
+  }
+}
+
+/** 原子消费匹配的一次性故障注入点，并快照当前事务大小。 */
+static int
+log_take_crash_phase(int phase, int *entries)
+{
+  int matched = 0;
+
+  acquire(&log.lock);
+  if(log.crash_phase == phase){
+    log.crash_phase = LOG_CRASH_NONE;
+    *entries = log.lh.n;
+    matched = 1;
+  }
+  release(&log.lock);
+  return matched;
+}
+
+/** 在精确日志阶段触发可观察的教学型内核崩溃。 */
+static void
+log_crash_if_armed(int phase, int installed)
+{
+  int entries;
+
+  if(!log_take_crash_phase(phase, &entries))
+    return;
+
+  printf("LOGCRASH injected phase=%s entries=%d installed=%d\n",
+         log_crash_phase_name(phase), entries, installed);
+  panic("log crash injection");
+}
+
 /** 初始化日志几何信息并恢复已发布但未安装的事务。 */
 void
 initlog(int dev, struct superblock *sb)
@@ -107,6 +155,7 @@ initlog(int dev, struct superblock *sb)
   log.start = sb->logstart;
   log.header_blocks = log_header_block_count();
   log.size = sb->nlog - log.header_blocks;
+  log.crash_phase = LOG_CRASH_NONE;
   log.dev = dev;
 
   if(log.size < MAXOPBLOCKS || log.size > LOGSIZE)
@@ -124,6 +173,12 @@ install_trans(int recovering)
     struct buf *dbuf = bread(log.dev, log.lh.block[tail]);
     memmove(dbuf->data, lbuf->data, BSIZE);
     bwrite(dbuf);
+
+    // bwrite() 已等待 virtio 完成。此时终止可构造“部分 home block 已安装，
+    // commit record 仍存在”的磁盘状态，重启后必须完整重放同一事务。
+    if(!recovering && tail == 0)
+      log_crash_if_armed(LOG_CRASH_DURING_INSTALL, 1);
+
     if(!recovering)
       bunpin(dbuf);
     brelse(lbuf);
@@ -213,6 +268,8 @@ recover_from_log(void)
 {
   read_head();
   int recovered = log.lh.n;
+  if(recovered > 0)
+    printf("LOGRECOVER replay entries=%d\n", recovered);
   install_trans(1);
   log.lh.n = 0;
   write_head();
@@ -284,7 +341,9 @@ commit(void)
   if(log.lh.n > 0){
     int committed = log.lh.n;
     write_log();
+    log_crash_if_armed(LOG_CRASH_BEFORE_COMMIT, 0);
     write_head();
+    log_crash_if_armed(LOG_CRASH_AFTER_COMMIT, 0);
     install_trans(0);
     log.lh.n = 0;
     write_head();
@@ -319,4 +378,42 @@ log_write(struct buf *b)
     log.lh.n++;
   }
   release(&log.lock);
+}
+
+/**
+ * 武装或取消一次性日志崩溃注入点。
+ *
+ * @param phase kernel/log.h 中的 LOG_CRASH_*；LOG_CRASH_NONE 用于取消。
+ * @return 成功返回 0；阶段非法、已有注入点或文件系统操作正在进行时返回 -1。
+ */
+int
+log_arm_crash(int phase)
+{
+  int result = 0;
+
+  if(phase < LOG_CRASH_NONE || phase > LOG_CRASH_DURING_INSTALL)
+    return -1;
+
+  acquire(&log.lock);
+  if(phase == LOG_CRASH_NONE){
+    log.crash_phase = LOG_CRASH_NONE;
+  } else if(log.crash_phase != LOG_CRASH_NONE ||
+            log.outstanding != 0 || log.committing){
+    result = -1;
+  } else {
+    log.crash_phase = phase;
+  }
+  release(&log.lock);
+  return result;
+}
+
+/** 用户态教学实验入口：设置下一次文件系统提交的确定性崩溃阶段。 */
+uint64
+sys_logcrash(void)
+{
+  int phase;
+
+  if(argint(0, &phase) < 0)
+    return -1;
+  return log_arm_crash(phase);
 }
