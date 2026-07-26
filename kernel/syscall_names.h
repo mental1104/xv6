@@ -63,6 +63,7 @@ static const char *const syscall_names[] = {
 [SYS_logcrash]         = "logcrash",
 [SYS_raid1info]        = "raid1info",
 [SYS_raid1rw]          = "raid1rw",
+[SYS_locklab]          = "locklab",
 };
 
 // 名称表中可访问的元素数量（包含下标 0），用于限制遍历和查找范围。
