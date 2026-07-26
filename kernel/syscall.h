@@ -57,4 +57,5 @@
 #define SYS_logcrash         56
 #define SYS_raid1info        57
 #define SYS_raid1rw          58
-#define SYS_disktrace        59
+#define SYS_locklab          59
+#define SYS_disktrace        60

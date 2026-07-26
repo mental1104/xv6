@@ -63,6 +63,7 @@ static const char *const syscall_names[] = {
 [SYS_logcrash]         = "logcrash",
 [SYS_raid1info]        = "raid1info",
 [SYS_raid1rw]          = "raid1rw",
+[SYS_locklab]          = "locklab",
 [SYS_disktrace]        = "disktrace",
 };
 

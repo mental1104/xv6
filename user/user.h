@@ -120,6 +120,15 @@ int semdestroy(int handle);
 int seminfo(int handle, struct semaphore_info *info);
 
 /**
+ * 执行 kernel/locklab.h 定义的可重复锁实验操作。
+ *
+ * @param operation LOCKLAB_* 操作编号。
+ * @param value 操作参数；当前仅 LOCKLAB_SPLIT_WRITE 使用。
+ * @return 操作结果；未知操作或前置状态不满足时返回 -1。
+ */
+int locklab(int operation, int value);
+
+/**
  * 驱动显式启用的并发入门教学会话。
  *
  * @param op kernel/concurrencylab.h 定义的 RESET、RUN、SNAPSHOT 或 CLOSE。
