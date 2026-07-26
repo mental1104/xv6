@@ -11,6 +11,12 @@ jobs:
   source-export:
     runs-on: ubuntu-24.04
     steps:
+      - name: Checkout merge base
+        uses: actions/checkout@v4
+        with:
+          ref: a08dde16cd6cedeaeb5be294d9435a75cb111a5d
+          path: base
+
       - name: Checkout current main
         uses: actions/checkout@v4
         with:
@@ -23,16 +29,17 @@ jobs:
           ref: concept/155-disk-scheduling
           path: head
 
-      - name: Package both source trees
+      - name: Package source trees
         run: |
           mkdir -p export
+          tar --exclude=.git -czf export/base.tar.gz -C base .
           tar --exclude=.git -czf export/main.tar.gz -C main .
           tar --exclude=.git -czf export/head.tar.gz -C head .
 
       - name: Upload source trees
         uses: actions/upload-artifact@v4
         with:
-          name: source-export
+          name: source-export-three-way
           path: export/
           if-no-files-found: error
           retention-days: 1
