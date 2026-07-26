@@ -300,19 +300,33 @@ read_symlink_target_locked(struct inode *ip, char *path)
   return 0;
 }
 
-// Follow symbolic links and return an unlocked inode reference.
+/**
+ * 跟随符号链接并返回最终 inode 的未锁定引用。
+ *
+ * @param ip 当前路径解析得到的未锁定 inode 引用；函数始终接管该引用。
+ * @param path 可复用的路径缓冲区，每次跳转后会被目标路径覆盖。
+ * @return 成功返回最终非符号链接 inode 的未锁定引用；读取、解析失败或超过
+ * MAXSYMLINK 个符号链接时返回 0，并释放函数已持有的 inode 引用。
+ */
 static struct inode*
 follow_symlinks(struct inode *ip, char *path)
 {
   int remaining = MAXSYMLINK;
 
-  while(remaining-- > 0){
+  for(;;){
     ilock(ip);
 
     if(ip->type != T_SYMLINK){
       iunlock(ip);
-      break;
+      return ip;
     }
+
+    // 深度额度只由实际的符号链接跳转消耗，检查最终普通 inode 不占额度。
+    if(remaining == 0){
+      iunlockput(ip);
+      return 0;
+    }
+    remaining--;
 
     if(read_symlink_target_locked(ip, path) < 0){
       iunlockput(ip);
@@ -324,13 +338,6 @@ follow_symlinks(struct inode *ip, char *path)
     if(ip == 0)
       return 0;
   }
-
-  if(remaining <= 0){
-    iput(ip);
-    return 0;
-  }
-
-  return ip;
 }
 
 // Return the inode locked on success.
