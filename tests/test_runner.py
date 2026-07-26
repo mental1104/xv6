@@ -42,6 +42,7 @@ GUEST_SOURCE_NAMES = (
     "uthreadtest.c",
     "vaaccesstest.c",
     "addresswindowtest.c",
+    "ostepintrotest.c",
     "testlib.c",
     "xv6test.c",
 )
