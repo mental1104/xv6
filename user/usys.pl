@@ -47,6 +47,7 @@ entry("mmap");
 entry("munmap");
 entry("backtrace");
 entry("memsnapshot");
+entry("memsnapshot_pid");
 entry("vaquery");
 entry("consolemode");
 entry("sched_set_hint");
