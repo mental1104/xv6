@@ -60,6 +60,7 @@ static const char *const syscall_names[] = {
 [SYS_sempost]          = "sempost",
 [SYS_semdestroy]       = "semdestroy",
 [SYS_seminfo]          = "seminfo",
+[SYS_locklab]          = "locklab",
 };
 
 // 名称表中可访问的元素数量（包含下标 0），用于限制遍历和查找范围。
