@@ -42,6 +42,16 @@ class CiPlanSelectionTests(unittest.TestCase):
         self.assertEqual(PLANNER.VM_SUITES, plan.suites)
         self.assertFalse(plan.run_shell_history)
 
+    def test_allocator_change_runs_vm_regression(self) -> None:
+        """块分配器同时依赖 sbrk、lazy page fault、fork/COW 与地址空间回收。"""
+
+        plan = PLANNER.build_ci_plan(
+            ("user/umalloc.c", "tests/guest/alloctest.c")
+        )
+
+        self.assertEqual(PLANNER.VM_SUITES, plan.suites)
+        self.assertFalse(plan.run_shell_history)
+
     def test_ostep_intro_runs_vm_and_core_regression(self) -> None:
         """概念实验必须进入多核 VM 回归，并触发工作流中的单核 VM 补充验证。"""
 
