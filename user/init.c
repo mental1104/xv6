@@ -94,6 +94,7 @@ static struct image_file image_files[] = {
   {"/sysinfotest", XV6_TEST_PATH("sysinfotest")},
   {"/bttest", XV6_TEST_PATH("bttest")},
   {"/alarmtest", XV6_TEST_PATH("alarmtest")},
+  {"/alloctest", XV6_TEST_PATH("alloctest")},
   {"/lazytests", XV6_TEST_PATH("lazytests")},
   {"/cowtest", XV6_TEST_PATH("cowtest")},
   {"/fileapitest", XV6_TEST_PATH("fileapitest")},
@@ -235,6 +236,9 @@ setup_image_layout(void)
     ensure_directory(*directory);
   for(struct image_file *file = image_files; file->source != 0; file++)
     place_file(file->source, file->destination);
+
+  // 对外暴露稳定命令路径，同时让统一测试注册表继续使用测试目录中的实现。
+  ensure_file_link(XV6_TEST_PATH("alloctest"), XV6_USR_BIN_PATH("alloctest"));
 
   // 原始 usertests 的 copyout 用例读取相对路径 README；它不是可执行文件搜索。
   ensure_file_link("/README", "/root/README");
