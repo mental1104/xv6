@@ -1,6 +1,9 @@
 name: xv6 Main Gate
 
 on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
@@ -9,26 +12,32 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
-  validate-main:
-    name: Validate main ref
+  validate-target:
+    name: Validate target ref
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
-      - name: Require main branch
+      - name: Require main target
         shell: bash
         run: |
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            if [[ "${GITHUB_BASE_REF}" != "main" ]]; then
+              echo "::error::Pull request gate only supports the main target."
+              exit 1
+            fi
+          elif [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
             echo "::error::xv6 Main Gate can only run against main."
             exit 1
           fi
 
   regression:
-    needs: validate-main
+    needs: validate-target
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: 70
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -61,13 +70,18 @@ jobs:
           make clean
           make -j2
 
-      - name: Run complete main regression
+      - name: Run stable integration regression
         run: |
           python3 tests/shell_history_interactive.py --cpus 3
-          make test-full CPUS=3
+          python3 tests/run.py --suite pr --cpus 3
 
-      # 锁模型 runner 会分别重建并验证单核、多核配置；放在完整回归之后，
-      # 避免它留下的编译期 CPUS 配置污染前面的通用 QEMU 回归。
+      # 旧 usertests-full 会把全部用例塞进单个 QEMU，并在 writebig 阶段超时。
+      # 逐项 runner 为每个用例提供独立看门狗，并保留稳定的完整用户态回归范围。
+      - name: Run bounded usertests regression
+        run: python3 tests/run_usertests.py --cpus 3
+
+      # 锁模型 runner 会分别重建并验证单核、多核配置；放在其他 QEMU 回归之后，
+      # 避免它留下的编译期 CPUS 配置污染前面的通用镜像。
       - name: Run lock model regression
         run: python3 tests/run_lock_model.py --cpus 3
 
@@ -91,7 +105,7 @@ jobs:
 
   notify-manual-failure:
     name: Notify manual failure
-    needs: [validate-main, regression]
+    needs: [validate-target, regression]
     if: >-
       always() &&
       github.event_name == 'workflow_dispatch' &&
