@@ -238,15 +238,47 @@ int ucontext_switch(struct user_context *save,
 int stat(const char*, struct stat*);
 char* strcpy(char*, const char*);
 void *memmove(void*, const void*, int);
-char* strchr(const char*, char c);
+char* strchr(char*, char c);
 int strcmp(const char*, const char*);
 void fprintf(int, const char*, ...);
 void printf(const char*, ...);
 char* gets(char*, int max);
 uint strlen(const char*);
 void* memset(void*, int, uint);
-void* malloc(uint);
-void free(void*);
+
+/**
+ * 申请一段 16 字节对齐的用户态动态内存。
+ *
+ * @param size 需要的 payload 字节数；0 固定返回 0。
+ * @return 成功返回由调用者持有的 payload；溢出或 sbrk 失败返回 0。
+ */
+void *malloc(uint64 size);
+
+/**
+ * 释放 malloc/calloc/realloc 返回的块并立即合并物理相邻空闲块。
+ *
+ * @param pointer 需要释放的 payload；0 为安全空操作。非法指针与 double free 未定义。
+ */
+void free(void *pointer);
+
+/**
+ * 申请 nmemb 个元素并把请求的全部 payload 字节清零。
+ *
+ * @param nmemb 元素数量；0 固定返回 0。
+ * @param size 单个元素字节数；0 固定返回 0。
+ * @return 成功返回清零后的 payload；乘法溢出或分配失败返回 0。
+ */
+void *calloc(uint64 nmemb, uint64 size);
+
+/**
+ * 调整已分配块的 payload 容量。
+ *
+ * @param pointer 原 payload；0 时等价于 malloc(size)。
+ * @param size 新 payload 字节数；0 时释放原块并返回 0。
+ * @return 成功返回新 payload；失败返回 0，原块及其数据仍保持有效。
+ */
+void *realloc(void *pointer, uint64 size);
+
 int atoi(const char*);
 int memcmp(const void *, const void *, uint);
 void *memcpy(void *, const void *, uint);
