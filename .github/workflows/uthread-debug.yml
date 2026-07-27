@@ -1,22 +1,32 @@
 name: uthread debug
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: uthread-debug-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
+  validate-main:
+    name: Validate main ref
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require main branch
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::uthread debug can only run against main."
+            exit 1
+          fi
+
   lab7:
-    if: github.event.pull_request.draft == false
+    needs: validate-main
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -66,3 +76,27 @@ jobs:
         run: |
           test "${{ steps.cpus3.outcome }}" = success
           test "${{ steps.cpus1.outcome }}" = success
+
+  notify-manual-failure:
+    name: Notify manual failure
+    needs: [validate-main, lab7]
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send failure email
+        uses: dawidd6/action-send-mail@v6
+        with:
+          connection_url: ${{ secrets.SMTP_CONNECTION_URL }}
+          from: ${{ secrets.MAIL_FROM }}
+          to: ${{ secrets.MAIL_TO }}
+          subject: "[CI Failed] ${{ github.repository }} uthread manual gate"
+          body: |
+            main 分支 uthread 手动门禁执行失败。
+
+            仓库：${{ github.repository }}
+            提交：${{ github.sha }}
+            执行人：${{ github.actor }}
+            运行地址：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
