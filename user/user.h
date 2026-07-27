@@ -238,7 +238,7 @@ int ucontext_switch(struct user_context *save,
 int stat(const char*, struct stat*);
 char* strcpy(char*, const char*);
 void *memmove(void*, const void*, int);
-char* strchr(char*, char c);
+char* strchr(const char*, char c);
 int strcmp(const char*, const char*);
 void fprintf(int, const char*, ...);
 void printf(const char*, ...);
