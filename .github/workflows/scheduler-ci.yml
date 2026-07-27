@@ -1,27 +1,56 @@
-name: Scheduler family CI
+name: Scheduler family Main Gate
 
 on:
-  pull_request:
+  push:
     branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "Makefile"
+      - "kernel/proc.c"
+      - "kernel/proc.h"
+      - "kernel/sched.c"
+      - "kernel/sched.h"
+      - "kernel/schedstat.h"
+      - "kernel/schedtrace.c"
+      - "kernel/schedtrace.h"
+      - "kernel/sysproc.c"
+      - "kernel/trap.c"
+      - "user/schedviz.c"
+      - "tests/guest/schedtest.c"
+      - "tests/host/scheduler_smoke.c"
+      - "tests/host/scheduler_visualizer.c"
+      - "tests/run.py"
+      - "tests/run_usertests.py"
+      - ".github/workflows/scheduler-ci.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: scheduler-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
+  validate-main:
+    name: Validate main ref
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require main branch
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::Scheduler family Main Gate can only run against main."
+            exit 1
+          fi
+
   scheduler:
+    needs: validate-main
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         policy: [rr, fifo, sjf, stcf, mlfq, cfs]
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,13 +80,13 @@ jobs:
         run: ./scheduler_smoke --policy ${{ matrix.policy }} --cpus 1
 
   smp-smoke:
+    needs: validate-main
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         policy: [rr, mlfq, cfs]
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -84,9 +113,9 @@ jobs:
         run: ./scheduler_smoke --policy ${{ matrix.policy }} --cpus 3
 
   regression:
+    needs: validate-main
     runs-on: ubuntu-24.04
     timeout-minutes: 50
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -113,7 +142,7 @@ jobs:
       - name: Run shell interaction regression
         run: python3 tests/shell_history_interactive.py --cpus 3
 
-      - name: Run pull-request regression suites
+      - name: Run regression suites
         run: python3 tests/run.py --suite pr --cpus 3
 
       - name: Run complete usertests
@@ -137,3 +166,28 @@ jobs:
           name: scheduler-regression-${{ github.run_id }}
           path: test-results/
           if-no-files-found: ignore
+
+  notify-manual-failure:
+    name: Notify manual failure
+    needs: [validate-main, scheduler, smp-smoke, regression]
+    if: >-
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send failure email
+        uses: dawidd6/action-send-mail@v6
+        with:
+          connection_url: ${{ secrets.SMTP_CONNECTION_URL }}
+          from: ${{ secrets.MAIL_FROM }}
+          to: ${{ secrets.MAIL_TO }}
+          subject: "[CI Failed] ${{ github.repository }} scheduler manual gate"
+          body: |
+            main 分支 Scheduler family 手动门禁执行失败。
+
+            仓库：${{ github.repository }}
+            提交：${{ github.sha }}
+            执行人：${{ github.actor }}
+            运行地址：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
