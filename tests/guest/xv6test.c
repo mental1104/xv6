@@ -69,6 +69,8 @@ static char *lab9_symlink_argv[] = {XV6_TEST_PATH("symlinktest"), 0};
 static char *largefs_4gib_argv[] = {XV6_TEST_PATH("largefile"), 0};
 static char *lab10_mmap_argv[] = {XV6_TEST_PATH("mmaptest"), 0};
 static char *core_sbrkbugs_argv[] = {XV6_TEST_PATH("usertests"), "sbrkbugs", 0};
+static char *core_allocator_argv[] = {XV6_TEST_PATH("alloctest"), 0};
+static char *core_memory_api_argv[] = {XV6_TEST_PATH("lazytests"), "memory-api", 0};
 static char *core_forkforkfork_argv[] = {XV6_TEST_PATH("usertests"), "forkforkfork", 0};
 static char *core_linkunlink_argv[] = {XV6_TEST_PATH("usertests"), "linkunlink", 0};
 static char *core_openiput_argv[] = {XV6_TEST_PATH("usertests"), "openiput", 0};
@@ -155,6 +157,8 @@ static struct xv6_test_case tests[] = {
   {"largefs", "largefs-4gib", largefs_4gib_argv, 0},
   {"lab10", "lab10-mmap", lab10_mmap_argv, 0},
   {"core", "core-sbrkbugs", core_sbrkbugs_argv, 0},
+  {"core", "core-allocator", core_allocator_argv, 0},
+  {"core", "core-memory-api", core_memory_api_argv, 0},
   {"core", "core-forkforkfork", core_forkforkfork_argv, 0},
   {"core", "core-linkunlink", core_linkunlink_argv, 0},
   {"core", "core-openiput", core_openiput_argv, 0},
