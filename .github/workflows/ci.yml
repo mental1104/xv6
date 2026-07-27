@@ -72,18 +72,28 @@ jobs:
 
       - name: Run stable integration regression
         run: |
-          python3 tests/shell_history_interactive.py --cpus 3
-          python3 tests/run.py --suite pr --cpus 3
+          set -o pipefail
+          mkdir -p test-results/infrastructure
+          python3 tests/shell_history_interactive.py --cpus 3 \
+            2>&1 | tee test-results/infrastructure/shell-history-runner.log
+          python3 tests/run.py --suite pr --cpus 3 \
+            2>&1 | tee test-results/infrastructure/pr-suite-runner.log
 
       # 旧 usertests-full 会把全部用例塞进单个 QEMU，并在 writebig 阶段超时。
       # 逐项 runner 为每个用例提供独立看门狗，并保留稳定的完整用户态回归范围。
       - name: Run bounded usertests regression
-        run: python3 tests/run_usertests.py --cpus 3
+        run: |
+          set -o pipefail
+          python3 tests/run_usertests.py --cpus 3 \
+            2>&1 | tee test-results/infrastructure/usertests-runner.log
 
       # 锁模型 runner 会分别重建并验证单核、多核配置；放在其他 QEMU 回归之后，
       # 避免它留下的编译期 CPUS 配置污染前面的通用镜像。
       - name: Run lock model regression
-        run: python3 tests/run_lock_model.py --cpus 3
+        run: |
+          set -o pipefail
+          python3 tests/run_lock_model.py --cpus 3 \
+            2>&1 | tee test-results/infrastructure/lock-model-runner.log
 
       # _start_qemu() can fail before the Python runner creates its first log.
       # Capture one bounded serial boot attempt so startup panics are preserved.
