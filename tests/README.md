@@ -76,7 +76,10 @@ xv6test --run lab3-memviz
 xv6test --run lab3-vaaccess
 xv6test --group lab4
 xv6test --group lab5
+/usr/bin/alloctest
 /usr/bin/lazytests memory-api
+xv6test --run core-allocator
+xv6test --run core-memory-api
 xv6test --group lab6
 xv6test --group lab7
 xv6test --group lab8
@@ -146,6 +149,21 @@ XV6TEST done status=0
 任一层索引、PTE 权限、页内偏移、fault 隔离或资源回收不符合预期时，guest 测试会打印 `vaaccesstest: FAIL: <reason>` 并以非零状态退出。
 
 `lazytests memory-api` 在现有 Lab5 guest 程序内复用 `malloc/free`、`sbrk`、`fork/wait` 和缺页路径，验证：首次分配扩展用户态 arena、`free` 只回收到分配器 free list、再次分配不增长 break、父子分配器状态与 COW 隔离、`sbrk` 增长/触页/收缩回环、过量收缩失败且不改变 break、页内一字节越界可能暂时可见，以及收缩后再次访问必然以 `exit(-1)` 终止子进程。页内越界用例是击穿错误直觉的反例，不代表该访问成为合法 API 行为。
+
+### RV64 用户态动态内存分配器闭环
+
+`/usr/bin/alloctest` 直接持有 `user/umalloc.c` 的分配器行为契约。它把每个场景放进独立子进程，并以退出状态作为唯一通过 oracle；自然语言输出只用于定位失败阶段。当前覆盖：16 字节对齐与活跃块不重叠、非对齐初始 program break、first-fit 分割与剩余块复用、最小块避免 splinter、四种相邻块合并、`free(NULL)`、`calloc` 清零与乘法溢出、`realloc` 原地缩小/扩张/搬迁/失败保留、`sbrk(int)` 无法表达的大请求、固定 seed 压力序列、`fork` 后分配器与 COW 隔离，以及重复生命周期后的 arena 复用。
+
+聚焦入口：
+
+```text
+/usr/bin/alloctest
+/usr/bin/lazytests memory-api
+xv6test --run core-allocator
+xv6test --run core-memory-api
+```
+
+`core-allocator` 与 `core-memory-api` 都注册在 `core` group，因此 `make test-suite SUITE=usertests-core` 会同时覆盖新的块级契约和原有的 `malloc/free`、`sbrk`、缺页与进程生命周期闭环。该回归证明的是单进程用户态分配器行为；它不宣称具备生产分配器的线程安全、跨线程 arena、页回收给内核或碎片性能保证。
 
 `sbrkmuch` 同时属于 Lab3 地址空间增长和 Lab8 allocator 行为，因此按两个稳定测试名注册；这是有意保留的跨 Lab 共享回归。默认 PR suite 的 Lab8 入口只保留 `createdelete` 和 `fourfiles` 两个较快用例，避免 `sbrkmuch`、`bigwrite` 这类高成本 usertests 阻塞每次 PR 回归。
 
