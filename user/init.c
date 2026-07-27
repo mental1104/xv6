@@ -239,6 +239,7 @@ setup_image_layout(void)
 
   // 对外暴露稳定命令路径，同时让统一测试注册表继续使用测试目录中的实现。
   ensure_file_link(XV6_TEST_PATH("alloctest"), XV6_USR_BIN_PATH("alloctest"));
+  ensure_file_link(XV6_TEST_PATH("lazytests"), XV6_USR_BIN_PATH("lazytests"));
 
   // 原始 usertests 的 copyout 用例读取相对路径 README；它不是可执行文件搜索。
   ensure_file_link("/README", "/root/README");
