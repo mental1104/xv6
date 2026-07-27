@@ -73,11 +73,13 @@ VM_PATHS = {
     "kernel/vm.c",
     "kernel/vmcopyin.c",
     "tests/guest/addressspacelifecycle.c",
+    "tests/guest/alloctest.c",
     "tests/guest/cowtest.c",
     "tests/guest/lazytests.c",
     "tests/guest/memviztest.c",
     "tests/guest/ostepintrotest.c",
     "tests/guest/vaaccesstest.c",
+    "user/umalloc.c",
 }
 CONCURRENCY_PATHS = {
     "kernel/proc.c",
