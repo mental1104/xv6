@@ -303,6 +303,7 @@ UPROGS=\
 	$U/_sysinfotest\
 	$U/_bttest\
 	$U/_alarmtest\
+	$U/_alloctest\
 	$U/_lazytests\
 	$U/_cowtest\
 	$U/_fileapitest\
