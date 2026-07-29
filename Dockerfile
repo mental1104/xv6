@@ -19,9 +19,9 @@ WORKDIR /workspace/xv6
 
 COPY . .
 
-# 镜像构建阶段执行一次干净编译，确保镜像不依赖宿主机生成的 xv6 产物。
+# 同时生成 kernel 与 fs.img，确保镜像在启动 QEMU 前已包含完整 guest 启动产物。
 RUN make clean \
-    && make -j"$(nproc)"
+    && make -j"$(nproc)" kernel/kernel fs.img
 
 # 默认通过 QEMU 的无图形串口终端启动 RISC-V xv6。
 CMD ["make", "qemu"]
