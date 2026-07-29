@@ -19,12 +19,36 @@ extern char trampoline[], uservec[], userret[];
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
 
-extern int devintr();
+#define SCAUSE_INTERRUPT_FLAG (1ULL << 63)
+#define SCAUSE_CODE_MASK (~SCAUSE_INTERRUPT_FLAG)
+#define SIP_SSIP (1L << 1)
 
-enum scause_code {
+/** 当前 xv6 显式处理的同步异常原因码。 */
+enum scause_exception_code {
+  SCAUSE_USER_ECALL = 8,
   SCAUSE_LOAD_PAGE_FAULT = 13,
   SCAUSE_STORE_PAGE_FAULT = 15,
 };
+
+/**
+ * 当前 xv6 实际识别的 Supervisor interrupt 原因码。
+ *
+ * 枚举值只对应 `scause` 的低位原因码；最高位 interrupt 标志由
+ * `SCAUSE_INTERRUPT_FLAG` 单独解析。
+ */
+enum scause_interrupt_code {
+  SCAUSE_SUPERVISOR_SOFTWARE_INTERRUPT = 1,
+  SCAUSE_SUPERVISOR_EXTERNAL_INTERRUPT = 9,
+};
+
+/** `devintr()` 对调用者返回的设备中断分类。 */
+enum devintr_result {
+  DEVINTR_NONE = 0,
+  DEVINTR_DEVICE = 1,
+  DEVINTR_TIMER = 2,
+};
+
+static enum devintr_result devintr(uint64 scause);
 
 void
 trapinit(void)
@@ -133,7 +157,7 @@ handle_user_page_fault(struct proc *p, uint64 scause, uint64 va)
 void
 usertrap(void)
 {
-  int which_dev = 0;
+  enum devintr_result which_dev = DEVINTR_NONE;
 
   if((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
@@ -143,26 +167,32 @@ usertrap(void)
   w_stvec((uint64)kernelvec);
 
   struct proc *p = myproc();
+  uint64 scause = r_scause();
 
   // save user program counter.
   p->trapframe->epc = r_sepc();
 
-  if(r_scause() == 8){
+  switch(scause){
+  case SCAUSE_USER_ECALL:
     if(p->killed)
       exit(-1);
     p->trapframe->epc += 4;
     intr_on();
     syscall();
-  } else if((which_dev = devintr()) != 0){
-    // device interrupt
-  } else if(r_scause() == SCAUSE_LOAD_PAGE_FAULT ||
-            r_scause() == SCAUSE_STORE_PAGE_FAULT){
-    if(handle_user_page_fault(p, r_scause(), r_stval()) < 0)
+    break;
+  case SCAUSE_LOAD_PAGE_FAULT:
+  case SCAUSE_STORE_PAGE_FAULT:
+    if(handle_user_page_fault(p, scause, r_stval()) < 0)
       p->killed = 1;
-  } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    p->killed = 1;
+    break;
+  default:
+    which_dev = devintr(scause);
+    if(which_dev == DEVINTR_NONE){
+      printf("usertrap(): unexpected scause %p pid=%d\n", scause, p->pid);
+      printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+      p->killed = 1;
+    }
+    break;
   }
 
   // consoleintr() 只记录 Ctrl-C/Ctrl-Z；在不持有 cons.lock 时应用到整个 PGID。
@@ -179,7 +209,7 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2){
+  if(which_dev == DEVINTR_TIMER){
     p->total_ticks++;
     if(p->alarm_interval > 0 && p->total_ticks == p->alarm_interval){
       p->total_ticks = 0;
@@ -245,17 +275,18 @@ usertrapret(void)
 void
 kerneltrap()
 {
-  int which_dev = 0;
   uint64 sepc = r_sepc();
   uint64 sstatus = r_sstatus();
   uint64 scause = r_scause();
+  enum devintr_result which_dev;
 
   if((sstatus & SSTATUS_SPP) == 0)
     panic("kerneltrap: not from supervisor mode");
   if(intr_get() != 0)
     panic("kerneltrap: interrupts enabled");
 
-  if((which_dev = devintr()) == 0){
+  which_dev = devintr(scause);
+  if(which_dev == DEVINTR_NONE){
     printf("scause %p\n", scause);
     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
     panic("kerneltrap");
@@ -265,7 +296,7 @@ kerneltrap()
   console_apply_pending_control();
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
+  if(which_dev == DEVINTR_TIMER && myproc() != 0 && myproc()->state == RUNNING)
     yield();
 
   // the yield() may have caused some traps to occur,
@@ -283,30 +314,40 @@ clockintr()
   release(&tickslock);
 }
 
-// check if it's an external interrupt or software interrupt,
-// and handle it.
-// returns 2 if timer interrupt,
-// 1 if other device,
-// 0 if not recognized.
-int
-devintr()
+/**
+ * 识别并处理当前 xv6 支持的 Supervisor 设备中断。
+ *
+ * @param scause 本次 trap 的完整 `scause` 值，包含最高位 interrupt 标志。
+ * @return `DEVINTR_DEVICE` 表示 PLIC 外部设备中断，`DEVINTR_TIMER` 表示
+ * Machine Timer 转发的 Supervisor software interrupt；其他情况返回
+ * `DEVINTR_NONE`，由调用者继续按异常或未知 trap 处理。
+ */
+static enum devintr_result
+devintr(uint64 scause)
 {
-  uint64 scause = r_scause();
+  if((scause & SCAUSE_INTERRUPT_FLAG) == 0)
+    return DEVINTR_NONE;
 
-  if((scause & 0x8000000000000000L) &&
-     (scause & 0xff) == 9){
-    // this is a supervisor external interrupt, via PLIC.
-
+  switch(scause & SCAUSE_CODE_MASK){
+  case SCAUSE_SUPERVISOR_EXTERNAL_INTERRUPT: {
     // irq indicates which device interrupted.
     int irq = plic_claim();
 
-    if(irq == UART0_IRQ){
+    switch(irq){
+    case UART0_IRQ:
       uartintr();
-    } else if(irq >= VIRTIO0_IRQ && irq <= VIRTIO2_IRQ){
+      break;
+    case VIRTIO0_IRQ:
+    case VIRTIO1_IRQ:
+    case VIRTIO2_IRQ:
       // QEMU 的三个连续 virtio-mmio 插槽分别使用 IRQ 1、2、3。
       virtio_disk_intr(irq - VIRTIO0_IRQ);
-    } else if(irq){
+      break;
+    case 0:
+      break;
+    default:
       printf("unexpected interrupt irq=%d\n", irq);
+      break;
     }
 
     // the PLIC allows each device to raise at most one
@@ -314,21 +355,19 @@ devintr()
     if(irq)
       plic_complete(irq);
 
-    return 1;
-  } else if(scause == 0x8000000000000001L){
+    return DEVINTR_DEVICE;
+  }
+  case SCAUSE_SUPERVISOR_SOFTWARE_INTERRUPT:
     // software interrupt from a machine-mode timer interrupt,
     // forwarded by timervec in kernelvec.S.
-
-    if(cpuid() == 0){
+    if(cpuid() == 0)
       clockintr();
-    }
 
     // acknowledge the software interrupt by clearing
     // the SSIP bit in sip.
-    w_sip(r_sip() & ~2);
-
-    return 2;
-  } else {
-    return 0;
+    w_sip(r_sip() & ~SIP_SSIP);
+    return DEVINTR_TIMER;
+  default:
+    return DEVINTR_NONE;
   }
 }
