@@ -26,6 +26,24 @@ struct {
   uint64 free_count;
 } kmem[NCPU];
 
+/**
+ * kalloc 页面生命周期的调试填充值。
+ *
+ * 0xA5 与 0x5A 互为按位取反，十六进制转储中容易辨认，并避开 0、1
+ * 等常见初始化值。它们只表示页面仍保持“刚分配”或“刚释放”的未覆写
+ * 状态，不能证明调用者属于用户态或内核态，也不能作为所有权判定依据。
+ */
+enum kalloc_page_fill {
+  KALLOC_PAGE_FILL_ALLOCATED = 0xA5,
+  KALLOC_PAGE_FILL_FREED = 0x5A,
+};
+
+_Static_assert(KALLOC_PAGE_FILL_ALLOCATED != KALLOC_PAGE_FILL_FREED,
+               "kalloc page fill patterns must differ");
+_Static_assert(KALLOC_PAGE_FILL_ALLOCATED <= 0xFF &&
+               KALLOC_PAGE_FILL_FREED <= 0xFF,
+               "kalloc page fill patterns must fit one byte");
+
 #define NPHYPAGES ((PHYSTOP - KERNBASE) / PGSIZE)
 #define KALLOC_AUDIT_BYTES ((NPHYPAGES + 7) / 8)
 
@@ -170,8 +188,9 @@ freerange(void *pa_start, void *pa_end)
  * @param pa 页对齐物理地址；必须来自 kalloc 管理范围且当前引用数为正。
  *
  * 重复释放由 pageref 的 `ref <= 0` 守卫触发 `panic("kfree ref")`，这是
- * allocator 的负向 oracle。页面只有在引用数降到 0 后才会被毒化并重新挂链；
- * freelist 指针和 free_count 始终在同一个 kmem 锁临界区内同步更新。
+ * allocator 的负向 oracle。页面只有在引用数降到 0 后才会按
+ * KALLOC_PAGE_FILL_FREED 毒化并重新挂链；freelist 指针和 free_count 始终在
+ * 同一个 kmem 锁临界区内同步更新。
  */
 void
 kfree(void *pa)
@@ -194,7 +213,7 @@ kfree(void *pa)
   if(!should_free)
     return;
 
-  memset(pa, 1, PGSIZE);
+  memset(pa, KALLOC_PAGE_FILL_FREED, PGSIZE);
   r = (struct run*)pa;
 
   push_off();
@@ -214,7 +233,8 @@ kfree(void *pa)
  *
  * 该固定粒度分配器只执行链表头部移除，不实现可变大小分割、相邻合并或
  * first/best/worst-fit。freelist 与 free_count 在同一锁内更新；若链表非空但
- * 计数为 0，说明元数据已失配并立即 panic，而不是让计数静默下溢。
+ * 计数为 0，说明元数据已失配并立即 panic，而不是让计数静默下溢。成功页会按
+ * KALLOC_PAGE_FILL_ALLOCATED 填充，供调试时识别尚未被调用者覆写的内容。
  */
 void *
 kalloc(void)
@@ -257,7 +277,7 @@ kalloc(void)
     acquire(&pageref.lock);
     pageref.count[pa_index((uint64)r)] = 1;
     release(&pageref.lock);
-    memset((char*)r, 5, PGSIZE);
+    memset((char*)r, KALLOC_PAGE_FILL_ALLOCATED, PGSIZE);
   }
   return (void*)r;
 }
