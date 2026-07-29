@@ -19,6 +19,7 @@ entry("exit");
 entry("wait");
 entry("waitpid");
 entry("pipe");
+entry("pollread");
 entry("read");
 entry("write");
 entry("close");

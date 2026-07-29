@@ -117,6 +117,7 @@ extern uint64 sys_mkdir(void);
 extern uint64 sys_mknod(void);
 extern uint64 sys_open(void);
 extern uint64 sys_pipe(void);
+extern uint64 sys_pollread(void);
 extern uint64 sys_read(void);
 extern uint64 sys_sbrk(void);
 extern uint64 sys_sleep(void);
@@ -227,6 +228,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_raid1rw]          sys_raid1rw,
 [SYS_locklab]          sys_locklab,
 [SYS_disktrace]        sys_disktrace,
+[SYS_pollread]         sys_pollread,
 };
 
 void

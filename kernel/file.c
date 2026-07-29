@@ -20,11 +20,12 @@ struct {
   struct file file[NFILE];
 } ftable;
 
-/** 初始化全局打开文件表。 */
+/** 初始化全局打开文件表和文件就绪等待队列。 */
 void
 fileinit(void)
 {
   initlock(&ftable.lock, "ftable");
+  pollinit();
 }
 
 /** 分配一个带引用的文件表项。 */
