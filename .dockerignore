@@ -1,0 +1,24 @@
+.git
+
+# xv6 和宿主测试生成物必须在镜像中重新构建。
+*.o
+*.d
+*.asm
+*.sym
+.gdbinit
+fs.img
+fs-large.img
+kernel/kernel
+mkfs/mkfs
+mkfs/mkfs-large
+user/_*
+user/initcode
+user/initcode.out
+ph
+barrier
+rbtree_test
+scheduler_visualizer
+
+# 本地回归和可视化产物不属于镜像输入。
+artifacts/
+test-results/
