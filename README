@@ -43,3 +43,92 @@ You will need a RISC-V "newlib" tool chain from
 https://github.com/riscv/riscv-gnu-toolchain, and qemu compiled for
 riscv64-softmmu. Once they are installed, and in your shell
 search path, you can run "make qemu".
+
+## macOS Docker 构建与运行排障
+
+在 Apple Silicon macOS 上，本项目已经验证可以构建为 `linux/arm64`
+Docker 镜像，并通过容器中的 QEMU 启动 xv6。正常运行命令如下：
+
+```sh
+docker compose run --rm xv6
+```
+
+看到 `xv6 kernel is booting`、`init: starting sh` 和 xv6 shell 提示符，
+才表示容器、QEMU、内核和文件系统的完整链路均已工作。退出 QEMU 时先按
+`Ctrl-A`，再按 `x`。
+
+### Docker socket 的 500 不一定是 API 版本问题
+
+如果命令在访问 `.../.docker/run/docker.sock/_ping` 时返回 500，并提示
+检查 API version，先检查 Docker daemon，而不要直接修改 compose 文件。
+本次故障中，Docker Client API 1.41 满足 Server 的最低 API 1.40，真正原因
+是 Docker Desktop 的 Linux VM 未能启动。可用下面的命令分别检查客户端、
+服务端和 socket：
+
+```sh
+docker version
+docker info
+curl --unix-socket "$HOME/.docker/run/docker.sock" http://localhost/_ping
+```
+
+正常的 `_ping` 响应应为 `OK`。如果响应为
+`Docker Desktop is unable to start`，应完整退出 Docker Desktop，确认没有
+残留的 `com.docker.backend` 进程，再重新启动 Docker Desktop。
+
+### 构建前必须保留足够的宿主磁盘空间
+
+Docker Desktop 使用稀疏虚拟磁盘。即使 `Docker.raw` 看起来占用不大，拉取
+镜像、解包工具链和启动 Linux VM 仍会消耗宿主 APFS Data 卷空间。本次在
+宿主空间接近耗尽时出现了以下连锁故障：
+
+- Docker VM 的 `vda` 写入失败；
+- ext4 journal 被中止；
+- Docker backend 停止，socket 随后返回 500/503；
+- 已拉取的 Ubuntu layer 中 `/bin/dash` 变成 0 字节文件。
+
+因此构建前应运行 `df -h /`，建议至少保留 10 GiB 可用空间。若日志中出现
+`no space left on device`、`I/O error, dev vda` 或
+`Aborting journal on device vda1`，不要继续反复构建，应先释放宿主空间并
+重启 Docker Desktop。
+
+### `exec format error` 也可能来自损坏的镜像层
+
+在 ARM64 主机上看到 `/bin/sh: exec format error` 时，不要只根据该错误判断
+拉取了 amd64 镜像。先检查镜像元数据并运行最小容器：
+
+```sh
+docker image inspect ubuntu:24.04 --format '{{.Architecture}}'
+docker run --rm --platform linux/arm64 ubuntu:24.04 uname -m
+```
+
+如果元数据显示 `arm64`，容器仍无法执行，并且之前发生过磁盘 I/O 错误，
+应怀疑内容存储已经损坏。清理前先用 `docker ps -a`、`docker image ls -a`、
+`docker volume ls` 和 `docker system df -v` 核对影响范围。确认没有需要保留的
+Docker 数据后，再删除损坏镜像和对应的 BuildKit 缓存并重新拉取。不要在
+未检查范围时直接执行全局 prune 或恢复出厂设置。
+
+### macOS 宿主代理和构建容器不能共用 loopback 地址
+
+如果代理监听在 macOS 的 `127.0.0.1:6789`，宿主上的 Docker CLI 可以使用
+这个地址，但 Dockerfile 的 `RUN` 阶段不能使用它，因为容器内的
+`127.0.0.1` 指向容器自身。构建容器应通过
+`host.docker.internal:6789` 访问宿主代理。
+
+需要同时为宿主 BuildKit 客户端和构建容器指定代理时，可以使用：
+
+```sh
+HTTP_PROXY=http://127.0.0.1:6789 \
+HTTPS_PROXY=http://127.0.0.1:6789 \
+http_proxy=http://127.0.0.1:6789 \
+https_proxy=http://127.0.0.1:6789 \
+docker compose --progress plain build \
+  --build-arg HTTP_PROXY=http://host.docker.internal:6789 \
+  --build-arg HTTPS_PROXY=http://host.docker.internal:6789 \
+  --build-arg http_proxy=http://host.docker.internal:6789 \
+  --build-arg https_proxy=http://host.docker.internal:6789 \
+  xv6
+```
+
+宿主代理未运行在 6789 端口时，应替换为实际端口；不使用代理时不要设置
+这些变量。若 apt 偶发返回 502，可以再次执行相同构建命令。Dockerfile 的
+APT cache mount 会保留已经下载的包，使重试只补取缺失文件。
