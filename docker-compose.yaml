@@ -3,6 +3,17 @@ services:
     image: ${DOCKER_IMAGE:-xv6-dev}
     build:
       context: .
+      # WSL 中的宿主代理地址可能只对宿主网络可达；需要时用
+      # BUILD_NETWORK=host 让 Dockerfile 的 RUN 阶段访问同一网络视图。
+      network: ${BUILD_NETWORK:-default}
+      args:
+        # 透传当前 shell 的代理变量，优先服务 Docker build 中的 apt-get 下载。
+        - HTTP_PROXY
+        - http_proxy
+        - HTTPS_PROXY
+        - https_proxy
+        - NO_PROXY
+        - no_proxy
 
     stdin_open: true
     tty: true
@@ -10,6 +21,12 @@ services:
     environment:
       QEMU_MEMORY: ${QEMU_MEMORY:-2G}
       CPUS: ${CPUS:-3}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      http_proxy: ${http_proxy:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      https_proxy: ${https_proxy:-}
+      NO_PROXY: ${NO_PROXY:-}
+      no_proxy: ${no_proxy:-}
 
     mem_limit: ${MEM_LIMIT:-3g}
 
@@ -23,4 +40,21 @@ services:
     image: ${DOCKER_IMAGE:-xv6-dev}
     build:
       context: .
+      # test 镜像与 xv6 镜像共用构建网络设置，避免不同服务构建出不同网络行为。
+      network: ${BUILD_NETWORK:-default}
+      args:
+        # test 服务共用同一镜像，也需要构建期代理以避免重新 build 时绕开代理。
+        - HTTP_PROXY
+        - http_proxy
+        - HTTPS_PROXY
+        - https_proxy
+        - NO_PROXY
+        - no_proxy
+    environment:
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      http_proxy: ${http_proxy:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      https_proxy: ${https_proxy:-}
+      NO_PROXY: ${NO_PROXY:-}
+      no_proxy: ${no_proxy:-}
     command: make test

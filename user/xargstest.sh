@@ -1,6 +1,6 @@
-mkdir a
-echo hello > a/b
-mkdir c
-echo hello > c/b
-echo hello > b
-find . b | xargs grep hello
+/bin/mkdir a
+/bin/echo hello > a/b
+/bin/mkdir c
+/bin/echo hello > c/b
+/bin/echo hello > b
+/bin/find . b | /bin/xargs /bin/grep hello
