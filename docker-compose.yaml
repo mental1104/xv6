@@ -1,0 +1,26 @@
+services:
+  xv6:
+    image: ${DOCKER_IMAGE:-xv6-dev}
+    build:
+      context: .
+
+    stdin_open: true
+    tty: true
+
+    environment:
+      QEMU_MEMORY: ${QEMU_MEMORY:-2G}
+      CPUS: ${CPUS:-3}
+
+    mem_limit: ${MEM_LIMIT:-3g}
+
+    command:
+      - bash
+      - -c
+      - |
+        make qemu QEMU_MEMORY=$${QEMU_MEMORY} CPUS=$${CPUS}
+
+  test:
+    image: ${DOCKER_IMAGE:-xv6-dev}
+    build:
+      context: .
+    command: make test
