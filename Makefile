@@ -43,9 +43,11 @@ OBJS = \
   $K/sleeplock.o \
   $K/file.o \
   $K/pipe.o \
+  $K/poll.o \
   $K/exec.o \
   $K/sysfile.o \
   $K/sysfsinspect.o \
+  $K/syspoll.o \
   $K/sysseek.o \
   $K/kernelvec.o \
   $K/plic.o \
@@ -108,6 +110,13 @@ CFLAGS += -DSCHED_POLICY=$(SCHED_POLICY_ID)
 # 保留 proc.c 的历史入口作为可链接后备，由 sched.c 和 semexit.c 提供公开入口。
 $K/proc.o: CFLAGS += -Dprocinit=legacy_procinit -Dscheduler=legacy_scheduler -Dyield=legacy_yield -Dexit=proc_exit_without_semaphore
 $K/trap.o: CFLAGS += -Dyield=sched_timer_yield
+
+# event-loop 分支使用局部头文件声明教学 API，避免再次扩张全局 defs.h/user.h 冲突面。
+$K/file.o $K/pipe.o $K/poll.o $K/syspoll.o: CFLAGS += -include $K/poll.h
+$U/eventloop.o $T/eventlooptest.o: CFLAGS += -include $U/pollread.h
+
+# 保留主线 xv6test 注册表，并由一个小型适配入口追加 core-eventloop。
+$T/xv6test.o: CFLAGS += -Dmain=xv6test_original_main
 
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]no-pie'),)
 CFLAGS += -fno-pie -no-pie
@@ -241,6 +250,16 @@ $U/_uthreadtest: $T/uthreadtest.o $T/testlib.o $(ULIB)
 	$(OBJDUMP) -S $@ > $T/uthreadtest.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/uthreadtest.sym
 
+$U/_eventlooptest: $T/eventlooptest.o $T/testlib.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $T/eventlooptest.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/eventlooptest.sym
+
+$U/_xv6test: $U/xv6test_eventloop.o $T/xv6test.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $T/xv6test.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/xv6test.sym
+
 $U/_uthread: $U/uthread.o $U/uthreadlib.o $(ULIB)
 	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
 	$(OBJDUMP) -S $U/_uthread > $U/uthread.asm
@@ -277,6 +296,7 @@ UPROGS=\
 	$U/_varead\
 	$U/_vawrite\
 	$U/_vaprobe\
+	$U/_eventloop\
 	$U/_memviztest\
 	$U/_memtargettest\
 	$U/_pgtbltest\
@@ -314,6 +334,7 @@ UPROGS=\
 	$U/_lab1test\
 	$U/_tracesmoke\
 	$U/_uthreadtest\
+	$U/_eventlooptest\
 	$U/_historytest\
 	$U/_consolelinetest\
 	$U/_lstest\
